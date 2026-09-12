@@ -23,6 +23,12 @@ Choisir généralement 3 à 5 questions ciblées par round, moins si une seule d
 
 Après les réponses, restituer brièvement : besoin reformulé, nuances préservées, décisions acquises, incertitudes restantes et conséquence sur le périmètre. Demander correction lorsqu'une interprétation changerait le besoin. Une réponse partielle laisse les autres questions ouvertes ; silence, durée écoulée et « continue » ne valident pas des choix non exprimés.
 
+L'agent pilote la progression : ne pas terminer un round par un simple accusé de réception qui oblige le responsable produit à relancer. Après chaque réponse, exploiter ce qui est acquis et enchaîner avec les questions encore nécessaires, une proposition concrète à arbitrer ou l'étape suivante déjà autorisée. Si une réponse humaine indispensable manque, poser la question précise et rendre visible ce qu'elle débloque ; attendre cette réponse est une étape de travail, pas un abandon. Respecter une demande explicite de pause.
+
+Garder dans le dossier une vue finie des décisions restantes, à partir des questions, risques et préparations existants : ce qui bloque le prochain lot, ce qui peut attendre, et ce que l'agent doit instruire lui-même. Ne pas produire un questionnaire nouveau à chaque détail. Regrouper les arbitrages cohérents avec une recommandation et ses compromis ; ne pas soumettre à l'utilisateur les choix d'implémentation réversibles qui n'affectent pas son usage, ses risques, ses coûts ou ses autorisations. Des détails techniques peuvent être instruits sans réponse produit, mais une préférence proposée ne devient pas validée par défaut.
+
+Préparer la suite dès que le besoin est suffisamment borné et testable : ne pas attendre d'avoir conçu toutes les fonctions futures. Une fois les questions bloquantes traitées, produire le brief candidat et demander son accord, puis préparer le découpage après validation ; ne pas demander « veux-tu continuer ? ». Signaler une nouvelle question bloquante avec la contradiction ou le risque concret qui la justifie. Les idées futures restent distinctes et ne retardent pas le lot retenu. Une consigne de persistance n'autorise ni réponse inventée, ni publication GitHub, ni exécution au-delà des accords applicables ; lorsqu'un accord manque, poursuivre les préparations autorisées puis présenter exactement la décision attendue.
+
 Séparer quatre domaines dans le dossier :
 
 - `product` : personnes concernées, résultat utile, priorités, inclus et exclus ;
