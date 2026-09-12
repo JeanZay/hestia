@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,7 +39,123 @@ export function inspectFile(filePath, content) {
 }
 
 function git(cwd, args, encoding = 'utf8') {
-  return execFileSync('git', args, { cwd, encoding, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', ['--no-replace-objects', '--no-lazy-fetch', ...args], { cwd, encoding, maxBuffer: 64 * 1024 * 1024, timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+const pushLimits = { inputBytes: 1024 * 1024, updates: 100, commits: 1000, entries: 100_000, blobs: 10_000, blobBytes: 4 * 1024 * 1024, totalBytes: 128 * 1024 * 1024 };
+const objectId = '(?:[a-f0-9]{40}|[a-f0-9]{64})';
+const updateLine = new RegExp(`^([^\\s\\0]+) (${objectId}) (refs/[^\\s\\0]+) (${objectId})$`);
+const isZero = (value) => /^0+$/.test(value);
+
+class GuardError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
+function requireLimit(condition, code) {
+  if (!condition) throw new GuardError(code);
+}
+
+/** Git's pre-push input is data; only validated object IDs become Git arguments. */
+export function parsePushUpdates(input) {
+  requireLimit(typeof input === 'string' && Buffer.byteLength(input) <= pushLimits.inputBytes, 'push-input-limit');
+  if (input === '') return [];
+  const lines = input.replace(/\r?\n$/, '').split(/\r?\n/);
+  requireLimit(lines.length <= pushLimits.updates, 'push-updates-limit');
+  const destinations = new Set();
+  return lines.map((line) => {
+    const matched = updateLine.exec(line);
+    requireLimit(Boolean(matched), 'invalid-push-input');
+    const [, localRef, localSha, remoteRef, remoteSha] = matched;
+    requireLimit(localSha.length === remoteSha.length && !destinations.has(remoteRef), 'invalid-push-input');
+    requireLimit(isZero(localSha) ? localRef === '(delete)' && !isZero(remoteSha) : localRef !== '(delete)', 'invalid-push-input');
+    destinations.add(remoteRef);
+    return { localRef, localSha, remoteRef, remoteSha };
+  });
+}
+
+function readPushInput() {
+  const chunks = [];
+  let length = 0;
+  while (true) {
+    const chunk = Buffer.alloc(16 * 1024);
+    const count = readSync(0, chunk, 0, chunk.length, null);
+    if (count === 0) break;
+    length += count;
+    requireLimit(length <= pushLimits.inputBytes, 'push-input-limit');
+    chunks.push(chunk.subarray(0, count));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+function peelCommit(cwd, sha, failureCode) {
+  try {
+    return git(cwd, ['rev-parse', '--verify', `${sha}^{commit}`]).trim();
+  } catch {
+    throw new GuardError(failureCode);
+  }
+}
+
+/** Inspect each distinct path/blob in every outgoing commit, never worktree copies. */
+export function scanOutgoingCommits(cwd, input) {
+  const updates = parsePushUpdates(input);
+  const nonDeletions = updates.filter((update) => !isZero(update.localSha));
+  const result = { updateCount: updates.length, commitCount: 0, inspectedCount: 0, findings: [], uninspectedBinaryPaths: [] };
+  if (nonDeletions.length === 0) return result;
+
+  // A truncated or grafted graph cannot prove which historical blobs are outgoing.
+  requireLimit(git(cwd, ['rev-parse', '--is-shallow-repository']).trim() === 'false', 'incomplete-history');
+  const graftsPath = path.resolve(cwd, git(cwd, ['rev-parse', '--git-path', 'info/grafts']).trim());
+  requireLimit(!existsSync(graftsPath) || readFileSync(graftsPath).length === 0, 'incomplete-history');
+  const commits = new Set();
+  for (const update of nonDeletions) {
+    const head = peelCommit(cwd, update.localSha, 'local-commit-unavailable');
+    const base = isZero(update.remoteSha) ? null : peelCommit(cwd, update.remoteSha, 'remote-base-unavailable');
+    const args = ['rev-list', `--max-count=${pushLimits.commits + 1}`, head];
+    if (base) args.push('--not', base);
+    for (const sha of git(cwd, args).trim().split('\n').filter(Boolean)) {
+      commits.add(sha);
+      requireLimit(commits.size <= pushLimits.commits, 'push-commits-limit');
+    }
+  }
+  result.commitCount = commits.size;
+  const blobs = new Map();
+  const versions = new Set();
+  let entries = 0;
+  let totalBytes = 0;
+  for (const commitSha of commits) {
+    for (const entry of nulList(git(cwd, ['ls-tree', '-r', '-z', '--full-tree', commitSha]))) {
+      entries += 1;
+      requireLimit(entries <= pushLimits.entries, 'push-tree-entries-limit');
+      const tab = entry.indexOf('\t');
+      requireLimit(tab !== -1, 'invalid-tree-entry');
+      const [mode, type, blobSha] = entry.slice(0, tab).split(' ');
+      const filePath = entry.slice(tab + 1);
+      const version = `${mode}:${blobSha}:${filePath}`;
+      if (versions.has(version)) continue;
+      versions.add(version);
+      if (type !== 'blob' || !['100644', '100755'].includes(mode)) {
+        result.findings.push({ commitSha, path: filePath, category: 'unsupported-link' });
+        continue;
+      }
+      if (!blobs.has(blobSha)) {
+        requireLimit(blobs.size < pushLimits.blobs, 'push-blobs-limit');
+        const size = Number(git(cwd, ['cat-file', '-s', blobSha]).trim());
+        requireLimit(Number.isSafeInteger(size) && size >= 0 && size <= pushLimits.blobBytes, 'push-blob-size-limit');
+        totalBytes += size;
+        requireLimit(totalBytes <= pushLimits.totalBytes, 'push-total-size-limit');
+        blobs.set(blobSha, inspectFile('', git(cwd, ['cat-file', 'blob', blobSha], null)));
+      }
+      const content = blobs.get(blobSha);
+      result.inspectedCount += 1;
+      result.findings.push(...inspectFile(filePath, '').findings.map((finding) => ({ ...finding, commitSha })));
+      result.findings.push(...content.findings.map((finding) => ({ ...finding, path: filePath, commitSha })));
+      if (content.binary) result.uninspectedBinaryPaths.push(filePath);
+    }
+  }
+  return result;
 }
 
 function nulList(value) {
@@ -116,18 +232,19 @@ export function scanRepository(cwd, { staged = false } = {}) {
   return { inspectedCount, findings, uninspectedBinaryPaths };
 }
 
-export function main(args = process.argv.slice(2), cwd = process.cwd(), write = (line) => process.stdout.write(`${line}\n`)) {
-  if (args.some((argument) => !['--staged', '--pre-push'].includes(argument))) {
-    write('Usage: node scripts/guard.mjs [--staged] [--pre-push]');
+export function main(args = process.argv.slice(2), cwd = process.cwd(), write = (line) => process.stdout.write(`${line}\n`), readInput = readPushInput) {
+  const prePush = args[0] === '--pre-push';
+  const validArguments = prePush
+    ? args.length === 3 && args.slice(1).every((argument) => typeof argument === 'string' && argument.length > 0)
+    : args.length === 0 || (args.length === 1 && args[0] === '--staged');
+  if (!validArguments) {
+    write('Usage: node scripts/guard.mjs [--staged] | --pre-push <remote-name> <remote-location> (refs sur stdin)');
     return 2;
   }
-  if (args.includes('--pre-push')) {
-    write('Push refusé : la fondation Hestia autorise uniquement le travail local. Une décision explicite de publication et une évolution relue de ce hook sont nécessaires.');
-    return 1;
-  }
   try {
-    const result = scanRepository(cwd, { staged: args.includes('--staged') });
-    write(`Guard : ${result.inspectedCount} fichier(s), ${result.findings.length} signalement(s), ${result.uninspectedBinaryPaths.length} binaire(s) non inspecté(s). Détection partielle ; historique et fichiers ignorés non inspectés.`);
+    const result = prePush ? scanOutgoingCommits(cwd, readInput()) : scanRepository(cwd, { staged: args.includes('--staged') });
+    const scope = prePush ? `${result.commitCount} commit(s) sortant(s), ${result.updateCount} mise(s) à jour de refs. Détection partielle des blobs ; messages de commit et annotations de tag non inspectés.` : 'Détection partielle ; historique et fichiers ignorés non inspectés.';
+    write(`Guard : ${result.inspectedCount} version(s) de fichier, ${result.findings.length} signalement(s), ${result.uninspectedBinaryPaths.length} version(s) binaire(s) non inspectée(s). ${scope}`);
     for (const finding of result.findings) {
       write(redactOutput(JSON.stringify(finding)));
     }
@@ -135,9 +252,10 @@ export function main(args = process.argv.slice(2), cwd = process.cwd(), write = 
       write(redactOutput(JSON.stringify({ path: filePath, category: 'binary-not-inspected' })));
     }
     return result.findings.length > 0 ? 1 : 0;
-  } catch {
+  } catch (error) {
     // Do not print command stderr: an unusual filename or tool error may contain private values.
-    write('Guard impossible à terminer. Vérifier Git, les permissions et les fichiers ; aucune réussite déclarée.');
+    const code = error instanceof GuardError ? error.code : 'git-or-file-error';
+    write(`Guard impossible à terminer (${code}). Vérifier les entrées, l'historique local, les limites et les permissions ; aucune réussite déclarée.`);
     return 2;
   }
 }

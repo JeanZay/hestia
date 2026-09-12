@@ -63,7 +63,7 @@ Avant chaque livraison Production : preuves exactes des contrôles, recette Dev,
 
 ## Signalement d'un problème
 
-Le dépôt distant et son canal privé de signalement ne sont pas encore créés. Dans la fondation locale, transmettre une description minimale au responsable du projet sans joindre de document privé ni de secret. Avant publication, configurer un canal de signalement privé et le documenter. Une issue publique ne doit jamais contenir de preuve d'exploitation utilisant des données familiales.
+Le canal privé de signalement du dépôt public est décrit dans [SECURITY.md](../SECURITY.md). Son activation doit être vérifiée sur GitHub lors de la publication ; ne pas remplacer son absence ou une erreur d'accès par une issue publique contenant une vulnérabilité sensible. Ne transmettre que des reproductions synthétiques, sans document familial ni secret.
 
 En cas d'incident futur : stopper les échanges externes, limiter l'accès concerné, conserver des traces expurgées, qualifier l'étendue, révoquer les accès compromis si nécessaire et restaurer dans un environnement contrôlé. Les démarches réglementaires dépendent de l'incident et du rôle de l'opérateur ; elles doivent être évaluées sans présumer qu'une procédure technique suffit.
 

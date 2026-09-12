@@ -1,0 +1,69 @@
+{
+  "purpose": "Reçu figé de l’import initial ; aucun état ou backlog vivant à maintenir ici.",
+  "importedOn": "2026-09-12",
+  "repository": "https://github.com/JeanZay/hestia",
+  "project": "https://github.com/users/JeanZay/projects/3",
+  "sourceCommit": "2c0700ccd8acf4dd0dd1c970de23fcfc99914b52",
+  "issues": [
+    {
+      "key": "repository-governance",
+      "number": 1,
+      "url": "https://github.com/JeanZay/hestia/issues/1"
+    },
+    {
+      "key": "authentication-household",
+      "number": 2,
+      "url": "https://github.com/JeanZay/hestia/issues/2"
+    },
+    {
+      "key": "immutable-storage",
+      "number": 3,
+      "url": "https://github.com/JeanZay/hestia/issues/3"
+    },
+    {
+      "key": "file-mobile-ingestion",
+      "number": 4,
+      "url": "https://github.com/JeanZay/hestia/issues/4"
+    },
+    {
+      "key": "validation-duplicates",
+      "number": 5,
+      "url": "https://github.com/JeanZay/hestia/issues/5"
+    },
+    {
+      "key": "ocr-ai-minimization",
+      "number": 6,
+      "url": "https://github.com/JeanZay/hestia/issues/6"
+    },
+    {
+      "key": "search-provenance",
+      "number": 7,
+      "url": "https://github.com/JeanZay/hestia/issues/7"
+    },
+    {
+      "key": "family-profile",
+      "number": 8,
+      "url": "https://github.com/JeanZay/hestia/issues/8"
+    },
+    {
+      "key": "modular-connectors",
+      "number": 9,
+      "url": "https://github.com/JeanZay/hestia/issues/9"
+    },
+    {
+      "key": "backup-export-restore",
+      "number": 10,
+      "url": "https://github.com/JeanZay/hestia/issues/10"
+    },
+    {
+      "key": "portable-distribution",
+      "number": 11,
+      "url": "https://github.com/JeanZay/hestia/issues/11"
+    },
+    {
+      "key": "dev-qa-release",
+      "number": 12,
+      "url": "https://github.com/JeanZay/hestia/issues/12"
+    }
+  ]
+}

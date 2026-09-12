@@ -1,5 +1,7 @@
 # Fondation Hestia — bilan du 12 septembre 2026
 
+Ce document est le compte rendu historique du lot local, antérieur à l'autorisation de publication. La licence Apache-2.0 et la publication GitHub ont ensuite été autorisées ; les preuves de ce nouveau lot figurent dans [le bilan de publication](publication-status.md). Les états ci-dessous décrivent la fondation à sa clôture, et non le statut actuel du dépôt distant.
+
 **Fondation livrée localement et vérifiée.** Le résultat est une démo synthétique, une documentation fondatrice et un harnais de contribution. Il ne constitue pas encore le service familial cible. Aucun dépôt distant, aucune publication, aucun service payant et aucun déploiement distant n'ont été créés.
 
 ## Livré localement

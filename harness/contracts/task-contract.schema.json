@@ -42,7 +42,7 @@
         "candidateIdentity": { "const": "commit-sha-and-worktree-or-sha256-manifest" }
       }
     },
-    "deliveryTarget": { "enum": ["local", "Dev", "Production"] }
+    "deliveryTarget": { "enum": ["local", "GitHub", "Dev", "Production"], "description": "GitHub désigne la distribution du code, pas un troisième environnement applicatif." }
   },
   "$defs": {
     "nonEmptyStrings": {

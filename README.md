@@ -1,14 +1,16 @@
 # Hestia
 
+[Dépôt public](https://github.com/JeanZay/hestia) · [Issues](https://github.com/JeanZay/hestia/issues) · [Backlog officiel](https://github.com/users/JeanZay/projects/3)
+
 **Retrouver les documents du foyer, comprendre leur contenu, garder la maîtrise de ses données.**
 
-Hestia est un projet francophone destiné à devenir open source, avec une instance privée et indépendante par foyer. Il vise une inbox simple, des originaux conservés intacts, une recherche avec provenance et une validation légère des informations incertaines.
+Hestia est un projet open source francophone sous [licence Apache-2.0](LICENSE), avec une instance privée et indépendante par foyer comme cible. Il vise une inbox simple, des originaux conservés intacts, une recherche avec provenance et une validation légère des informations incertaines.
 
 ## État de cette fondation
 
 **Démo locale synthétique uniquement — 12 septembre 2026.** La recherche, les filtres, les liens vers cinq originaux d'exemple, la validation ou le refus d'une date ambiguë et les connecteurs simulés fonctionnent en mémoire. Recharger la page réinitialise les choix. Aucun compte, document réel, OCR, IA externe, base de données ou stockage d'objets n'est connecté.
 
-Le dépôt ne possède encore ni publication distante ni licence accordée. Le [choix de licence](docs/licensing.md) reste à valider. La démonstration n'est pas un coffre utilisable pour des données personnelles et ne doit pas être exposée sur Internet.
+Le [code source](https://github.com/JeanZay/hestia) et ses outils de contribution sont ouverts ; la démonstration n'est pas un coffre utilisable pour des données personnelles et ne doit pas être exposée sur Internet. La publication du code ne déploie aucun service Dev ou Production.
 
 ## Essayer en local
 
@@ -39,7 +41,7 @@ npm run verify
 
 Sous Linux, `npx playwright install --with-deps chromium` installe aussi les dépendances système si nécessaires. Le navigateur est un outil de test local gratuit. `verify` enchaîne le guard, les tests du harnais, le lint, les types, les tests métier et d'intégrité des originaux, le build, puis les parcours navigateur desktop et mobile. Il s'arrête au premier échec. Les résultats et le manifeste SHA-256 sont conservés dans `artifacts/`, ignoré par Git.
 
-`npm audit --audit-level=high` consulte séparément les alertes du registre public ; cette étape nécessite le réseau. La CI préparée exécute les contrôles Windows/Linux et la démo Docker. Elle ne déploie rien. Son existence ne signifie pas qu'elle a déjà été exécutée sur GitHub.
+`npm audit --audit-level=high` consulte séparément les alertes du registre public ; cette étape nécessite le réseau. La [CI GitHub](https://github.com/JeanZay/hestia/actions) est configurée pour les contrôles Windows/Linux et la démo Docker, sur les runners standards du dépôt public. Elle ne déploie rien et ne publie ni image Docker ni paquet. Consulter chaque exécution pour son résultat réel ; les preuves locales ne valent pas réussite de la CI distante.
 
 ## Voie Docker locale
 
@@ -61,7 +63,8 @@ Un profil `data-sandbox` prépare un PostgreSQL 17 jetable pour les futurs tests
 | [Sécurité](docs/security.md) et [signalement](SECURITY.md) | Protection dès la conception et limites actuelles |
 | [Portabilité](docs/portability.md) | Export, sauvegardes indépendantes, intégrité et restauration cible |
 | [Contribution](CONTRIBUTING.md) et [gouvernance](docs/delivery-governance.md) | Contrats, contrôles, revue indépendante et GO humain |
+| [Licence](docs/licensing.md) et [dépendances tierces](docs/third-party-notices.md) | Apache-2.0 pour les éléments originaux ; licences propres aux dépendances |
 
-GitHub Issues et Projects seront l'unique backlog. Une proposition ponctuelle d'issues attend l'autorisation de publication ; aucun backlog Markdown n'est entretenu. Les seuls environnements durables seront Dev et Production. La QA est une suite de contrôles et une recette sur Dev ; tout passage en Production demande un accord explicite sur la version exacte.
+[GitHub Issues](https://github.com/JeanZay/hestia/issues) et GitHub Projects constituent l'unique backlog. Les propositions de la fondation sont un import ponctuel, sans suivi concurrent dans les fichiers du dépôt. Les contributions passent par une pull request. Les seuls environnements durables seront Dev et Production. La QA est une suite de contrôles et une recette sur Dev ; tout passage en Production demande un accord explicite sur la version exacte.
 
-Le dépôt public contiendra le produit installable, son harnais, ses tests et sa documentation contributeur. Les outils privés d'animation ou de communication du projet relèvent d'un autre projet non public, sans accès aux données du coffre.
+Le dépôt public contient le produit installable, son harnais, ses tests et sa documentation contributeur. Les outils privés d'animation ou de communication du projet relèvent d'un autre projet non public, sans accès aux données du coffre.

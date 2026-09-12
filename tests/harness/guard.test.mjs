@@ -130,10 +130,10 @@ test('recognized tokens in a reported filename are redacted too', () => withRepo
   assert.ok(output.some((line) => line.includes('[redacted:github-token]')));
 }));
 
-test('publication stays refused for the foundation without an environment bypass', () => {
+test('pre-push requires the separate Git remote arguments', () => {
   const output = [];
-  assert.equal(main(['--pre-push'], process.cwd(), (line) => output.push(line)), 1);
-  assert.ok(output[0].includes('décision explicite'));
+  assert.equal(main(['--pre-push'], process.cwd(), (line) => output.push(line)), 2);
+  assert.ok(output[0].includes('remote-name'));
 });
 
 test('unknown options and repository errors cannot be reported as success', () => {

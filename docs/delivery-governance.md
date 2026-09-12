@@ -1,6 +1,6 @@
 # Gouvernance de développement et de livraison
 
-Statut : fondation locale du 12 septembre 2026. Ce document est la source unique des règles de livraison pour Codex, Claude Code et les contributeurs. Les autres fichiers y renvoient ; aucune règle documentaire ne vaut mécanisme technique déjà déployé.
+Statut : gouvernance actualisée pour la publication autorisée du 12 septembre 2026. Ce document est la source unique des règles de livraison pour Codex, Claude Code et les contributeurs. Les autres fichiers y renvoient ; aucune règle documentaire ne vaut mécanisme technique déjà déployé.
 
 ## Autorisations et périmètre
 
@@ -8,7 +8,7 @@ Amaury ne code pas et ne relit pas les modifications. Il décrit le besoin en fr
 
 La fondation initiale autorise la conception, les fichiers locaux, une application locale et des tests sur données synthétiques. Elle autorise le travail directement dans le dépôt initial et la délégation de sous-tâches bornées. Ces actions locales réversibles ne nécessitent pas de confirmations répétées.
 
-Elle exclut explicitement : push, création de dépôt distant, publication, déploiement Dev ou Production, données familiales réelles, secrets, coûts supplémentaires, services payants et lancement de Claude Code. La publication et la licence seront des décisions finales sur un résultat concret. Une autorisation future n'étend pas implicitement son périmètre à d'autres environnements, destinataires ou dépenses.
+La fondation initiale excluait push, dépôt distant et licence appliquée. Après sa vérification, Amaury a explicitement autorisé Apache-2.0 et la publication publique sur le compte GitHub connecté. Le contrat [publication-2026-09-12](../harness/contracts/publication-2026-09-12.json) borne cette nouvelle autorisation à `JeanZay/hestia`, ses Issues, son Project, ses réglages et les contrôles gratuits associés. Aucun déploiement Dev ou Production, donnée familiale, secret, coût supplémentaire, service payant ou lancement Claude n'est autorisé par ce lot.
 
 Pour tout lot ultérieur, le contrat consigne les actions déjà autorisées, les données utilisables, les exclusions et les critères d'acceptation. Une question n'est nécessaire que si une décision indispensable manque, si la demande franchit le périmètre autorisé ou si une protection effective refuse une opération nécessaire. Ne pas transformer une règle de prudence en interdiction universelle des actions déjà autorisées.
 
@@ -20,7 +20,7 @@ Pour tout lot ultérieur, le contrat consigne les actions déjà autorisées, le
 | Dev | Environnement durable authentifié et séparé, previews et recette utilisateur | Déploiement/commit, configuration sans valeurs de secrets, migrations, QA automatique et recette |
 | Production | Instance familiale réellement utilisée | GO explicite d'Amaury sur ce candidat, preuves Dev, sauvegarde/restauration et procédure de retour |
 
-QA est l'ensemble des contrôles et la recette sur Dev ; ce n'est pas un troisième environnement. Les identités, bases, stockages, sauvegardes et secrets de Dev et Production doivent être séparés. Les noms de branches, hébergeurs, protections distantes et pipelines de déploiement seront configurés dans un lot autorisé. Leur simple mention dans ce dépôt ne les rend pas actifs.
+QA est l'ensemble des contrôles et la recette sur Dev ; ce n'est pas un troisième environnement. Les identités, bases, stockages, sauvegardes et secrets de Dev et Production doivent être séparés. `main` est la branche publique par défaut du code ; sa mise à jour ne déploie aucune application. Le flux cible de développement utilise `develop` avant recette Dev, mais aucun environnement distant ni pipeline de déploiement n'est créé par la publication.
 
 ## Contrats, délégation et preuves
 
@@ -54,13 +54,15 @@ Le guard Node et les hooks Git fournis détectent certains chemins privés, form
 
 Ces hooks sont volontaires et contournables par un propriétaire du clone. Le guard est une détection partielle ; il ne fournit ni DLP exhaustive, ni preuve d'absence de données personnelles, ni audit de l'historique. Les fichiers ignorés ne sont pas inspectés. La minimisation, la revue et le secret scanning distant futur restent nécessaires.
 
-Le hook `pre-push` refuse tous les pushes dans cette fondation. Il n'existe pas d'interrupteur d'environnement censé transformer ce refus en approbation. Après décision de publication, l'évolution de ce hook et l'installation des protections distantes feront partie d'un changement explicite et relu. Aucun mécanisme local ne saurait authentifier à lui seul une décision humaine.
+Après l'autorisation explicite de publication, le hook `pre-push` contrôle les commits sortants, y compris les contenus introduits puis supprimés dans cette plage. Un premier push examine leur historique accessible. Les erreurs ou limites de scan empêchent un PASS ; le hook ne décide pas de l'autorisation humaine et reste une détection partielle. Aucun mécanisme local ne saurait authentifier à lui seul une décision humaine.
 
-La CI versionnée est préparée pour un futur dépôt distant. Tant qu'aucun service distant ne l'a exécutée, annoncer seulement les contrôles locaux réellement passés. Après autorisation, configurer des contrôles requis, des règles de branche, la revue exigée et les permissions minimales. Un fichier YAML ne prouve pas que ces protections sont actives.
+La CI utilise uniquement des runners GitHub standard dans le dépôt public. Les caches Actions et l'upload d'artifacts persistants sont désactivés pour éviter un coût de stockage ; les résultats restent dans les logs et résumés des jobs. Aucun secret ou workflow de déploiement n'est nécessaire. Une réussite distante n'est annoncée qu'après lecture des résultats du SHA concerné.
+
+La contribution passe par une PR, des contrôles requis et la résolution des conversations. Le nombre minimal d'approbations GitHub humaines est zéro tant que le projet n'a qu'un mainteneur : GitHub n'autorise pas son auteur à s'auto-approuver et cette contrainte ne doit pas bloquer toute évolution. La revue indépendante du harnais reste obligatoire et doit être liée au candidat ; elle n'est pas présentée comme une approbation GitHub humaine. Les protections doivent interdire force push et suppression de main, s'appliquer au mainteneur et être vérifiées par l'API. Consigner leur état effectif dans les preuves de publication ; le texte présent ne constitue pas leur activation.
 
 ## Backlog, livraison et décisions
 
-GitHub Issues est l'unique registre du travail ; GitHub Projects en présente les vues. `harness/github-issue-proposals.json` est une proposition ponctuelle d'import, sans statut vivant, assignation ni synchronisation. Aucun script ne la publie. Après publication autorisée, la supprimer ou l'archiver comme preuve d'import et conserver les numéros/liens dans GitHub. Aucun backlog Markdown n'est créé.
+GitHub Issues est l'unique registre du travail ; GitHub Projects en présente les vues. Les douze propositions de la fondation sont importées une fois après autorisation puis retirées des fichiers de travail. Un reçu d'import conserve seulement leurs clés et liens, sans état, priorité ou critères à maintenir en parallèle. Aucun backlog Markdown n'est créé.
 
 Présenter le bilan avec une date et des preuves : **livré localement** pour les fichiers et comportements vérifiés ; **proposé pour GitHub** pour les éléments non publiés ; **bloqué** seulement pour un obstacle avéré ; **différé** pour les capacités hors lot. Ne pas présenter une limitation prévue comme une panne ni un test local comme une réussite de Production.
 

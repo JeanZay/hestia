@@ -1,0 +1,58 @@
+{
+  "id": "publication-2026-09-12",
+  "objective": "Publier le code Hestia sous Apache-2.0 sur JeanZay/hestia, avec main par défaut, contributions par PR et backlog GitHub officiel.",
+  "githubIssue": "https://github.com/JeanZay/hestia/issues/1",
+  "scope": {
+    "included": [
+      "Appliquer Apache-2.0 et actualiser les documents de contribution.",
+      "Préserver le commit fondateur et créer le dépôt public, son remote et sa branche main.",
+      "Créer les 12 Issues et un Project lisible ; retirer les propositions actives locales après import.",
+      "Configurer et vérifier les contrôles GitHub disponibles sans achat ni déploiement."
+    ],
+    "excluded": [
+      "Données familiales, secrets et automatisations privées de communication.",
+      "Déploiements Dev ou Production et services payants.",
+      "Refonte fonctionnelle de la démonstration et publication de paquets ou d'images binaires."
+    ],
+    "ownedPaths": [
+      "README.md, CONTRIBUTING.md, SECURITY.md, LICENSE, docs/licensing.md, docs/third-party-notices.md : documentation.",
+      "scripts/guard.mjs, .githooks/pre-push, tests/harness/guard.test.mjs et tests ciblés : harnais.",
+      "Gouvernance, métadonnées, CI, contrats, reçus d'import et opérations GitHub : coordinateur."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Décision explicite d'Amaury du 12 septembre 2026 : adopter Apache License 2.0 et créer/publier Hestia en public sur le compte GitHub actuellement authentifié ; compte vérifié JeanZay, nom hestia libre avant création.",
+    "allowedActions": [
+      "Créer le dépôt GitHub public JeanZay/hestia, son remote, main par défaut et pousser les commits vérifiés.",
+      "Créer/configurer Issues et Project et activer les protections et réglages gratuits disponibles.",
+      "Exécuter contrôles locaux et CI sur runners standard publics sans cache ou stockage d'artifacts payants.",
+      "Faire une revue Codex indépendante du candidat avant push."
+    ],
+    "forbiddenActions": [
+      "Déployer l'application en Dev ou Production.",
+      "Engager un coût, changer un abonnement, publier des paquets ou images.",
+      "Publier une donnée familiale, un secret ou une usine privée de communication.",
+      "Choisir un autre owner/nom si JeanZay/hestia existe déjà avant création."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Commit fondateur conservé dans l'historique public.",
+    "Dépôt public, licence Apache-2.0 détectée et main par défaut vérifiés via GitHub.",
+    "Douze Issues publiées, liées au Project officiel ; aucun backlog vivant concurrent local.",
+    "Contributions par PR et contrôles effectifs vérifiés sans exiger une auto-approbation impossible du mainteneur.",
+    "URLs, limites résiduelles et absence de déploiement rapportées avec preuves."
+  ],
+  "validation": [
+    "Guard de l'historique publié et des commits sortants, tests du harnais, lint et métadonnées.",
+    "Revue indépendante du diff exact et vérification de préservation du commit fondateur.",
+    "Contrôles GitHub : visibilité, licence, branche, protections, CI, Issues et Project."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "GitHub"
+}

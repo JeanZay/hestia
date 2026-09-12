@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 cd "$(git rev-parse --show-toplevel)"
-node scripts/guard.mjs --pre-push
+node scripts/guard.mjs --pre-push "$1" "$2"

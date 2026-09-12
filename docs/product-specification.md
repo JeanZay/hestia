@@ -1,6 +1,6 @@
 # Spécification produit Hestia
 
-Version de cadrage : 12 septembre 2026. Ce document exprime les besoins et décisions ; il ne constitue pas un backlog. Les travaux, priorités et états de livraison seront suivis uniquement dans GitHub Issues et GitHub Projects après autorisation de publication.
+Version de cadrage : 12 septembre 2026, actualisée après la décision Apache-2.0 et l'autorisation de publication GitHub. Ce document exprime les besoins et décisions ; il ne constitue pas un backlog. Les travaux, priorités et états de livraison sont suivis uniquement dans GitHub Issues et GitHub Projects.
 
 ## Origine et portée
 
@@ -10,7 +10,7 @@ Un besoin **validé** engage la conception cible, sans signifier qu'il est impl�
 
 ## Finalité et utilisateurs
 
-Hestia est un socle numérique familial privé, francophone, destiné à devenir open source. Chaque foyer installe et contrôle sa propre instance indépendante. Il retrouve ses documents, comprend les informations qui en sont extraites et garde la maîtrise de leur utilisation. Le logiciel doit être reconstructible ; les données familiales sont l'actif à préserver.
+Hestia est un socle numérique familial privé, francophone et open source sous Apache-2.0. Chaque foyer installe et contrôle sa propre instance indépendante. Il retrouve ses documents, comprend les informations qui en sont extraites et garde la maîtrise de leur utilisation. Le logiciel doit être reconstructible ; les données familiales sont l'actif à préserver.
 
 | ID | Décision validée |
 | --- | --- |
@@ -111,7 +111,7 @@ Pour la cible, la désactivation doit être vérifiée avant toute nouvelle tent
 | GOV-06 | La branche de Production est protégée. Toute livraison exige les contrôles requis, une sauvegarde vérifiée, des migrations contrôlées, un retour arrière préparé et des tests après déploiement. Aucun GO implicite, aucune publication ni livraison distante dans le lot initial. |
 | GOV-07 | GitHub Issues et GitHub Projects sont l'unique backlog. Le pilote produit agentique transforme les échanges validés en issues, les découpe, les déduplique et propose critères, dépendances et priorités. Le responsable produit décide les choix importants sans administration manuelle des détails. |
 | GOV-08 | Les statuts reflètent des preuves réelles : développé, testé, revu, disponible en Dev ou livré en Production. Une issue n'est fermée comme livrée qu'après vérification indépendante de la version effectivement déployée. L'interface de pilotage expose un backlog lisible, une preview et un verdict clair. |
-| OSS-01 | Le projet a vocation à être open source dès sa fondation : code du produit installable, harnais de développement du produit, tests, données synthétiques, documentation de contribution autorisée et backlog GitHub seront publiables. Ce périmètre exclut l'usine privée décrite par PUB-01 à PUB-06. Aucun dépôt distant n'est publié et aucune licence n'est accordée avant décision explicite. |
+| OSS-01 | Le projet est open source sous Apache-2.0 après décision explicite du 12 septembre 2026 : code du produit installable, harnais de développement du produit, tests, données synthétiques, documentation de contribution autorisée et backlog GitHub sont publiables sur JeanZay/hestia. Ce périmètre exclut l'usine privée décrite par PUB-01 à PUB-06 et n'autorise aucune publication des données d'un foyer. |
 | OSS-02 | Les utilisateurs doivent recevoir des versions stables, une installation guidée, des migrations et des outils de sauvegarde/restauration. Le harnais et le backlog servent surtout aux contributeurs. |
 | OSS-03 | Le code partageable reste strictement séparé des données, configurations et secrets de chaque foyer. |
 
@@ -140,7 +140,7 @@ Cette table conserve les options du carnet. EXP-01 à EXP-06 reprennent sa rubri
 | EXP-02 | Forme des rappels : dans l'application, e-mail, calendrier ou notification mobile. Définir permissions, consentement, fréquence et erreurs visibles avant activation. |
 | EXP-03 | Niveau exact de séparation des documents communs, personnels, financiers et partagés temporairement ; préciser droits de lecture, modification, export et révocation. |
 | EXP-04 | Hébergement principal et fournisseur indépendant de sauvegarde ; vérifier coûts, localisation, conditions de traitement, export et restauration. |
-| EXP-05 | Licence open source : recommandation Apache-2.0 soumise à décision, avec alternatives dans [Licence](licensing.md). |
+| EXP-05 | Option tranchée après cadrage : Apache-2.0 adoptée explicitement le 12 septembre 2026. Le choix initial et son application sont documentés dans [Licence](licensing.md). |
 | EXP-06 | Périmètre initial de documentation anglaise destinée aux contributeurs. Le français utilisateur demeure prioritaire. |
 | EXP-07 | Claude Design est un outil envisagé pour l'interface et l'expérience ; aucun abonnement, transfert de données ou usage n'est activé par cette mention. |
 | EXP-08 | SQL, Supabase, sites web, IA et combinaisons pertinentes restent des solutions envisageables si elles respectent les exigences. L'ADR choisit un socle de départ sans engagement d'hébergement. |
