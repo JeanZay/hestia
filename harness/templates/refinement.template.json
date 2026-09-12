@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dataPolicy": "synthetic-only",
+  "stage": "exploration",
+  "source": {
+    "original": "Remplacer par les mots du responsable produit ; ne pas les normaliser.",
+    "capturedAt": "2026-09-12T00:00:00Z",
+    "reference": "Conversation ou Issue source à identifier."
+  },
+  "nuances": [],
+  "brief": {
+    "need": "Reformulation candidate à discuter.",
+    "outcome": "Résultat observable à préciser.",
+    "actors": [],
+    "scope": { "included": [], "excluded": [] },
+    "decisions": { "product": [], "ux": [], "security": [], "architecture": [] },
+    "questions": [],
+    "hypotheses": [],
+    "risks": [],
+    "criteria": [],
+    "preparations": []
+  },
+  "plan": { "repository": "https://github.com/JeanZay/hestia", "project": "https://github.com/users/JeanZay/projects/3", "issues": [], "order": [], "mutations": [] },
+  "approvals": { "brief": null, "publication": null },
+  "publication": { "receipts": [] },
+  "readiness": { "dependencyEvidence": [], "handoffs": [] }
+}

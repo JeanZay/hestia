@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 const steps = [
   ['guard', ['scripts/guard.mjs']],
+  ['refinement', ['scripts/refinement-check.mjs', 'harness/templates/refinement.template.json']],
   ['harness', ['--test', 'tests/harness/*.test.mjs']],
   ['lint', ['node_modules/eslint/bin/eslint.js', '.', '--max-warnings=0']],
   ['types', ['node_modules/typescript/bin/tsc', '--noEmit']],

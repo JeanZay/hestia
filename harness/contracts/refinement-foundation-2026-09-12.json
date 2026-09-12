@@ -1,0 +1,25 @@
+{
+  "id": "refinement-foundation-2026-09-12",
+  "objective": "Construire et éprouver localement hestia-refinement et ses supports afin de transformer un besoin flou en brief validable puis en plan d'Issues exécutable, sous décisions produit explicites.",
+  "githubIssue": null,
+  "scope": {
+    "included": ["Skill locale avec rounds courts, nuances, challenge et décisions séparées produit/UX/sécurité/architecture.", "Dossier temporaire de refinement, plan d'Issues, contrôles déterministes et handoff vers le contrat delivery.", "Tests synthétiques, essai indépendant sur l'Issue 2 et revue du candidat exact."],
+    "excluded": ["Implémentation de l'authentification et décisions produit à la place d'Amaury.", "Création de sous-Issues, modification du Project, commentaires, push ou autre publication GitHub.", "Déploiement, données familiales, secrets, services payants et lancement Claude.", "Moteur générique de backlog ou publication automatique."],
+    "ownedPaths": ["Coordinateur : contrat du lot, tests/fixtures refinement, intégration package/verify, AGENTS/CONTRIBUTING/gouvernance/delivery et bilan.", "Auteur validation : harness/contracts/refinement.schema.json, harness/templates/refinement.template.json, scripts/refinement-check.mjs.", "Auteur skill : harness/skills/hestia-refinement/ seulement."]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Amaury, conversation du 12 septembre 2026 : conception puis construction de la skill locale ; plan harnais + skill approuvé par « OK alors allons-y, je valide ton plan ».",
+    "allowedActions": ["Lire dépôt et GitHub ; créer un worktree et une branche isolés.", "Créer, corriger et vérifier les fichiers locaux du lot, déléguer les travaux et revues indépendantes.", "Employer l'Issue 2 comme cas d'étude sans inventer d'accords produit ni créer de sous-Issues."],
+    "forbiddenActions": ["Écriture GitHub sans nouvel accord explicite sur le contenu exact.", "Code d'authentification, déploiement Dev ou Production, accès aux données familiales ou secrets, coût et lancement Claude."]
+  },
+  "acceptanceCriteria": ["La skill conserve les formulations et nuances, distingue décisions acquises et hypothèses et mène des rounds courts.", "Brief et plan séparent quatre domaines, scénarios positifs/négatifs, risques, questions, exclusions et décisions préparatoires.", "Le validateur refuse les structures invalides, dépendances inconnues/cycliques/mal ordonnées, accords devenus périmés et handoffs incohérents.", "Aucun succès du validateur ne prétend authentifier un accord humain, certifier la qualité d'un besoin ou autoriser une mutation.", "Le passage à delivery exige une Issue publiée relue et les prérequis du lot satisfaits avec preuves ; les autres Issues restent planifiées.", "L'essai indépendant de l'Issue 2 laisse les décisions ouvertes et toute publication en attente.", "Contrôles réels, limites et revue indépendante portent sur le candidat final identifié."],
+  "validation": ["node --test tests/harness/*.test.mjs", "npm run check:refinement", "npm run check:guard, npm run lint, npm run typecheck et npm test", "Validateur de skill, vérification des liens locaux et forward-test en contexte propre.", "Revue indépendante du diff et manifeste SHA-256 final ; build et navigateur si un changement d'application devient nécessaire (hors périmètre prévu)."],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

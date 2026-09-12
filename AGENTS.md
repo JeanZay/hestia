@@ -4,6 +4,8 @@ Hestia sert un foyer autonome. Amaury exprime le besoin, essaie Dev et donne un 
 
 Lire [la gouvernance de livraison](docs/delivery-governance.md), source de vérité des autorisations, preuves et revues. Utiliser le skill local [hestia-delivery](harness/skills/hestia-delivery/SKILL.md) pour une modification livrable. Le skill est fourni dans le dépôt ; sa découverte automatique par un outil n'est pas supposée.
 
+Pour clarifier un besoin, préparer un brief ou proposer un découpage, lire et utiliser le skill local [hestia-refinement](harness/skills/hestia-refinement/SKILL.md). Il mène les échanges produit jusqu'aux Issues prêtes, puis passe le lot à `hestia-delivery`. Une validation du brief n'autorise pas sa publication : présenter le contenu exact des mutations GitHub et obtenir l'accord explicite applicable avant de les effectuer.
+
 - Inspecter l'état Git avant de modifier ; conserver tout travail existant. Pour cette seule fondation initiale, le travail dans ce dossier local est explicitement autorisé. Chaque lot ultérieur utilise une branche et un worktree isolés ; séparer aussi les chemins des auteurs concurrents.
 - Préparer un contrat de tâche borné à partir de `harness/contracts/task-template.json`. Une tâche locale réversible déjà autorisée ne nécessite pas une nouvelle permission.
 - Séparer conception, implémentation et revue. Déléguer les sous-tâches indépendantes avec des chemins possédés explicitement. Le relecteur indépendant reçoit un contexte propre et le candidat exact ; l'auteur ne s'auto-approuve pas.

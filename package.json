@@ -18,6 +18,7 @@
     "test:harness": "node --test tests/harness/*.test.mjs",
     "test:e2e": "node scripts/e2e.mjs",
     "check:guard": "node scripts/guard.mjs",
+    "check:refinement": "node scripts/refinement-check.mjs harness/templates/refinement.template.json",
     "verify": "node scripts/verify.mjs",
     "evidence:snapshot": "node scripts/evidence.mjs"
   },
