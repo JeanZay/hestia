@@ -1,0 +1,25 @@
+{
+  "id": "foundation-2026-09-12",
+  "objective": "Fonder Hestia localement : documentation francophone, application minimale synthétique, harnais agentique et préparation GitHub sans publication.",
+  "githubIssue": null,
+  "scope": {
+    "included": ["Auditer et préserver le dépôt local initial.", "Structurer la vision produit, l'architecture, la sécurité et les décisions réversibles.", "Préparer une application mobile-first exécutable, des contrôles utiles et une CI.", "Créer contrats, hooks volontaires, modèles GitHub et proposition ponctuelle d'issues.", "Faire relire indépendamment le candidat exact et remettre des preuves datées."],
+    "excluded": ["Authentification et traitement de documents familiaux réels.", "Publication du dépôt ou choix irréversible de licence.", "Services payants, secrets et déploiements."],
+    "ownedPaths": ["Dépôt local Hestia ; sous-tâches séparées explicitement entre documentation, harnais et application."]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Demande de fondation Hestia d'Amaury du 12 septembre 2026, exécutée directement dans le dossier local initial.",
+    "allowedActions": ["Lire l'état local et le carnet de cadrage fourni, puis n'en conserver que les besoins sans données privées.", "Créer et vérifier des fichiers locaux et une application de démonstration synthétique.", "Déléguer des sous-tâches bornées et obtenir une revue Codex indépendante."],
+    "forbiddenActions": ["Push, création de dépôt distant et publication GitHub.", "Déploiement Dev ou Production.", "Secret, donnée familiale réelle, service payant ou coût supplémentaire.", "Lancement Claude Code ou transmission de données privées à un tiers."]
+  },
+  "acceptanceCriteria": ["Documentation et ADR cohérentes avec la vision fournie, sans données privées.", "Application locale exécutable avec fixtures explicitement synthétiques.", "Lint, types, tests utiles et construction exécutés ou limites rapportées sans faux PASS.", "Harnais concret et tests déterministes des contrôles locaux.", "Revue distincte de l'implémentation sur le candidat identifié.", "Bilan daté local / proposé / bloqué / différé et décisions licence/publication présentées."],
+  "validation": ["npm run verify", "Parcours navigateur local pertinent pour l'interface et le mobile.", "Revue indépendante avec manifeste SHA-256 du candidat non commité ou SHA de commit exact."],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

@@ -1,0 +1,30 @@
+name: Besoin ou évolution
+description: Décrire un résultat utile au foyer et ses critères d'acceptation.
+title: "[Besoin] "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Besoin en langage naturel
+      description: Qui veut faire quoi, dans quelle situation ? Utiliser des exemples synthétiques.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Résultat observable et critères d'acceptation
+      description: Ce qui permettra de dire que le besoin est satisfait, y compris sur mobile.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Périmètre, dépendances et limites
+      description: Hors périmètre, issues requises, données utilisées, environnement et autorisations éventuelles.
+  - type: checkboxes
+    id: data
+    attributes:
+      label: Confidentialité
+      options:
+        - label: Cette issue ne contient ni secret ni document ou donnée familiale réelle.
+          required: true

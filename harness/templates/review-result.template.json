@@ -1,0 +1,12 @@
+{
+  "templateOnly": true,
+  "taskContract": null,
+  "reviewedAtUtc": null,
+  "authors": [],
+  "reviewer": { "identity": null, "tool": null, "effectiveModel": null, "independentFromAuthors": null, "cleanContext": null, "providedContext": [] },
+  "candidate": { "commitSha": null, "worktreeState": null, "manifestPath": null, "manifestSha256": null, "scope": [], "excludedEvidencePaths": [] },
+  "executedChecks": [],
+  "findings": [],
+  "verdict": "NOT_PERFORMED",
+  "limitations": ["Modèle vierge ; aucune revue n'a été exécutée."]
+}

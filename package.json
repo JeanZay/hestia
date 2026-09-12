@@ -1,0 +1,39 @@
+{
+  "name": "hestia",
+  "version": "0.1.0-dev.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Socle familial privé et francophone — fondation synthétique locale",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "npm": ">=11 <12"
+  },
+  "scripts": {
+    "dev": "node scripts/run-next.mjs dev",
+    "build": "node scripts/run-next.mjs build",
+    "start": "node scripts/run-next.mjs start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:harness": "node --test tests/harness/*.test.mjs",
+    "test:e2e": "node scripts/e2e.mjs",
+    "check:guard": "node scripts/guard.mjs",
+    "verify": "node scripts/verify.mjs",
+    "evidence:snapshot": "node scripts/evidence.mjs"
+  },
+  "dependencies": {
+    "next": "16.3.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.5",
+    "typescript": "~5.9.0",
+    "vitest": "5.0.0"
+  }
+}

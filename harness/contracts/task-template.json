@@ -1,0 +1,25 @@
+{
+  "id": "a-renseigner",
+  "objective": "Décrire le résultat observable demandé pour ce lot.",
+  "githubIssue": null,
+  "scope": {
+    "included": ["Décrire les comportements inclus."],
+    "excluded": ["Décrire les capacités hors lot."],
+    "ownedPaths": ["Préciser les chemins réservés à cette tâche."]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Citer la demande ou décision explicite et sa date ; ce modèle n'accorde aucune autorisation.",
+    "allowedActions": ["Décrire uniquement les actions déjà autorisées."],
+    "forbiddenActions": ["Publication, push, déploiement, secrets, données réelles et coûts sans décision applicable."]
+  },
+  "acceptanceCriteria": ["Décrire un comportement vérifiable et son résultat attendu."],
+  "validation": ["Préciser les contrôles pertinents et la preuve attendue ; aucun n'est exécuté par ce modèle."],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

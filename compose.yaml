@@ -1,0 +1,45 @@
+name: hestia-foundation
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      HESTIA_MODE: demo
+      HESTIA_ENV: dev
+      NEXT_TELEMETRY_DISABLED: "1"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(async r=>{const b=await r.json();process.exit(r.ok&&b.mode==='demo'&&b.synthetic===true?0:1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    networks: [demo]
+
+  # Bac à sable jetable pour les futurs tests SQL, sans donnée privée.
+  # Aucun port hôte, aucun volume durable, aucun secret, aucune connexion applicative.
+  postgres:
+    image: postgres:17.11-bookworm
+    profiles: [data-sandbox]
+    environment:
+      POSTGRES_DB: hestia_synthetic
+      POSTGRES_USER: hestia_synthetic
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hestia_synthetic -d hestia_synthetic"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  demo: {}
+  data:
+    internal: true

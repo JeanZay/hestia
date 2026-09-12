@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Contrat de tâche Hestia",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "objective", "githubIssue", "scope", "dataPolicy", "authorization", "acceptanceCriteria", "validation", "independentReview", "deliveryTarget"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "objective": { "type": "string", "minLength": 1 },
+    "githubIssue": { "type": ["string", "null"], "description": "URL GitHub après publication ; null pour la fondation non publiée." },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "excluded", "ownedPaths"],
+      "properties": {
+        "included": { "$ref": "#/$defs/nonEmptyStrings" },
+        "excluded": { "$ref": "#/$defs/nonEmptyStrings" },
+        "ownedPaths": { "$ref": "#/$defs/nonEmptyStrings" }
+      }
+    },
+    "dataPolicy": { "type": "string", "enum": ["synthetic-only"] },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "allowedActions", "forbiddenActions"],
+      "properties": {
+        "source": { "type": "string", "minLength": 1 },
+        "allowedActions": { "$ref": "#/$defs/nonEmptyStrings" },
+        "forbiddenActions": { "$ref": "#/$defs/nonEmptyStrings" }
+      }
+    },
+    "acceptanceCriteria": { "$ref": "#/$defs/nonEmptyStrings" },
+    "validation": { "$ref": "#/$defs/nonEmptyStrings" },
+    "independentReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "reviewerMustDifferFromAuthor", "cleanContext", "candidateIdentity"],
+      "properties": {
+        "required": { "const": true },
+        "reviewerMustDifferFromAuthor": { "const": true },
+        "cleanContext": { "const": true },
+        "candidateIdentity": { "const": "commit-sha-and-worktree-or-sha256-manifest" }
+      }
+    },
+    "deliveryTarget": { "enum": ["local", "Dev", "Production"] }
+  },
+  "$defs": {
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "templateOnly": true,
+  "taskContract": null,
+  "recordedAtUtc": null,
+  "executor": null,
+  "candidate": { "commitSha": null, "worktreeState": null, "manifestPath": null, "manifestSha256": null },
+  "environment": "local",
+  "dataClassification": "synthetic-only",
+  "checks": [],
+  "devRecipe": { "status": "NOT_PERFORMED", "deploymentId": null, "commitSha": null, "observations": [] },
+  "productionApproval": null,
+  "limitations": ["Modèle vierge ; une vérification doit consigner commande, date UTC, exit code, résultat et sortie expurgée réellement obtenus."]
+}

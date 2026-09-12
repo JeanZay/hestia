@@ -1,0 +1,29 @@
+name: Dysfonctionnement
+description: Fournir une reproduction synthétique et les effets observés.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Résultat observé et résultat attendu
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Étapes pour reproduire
+      description: Exemples synthétiques uniquement ; ne pas joindre de document familial.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version, appareil, navigateur et environnement
+      description: Local ou Dev ; ne pas coller d'URL privée signée ni de jeton.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact et fréquence
+  - type: markdown
+    attributes:
+      value: "Une vulnérabilité ou fuite de secret ne doit pas être publiée ici. Suivre SECURITY.md."

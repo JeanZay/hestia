@@ -1,0 +1,11 @@
+HESTIA — DOCUMENT ENTIÈREMENT SYNTHÉTIQUE
+Aucune valeur de ce document ne correspond à une personne ou un événement réel.
+
+EXEMPLE D’INSCRIPTION À UN ATELIER
+Émetteur fictif : Jardin Démo
+Activité fictive : atelier jardin en famille
+Date : 19 septembre 2026
+Horaire : 10:00
+Référence : DEMO-JARDIN-005
+
+Ce fichier sert uniquement à charger un exemple local dans la démonstration.

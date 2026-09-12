@@ -1,0 +1,12 @@
+HESTIA — DOCUMENT ENTIÈREMENT SYNTHÉTIQUE
+Aucune valeur de ce document ne correspond à une personne ou une inscription réelle.
+
+EXEMPLE DE NOTE DE MÉDIATHÈQUE
+Émetteur fictif : Médiathèque Démo
+Destinataire fictif : Foyer Démo
+Objet : renouvellement de l’inscription
+Date inscrite sur la note : 28 ou 29 septembre 2026 (écriture ambiguë)
+Proposition de lecture à vérifier : 29 septembre 2026
+Référence : DEMO-MEDIA-002
+
+L’ambiguïté est volontaire. La source ne permet pas de trancher automatiquement.

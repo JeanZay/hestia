@@ -1,0 +1,12 @@
+HESTIA — DOCUMENT ENTIÈREMENT SYNTHÉTIQUE
+Aucune valeur de ce document ne correspond à une personne ou un contrat réel.
+
+EXEMPLE DE FACTURE ÉNERGIE
+Émetteur fictif : Énergie Démo
+Destinataire fictif : Foyer Démo
+Période : septembre 2026
+Montant : 92,40 EUR
+Échéance : 30 septembre 2026
+Référence : DEMO-ENERGIE-001
+
+Ce fichier texte est l’original de démonstration. Il n’est pas une facture valable.
