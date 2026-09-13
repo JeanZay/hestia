@@ -5,7 +5,7 @@
   "scope": {
     "included": ["Correction ciblée des instructions de conduite des rounds de refinement.", "Vérification du format, du candidat exact et revue indépendante avec scénarios conversationnels."],
     "excluded": ["Code d'authentification, autres fonctionnalités Hestia et modification du validateur.", "Publication GitHub, Issues/sous-Issues, PR, déploiement, données familiales, secrets, coûts et Claude."],
-    "ownedPaths": ["Auteur : harness/skills/hestia-refinement/SKILL.md et présent contrat, dans codex/refinement-driving.", "Relecteur : artifacts/driving-review/ seulement ; aucune modification des sources.", "Preuves auteur : artifacts/driving-evidence/ ; dossier produit existant maintenu séparément dans son worktree d'exploration."]
+    "ownedPaths": ["Auteur : .agents/skills/hestia-refinement/SKILL.md et présent contrat, dans codex/refinement-driving.", "Relecteur : artifacts/driving-review/ seulement ; aucune modification des sources.", "Preuves auteur : artifacts/driving-evidence/ ; dossier produit existant maintenu séparément dans son worktree d'exploration."]
   },
   "dataPolicy": "synthetic-only",
   "authorization": {

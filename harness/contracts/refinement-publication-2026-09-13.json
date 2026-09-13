@@ -5,7 +5,7 @@
   "scope": {
     "included": [
       "Les trois commits d6817aa, fcc021b et 236a8e7 constituant le harnais de refinement.",
-      "Le présent contrat de publication, les contrôles du candidat exact, le push de la branche et la PR GitHub associée."
+      "Le présent contrat de publication, le déplacement des skills vers `.agents/skills`, la mise à jour de leurs références, les contrôles du candidat exact, le push de la branche et la PR GitHub associée."
     ],
     "excluded": [
       "Les commits 9631d98 et 4336ba0 ainsi que tout fichier ou changement de gouvernance design.",
@@ -13,15 +13,16 @@
       "Modification fonctionnelle du produit, des Issues ou du Project GitHub."
     ],
     "ownedPaths": [
-      "Coordinateur : harness/contracts/refinement-publication-2026-09-13.json et publication de codex/refinement-driving.",
+      "Coordinateur : .agents/skills/, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, docs/delivery-governance.md, contrats citant les anciens chemins et publication de codex/refinement-driving.",
       "Relecteur indépendant : lecture seule du candidat exact ; aucun fichier source modifié."
     ]
   },
   "dataPolicy": "synthetic-only",
   "authorization": {
-    "source": "Amaury, conversation du 13 septembre 2026 : « pousse tout ce qui concerne le harnais et ne touche pas au reste pour le moment ».",
+    "source": "Amaury, conversation du 13 septembre 2026 : « pousse tout ce qui concerne le harnais et ne touche pas au reste pour le moment », puis « Ok do it ! N'oublie pas de changer AGENTS.md » pour rendre les skills découvrables au bon moment.",
     "allowedActions": [
-      "Ajouter le contrat borné de publication au lot du harnais.",
+      "Ajouter et actualiser le contrat borné de publication du harnais.",
+      "Déplacer les deux skills vers `.agents/skills` et mettre à jour toutes leurs références actives.",
       "Exécuter les contrôles locaux et une revue indépendante sur le candidat exact.",
       "Pousser codex/refinement-driving vers JeanZay/hestia et créer sa PR sans la fusionner."
     ],

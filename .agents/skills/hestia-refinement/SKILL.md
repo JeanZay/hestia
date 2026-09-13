@@ -15,7 +15,7 @@ Conserver le besoin original et ses nuances avant toute reformulation. Distingue
 
 Confronter spécification, Issue et demande actuelle. En cas de divergence, présenter les formulations et leur effet concret, puis faire arbitrer ce qui change ; ne pas écraser silencieusement une source. Distinguer cible, première version et exclusion : « adultes utilisateurs initiaux » ne signifie pas « comptes enfants interdits pour toujours ».
 
-Utiliser le [modèle de dossier](../../templates/refinement.template.json) et son [schéma](../../contracts/refinement.schema.json) dans `artifacts/refinement/<identifiant>/`, répertoire temporaire ignoré. N'y conserver que des exemples synthétiques et des formulations sans données personnelles ni secrets ; reformuler les détails privés par des rôles génériques. Inspecter explicitement chaque fichier avant partage : le guard du dépôt exclut les fichiers ignorés et ne prouve pas leur innocuité. Le dossier de travail ne devient jamais un backlog Markdown maintenu en parallèle.
+Utiliser le [modèle de dossier](../../../harness/templates/refinement.template.json) et son [schéma](../../../harness/contracts/refinement.schema.json) dans `artifacts/refinement/<identifiant>/`, répertoire temporaire ignoré. N'y conserver que des exemples synthétiques et des formulations sans données personnelles ni secrets ; reformuler les détails privés par des rôles génériques. Inspecter explicitement chaque fichier avant partage : le guard du dépôt exclut les fichiers ignorés et ne prouve pas leur innocuité. Le dossier de travail ne devient jamais un backlog Markdown maintenu en parallèle.
 
 ## Mener les rounds courts
 

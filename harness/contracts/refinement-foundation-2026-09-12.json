@@ -5,7 +5,7 @@
   "scope": {
     "included": ["Skill locale avec rounds courts, nuances, challenge et décisions séparées produit/UX/sécurité/architecture.", "Dossier temporaire de refinement, plan d'Issues, contrôles déterministes et handoff vers le contrat delivery.", "Tests synthétiques, essai indépendant sur l'Issue 2 et revue du candidat exact."],
     "excluded": ["Implémentation de l'authentification et décisions produit à la place d'Amaury.", "Création de sous-Issues, modification du Project, commentaires, push ou autre publication GitHub.", "Déploiement, données familiales, secrets, services payants et lancement Claude.", "Moteur générique de backlog ou publication automatique."],
-    "ownedPaths": ["Coordinateur : contrat du lot, tests/fixtures refinement, intégration package/verify, AGENTS/CONTRIBUTING/gouvernance/delivery et bilan.", "Auteur validation : harness/contracts/refinement.schema.json, harness/templates/refinement.template.json, scripts/refinement-check.mjs.", "Auteur skill : harness/skills/hestia-refinement/ seulement."]
+    "ownedPaths": ["Coordinateur : contrat du lot, tests/fixtures refinement, intégration package/verify, AGENTS/CONTRIBUTING/gouvernance/delivery et bilan.", "Auteur validation : harness/contracts/refinement.schema.json, harness/templates/refinement.template.json, scripts/refinement-check.mjs.", "Auteur skill : .agents/skills/hestia-refinement/ seulement."]
   },
   "dataPolicy": "synthetic-only",
   "authorization": {

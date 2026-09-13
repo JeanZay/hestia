@@ -1,6 +1,6 @@
 # Publication et passage à delivery
 
-Lire cette référence à partir du plan d'Issues, pour une reprise après interruption ou pour préparer un handoff. La [gouvernance](../../../../docs/delivery-governance.md) conserve les règles d'autorisation et de livraison ; le [schéma du dossier](../../../contracts/refinement.schema.json) fixe les champs acceptés.
+Lire cette référence à partir du plan d'Issues, pour une reprise après interruption ou pour préparer un handoff. La [gouvernance](../../../../docs/delivery-governance.md) conserve les règles d'autorisation et de livraison ; le [schéma du dossier](../../../../harness/contracts/refinement.schema.json) fixe les champs acceptés.
 
 ## Préparer un accord vérifiable
 
@@ -47,6 +47,6 @@ Une Issue fermée ou un prédécesseur placé plus tôt ne prouve pas que sa cap
 
 Le format actuel porte les questions et préparations bloquantes au niveau du brief : une question bloquante non répondue empêche `brief-validated` et les étapes suivantes ; une préparation bloquante inachevée empêche tout handoff dans ce dossier. Pour livrer l'étude qui doit justement lever cette incertitude, cadrer un dossier distinct borné à cette étude, avec son propre brief et ses critères de sortie ; garder les Issues de fonctionnalité planifiées. Ne pas inventer une réponse, déclarer l'étude terminée ou retirer un blocage uniquement pour faire passer le validateur.
 
-Préparer le [contrat de tâche](../../../contracts/task-template.json) à partir de l'Issue relue : `githubIssue`, objectif, périmètre, chemins possédés, données autorisées, critères, contrôles et revue indépendante. Relier les preuves de dépendances au handoff dans le dossier. Son champ `briefReference` porte l'URL exacte du commentaire relu et l'empreinte du brief approuvé. Transmettre cette référence à delivery pour que l'agent retrouve les décisions et nuances sans dépendre du dossier temporaire. Ne pas recopier le GO GitHub comme autorisation de développer, déployer ou dépenser ; consulter les autorisations d'exécution déjà applicables et signaler uniquement celles qui manquent réellement.
+Préparer le [contrat de tâche](../../../../harness/contracts/task-template.json) à partir de l'Issue relue : `githubIssue`, objectif, périmètre, chemins possédés, données autorisées, critères, contrôles et revue indépendante. Relier les preuves de dépendances au handoff dans le dossier. Son champ `briefReference` porte l'URL exacte du commentaire relu et l'empreinte du brief approuvé. Transmettre cette référence à delivery pour que l'agent retrouve les décisions et nuances sans dépendre du dossier temporaire. Ne pas recopier le GO GitHub comme autorisation de développer, déployer ou dépenser ; consulter les autorisations d'exécution déjà applicables et signaler uniquement celles qui manquent réellement.
 
 Exécuter `node scripts/refinement-check.mjs --contract <contrat.json>` et revalider le dossier contenant le handoff. Confier ensuite le lot à [hestia-delivery](../../hestia-delivery/SKILL.md) avec URL, contrat, décisions utiles, dépendances satisfaites et limites. Les autres Issues restent planifiées jusqu'à satisfaction de leurs propres prérequis.

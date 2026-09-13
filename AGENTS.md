@@ -2,9 +2,9 @@
 
 Hestia sert un foyer autonome. Amaury exprime le besoin, essaie Dev et donne un GO ou un non-GO ; il ne relit pas le code. Les preuves techniques et la revue sont la responsabilité des agents.
 
-Lire [la gouvernance de livraison](docs/delivery-governance.md), source de vérité des autorisations, preuves et revues. Utiliser le skill local [hestia-delivery](harness/skills/hestia-delivery/SKILL.md) pour une modification livrable. Le skill est fourni dans le dépôt ; sa découverte automatique par un outil n'est pas supposée.
+Lire [la gouvernance de livraison](docs/delivery-governance.md), source de vérité des autorisations, preuves et revues. Utiliser le skill local [hestia-delivery](.agents/skills/hestia-delivery/SKILL.md) pour une modification livrable. Codex découvre ce skill depuis `.agents/skills` au démarrage de la tâche, puis lit son contenu complet lorsque la demande correspond ; ce fichier conserve un routage explicite pour les autres agents.
 
-Pour clarifier un besoin, préparer un brief ou proposer un découpage, lire et utiliser le skill local [hestia-refinement](harness/skills/hestia-refinement/SKILL.md). Il mène les échanges produit jusqu'aux Issues prêtes, puis passe le lot à `hestia-delivery`. Une validation du brief n'autorise pas sa publication : présenter le contenu exact des mutations GitHub et obtenir l'accord explicite applicable avant de les effectuer.
+Pour clarifier un besoin, préparer un brief ou proposer un découpage, lire et utiliser le skill local [hestia-refinement](.agents/skills/hestia-refinement/SKILL.md). Il mène les échanges produit jusqu'aux Issues prêtes, puis passe le lot à `hestia-delivery`. Une validation du brief n'autorise pas sa publication : présenter le contenu exact des mutations GitHub et obtenir l'accord explicite applicable avant de les effectuer.
 
 - Inspecter l'état Git avant de modifier ; conserver tout travail existant. Pour cette seule fondation initiale, le travail dans ce dossier local est explicitement autorisé. Chaque lot ultérieur utilise une branche et un worktree isolés ; séparer aussi les chemins des auteurs concurrents.
 - Préparer un contrat de tâche borné à partir de `harness/contracts/task-template.json`. Une tâche locale réversible déjà autorisée ne nécessite pas une nouvelle permission.

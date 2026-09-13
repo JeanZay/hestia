@@ -35,7 +35,7 @@ Le schéma `harness/contracts/task-contract.schema.json` décrit le contrat. Les
 
 ## Refinement et passage à la livraison
 
-Le skill local [hestia-refinement](../harness/skills/hestia-refinement/SKILL.md) prépare l'amont d'un lot. Le responsable produit pilote les choix ; l'agent conserve les formulations, reformule et challenge les hypothèses, contradictions, risques et exclusions. Les décisions produit, UX, sécurité et architecture restent distinctes. Un accord sur l'outillage ou sur une méthode ne répond pas implicitement aux questions produit du cas étudié.
+Le skill local [hestia-refinement](../.agents/skills/hestia-refinement/SKILL.md) prépare l'amont d'un lot. Le responsable produit pilote les choix ; l'agent conserve les formulations, reformule et challenge les hypothèses, contradictions, risques et exclusions. Les décisions produit, UX, sécurité et architecture restent distinctes. Un accord sur l'outillage ou sur une méthode ne répond pas implicitement aux questions produit du cas étudié.
 
 Les étapes sont exploration, brief candidat, brief validé, plan d'Issues proposé, publication autorisée, publication relue et Issues prêtes pour delivery. Le brief et le plan exacts reçoivent des accords distincts et sourcés. Une modification de leur contenu impose de revoir l'accord affecté ; le silence, une recommandation d'agent, une réussite de test ou un champ JSON ne remplacent jamais la décision d'Amaury. Avant toute écriture GitHub, vérifier l'accord réel de la session et relire l'état distant pour détecter les changements et doublons. Une publication partielle exige une réconciliation avant toute reprise.
 

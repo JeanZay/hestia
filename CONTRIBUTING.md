@@ -4,7 +4,7 @@ Hestia est ouvert aux contributions sous [licence Apache-2.0](LICENSE). Contribu
 
 ## Préparer une modification
 
-Si le besoin reste flou ou qu'une Issue regroupe plusieurs résultats, commencer par [hestia-refinement](harness/skills/hestia-refinement/SKILL.md) : rounds courts, décisions explicites, brief validable, puis petites Issues avec preuves et dépendances. La discussion conserve les nuances et sépare produit, UX, sécurité et architecture. Le dossier temporaire de préparation reste local et synthétique ; après publication autorisée, GitHub conserve le besoin et le suivi. L'accord produit sur un brief, l'accord de publication et l'autorisation d'exécuter un lot ont des portées distinctes.
+Si le besoin reste flou ou qu'une Issue regroupe plusieurs résultats, commencer par [hestia-refinement](.agents/skills/hestia-refinement/SKILL.md) : rounds courts, décisions explicites, brief validable, puis petites Issues avec preuves et dépendances. La discussion conserve les nuances et sépare produit, UX, sécurité et architecture. Le dossier temporaire de préparation reste local et synthétique ; après publication autorisée, GitHub conserve le besoin et le suivi. L'accord produit sur un brief, l'accord de publication et l'autorisation d'exécuter un lot ont des portées distinctes.
 
 Lire [AGENTS.md](AGENTS.md) et [la gouvernance](docs/delivery-governance.md). Rattacher le travail à une [GitHub Issue](https://github.com/JeanZay/hestia/issues) et au GitHub Project du dépôt. Ils constituent l'unique backlog ; le contrat de tâche décrit seulement le lot courant et ses critères. Ne pas créer de backlog Markdown ou réactiver le fichier d'import ponctuel.
 
