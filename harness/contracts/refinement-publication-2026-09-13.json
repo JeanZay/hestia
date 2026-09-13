@@ -1,0 +1,52 @@
+{
+  "id": "refinement-publication-2026-09-13",
+  "objective": "Publier sur GitHub le harnais de refinement Hestia déjà construit et validé localement, sans inclure les changements ultérieurs de gouvernance design.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Les trois commits d6817aa, fcc021b et 236a8e7 constituant le harnais de refinement.",
+      "Le présent contrat de publication, les contrôles du candidat exact, le push de la branche et la PR GitHub associée."
+    ],
+    "excluded": [
+      "Les commits 9631d98 et 4336ba0 ainsi que tout fichier ou changement de gouvernance design.",
+      "Merge dans main, déploiement Dev ou Production, données familiales, secrets, coûts et lancement Claude.",
+      "Modification fonctionnelle du produit, des Issues ou du Project GitHub."
+    ],
+    "ownedPaths": [
+      "Coordinateur : harness/contracts/refinement-publication-2026-09-13.json et publication de codex/refinement-driving.",
+      "Relecteur indépendant : lecture seule du candidat exact ; aucun fichier source modifié."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Amaury, conversation du 13 septembre 2026 : « pousse tout ce qui concerne le harnais et ne touche pas au reste pour le moment ».",
+    "allowedActions": [
+      "Ajouter le contrat borné de publication au lot du harnais.",
+      "Exécuter les contrôles locaux et une revue indépendante sur le candidat exact.",
+      "Pousser codex/refinement-driving vers JeanZay/hestia et créer sa PR sans la fusionner."
+    ],
+    "forbiddenActions": [
+      "Publier les commits ou fichiers de gouvernance design exclus du lot.",
+      "Fusionner la PR, déployer, manipuler des secrets ou données familiales, engager un coût ou lancer Claude."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Le diff publié contre main contient seulement le harnais de refinement et son contrat de publication.",
+    "Les commits 9631d98 et 4336ba0 ne sont accessibles par aucune branche publiée dans ce lot.",
+    "Les contrôles requis et la revue indépendante portent sur le SHA exact poussé.",
+    "La branche distante et la PR identifient le même candidat, sans merge ni déploiement."
+  ],
+  "validation": [
+    "npm run test:harness, npm run lint, npm run typecheck et npm test.",
+    "npm run check:guard, npm run check:refinement et validation du présent contrat.",
+    "git diff --check origin/main..HEAD et inventaire exact des chemins du diff.",
+    "Revue indépendante en contexte propre du candidat exact avant push, puis vérification distante du SHA et des contrôles GitHub."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "GitHub"
+}
