@@ -19,6 +19,7 @@ const steps = [
   ['refinement', ['scripts/refinement-check.mjs', 'harness/templates/refinement.template.json']],
   ['lifecycle-template', ['scripts/lifecycle-check.mjs', '--checkpoint', 'harness/templates/lifecycle.template.json', '--root', root, '--action', 'resume']],
   ['lifecycle-active', checkpoint ? ['scripts/lifecycle-check.mjs', '--checkpoint', checkpoint, '--root', root, '--action', 'resume'] : []],
+  ['design-prompts', ['scripts/design-prompt.mjs', 'audit']],
   ['harness', ['--test', 'tests/harness/*.test.mjs']],
   ['closure', ['scripts/closure.mjs', 'check', '--action', 'verify']],
   ['lint', ['node_modules/eslint/bin/eslint.js', '.', '--max-warnings=0']],

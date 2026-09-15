@@ -1,5 +1,7 @@
 # Prompt initial — Design System Hestia
 
+> Historique depuis le 15 septembre 2026 — ne plus remettre ce prompt tel quel. La vérification Anthropic a conduit à préciser les étapes et le réemploi du système. Repartir du candidat `design-system-v2.md` et appliquer `../claude-design-workflow.md` avant remise. Le texte ci-dessous est conservé pour traçabilité.
+
 Préparé le 13 septembre 2026. Ce fichier est un prompt à remettre à Claude Design par Amaury ; il ne constitue ni un Design System, ni sa validation. Aucun hand-off n'est réputé disponible.
 
 Copier le texte ci-dessous dans Claude Design. La convention de dossier proposée pour le résultat est `claude-design-handoff/`, à importer manuellement à la racine du projet Hestia.
