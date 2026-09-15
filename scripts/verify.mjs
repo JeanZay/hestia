@@ -20,6 +20,7 @@ const steps = [
   ['lifecycle-template', ['scripts/lifecycle-check.mjs', '--checkpoint', 'harness/templates/lifecycle.template.json', '--root', root, '--action', 'resume']],
   ['lifecycle-active', checkpoint ? ['scripts/lifecycle-check.mjs', '--checkpoint', checkpoint, '--root', root, '--action', 'resume'] : []],
   ['harness', ['--test', 'tests/harness/*.test.mjs']],
+  ['closure', ['scripts/closure.mjs', 'check', '--action', 'verify']],
   ['lint', ['node_modules/eslint/bin/eslint.js', '.', '--max-warnings=0']],
   ['types', ['node_modules/typescript/bin/tsc', '--noEmit']],
   ['unit', ['node_modules/vitest/vitest.mjs', 'run']],
@@ -32,13 +33,18 @@ try {
   const run = beginRun(root, 'verification');
   const { readJsonSafe } = await import('./refinement-check.mjs');
   const { runVerification } = await import('./lib/verification-run.mjs');
+  const { closureInputs } = await import('./lib/closure-state.mjs');
+  const closureState = () => closureInputs(root);
+  if (process.env.GITHUB_ACTIONS === 'true' && !closureState().present) {
+    Object.assign(steps.find(step => step.name === 'closure'), { required: false, skipReason: 'clone-registry-absent-in-ci' });
+  }
   let referencedFiles = null;
   if (checkpoint) {
     try { ({ referencedFiles } = await import('./lifecycle-check.mjs')); }
     catch { /* Recorded as unavailable candidate inputs in this run. */ }
   }
   const result = runVerification({
-    root, steps, checkpoint, run,
+    root, steps, checkpoint, run, closureState,
     inputPaths: () => {
       if (invalidArguments) throw new Error('usage: verify.mjs [--checkpoint path]');
       if (!checkpoint) return [];

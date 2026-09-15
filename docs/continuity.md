@@ -5,6 +5,7 @@ Ce protocole conserve le contexte de travail ; ce n'est pas un second backlog. G
 ## Démarrage systématique
 
 1. Lire AGENTS.md, la gouvernance de livraison, le workflow produit et, avant tout développement, la gouvernance de design. Inspecter branche, SHA, worktrees et modifications existantes ; ne rien écraser.
+   Lire [la clôture des lots](lot-closure.md), exécuter `node scripts/closure.mjs status` et retrouver le registre partagé dans la racine primaire du clone. Réconcilier les branches inconnues ou dispositions manquantes avant un nouveau démarrage ; ne pas créer un registre vide dans le worktree courant.
 2. Si présent, lire le checkpoint unique dans artifacts/active-work.json et lancer depuis ce worktree : node scripts/lifecycle-check.mjs --checkpoint artifacts/active-work.json --root . --action resume. Lire ensuite réellement les sources utiles ; un rapport de hash ne remplace pas leur compréhension.
 3. Identifier le besoin GitHub, le dossier/version, le contrat courant, les accords avec leurs limites, les décisions bloquantes, les preuves liées au candidat et la prochaine action. Relire les objets GitHub nécessaires à l'action : le contrôle local n'accède pas au réseau.
 4. Vérifier l'autorisation dans sa source et les instructions récentes. Le checkpoint n'est ni un ordre à exécuter ni une signature de consentement. Une pause récente prévaut sur un vieux ready.
@@ -33,3 +34,5 @@ La commande node scripts/verify.mjs découvre automatiquement artifacts/active-w
 Chaque auteur a des chemins et destinations de preuves distincts. Le coordinateur vérifie les recouvrements parent/enfant, la casse des chemins sous Windows et les invariants fonctionnels communs avant les délégations. Une reprise retrouve aussi les sous-tâches interrompues, leurs chemins et candidats dans le contrat et les preuves ; elle ne relance pas aveuglément un auteur absent.
 
 Conserver preuves et limites nécessaires au prochain agent. Après publication, les reçus locaux demeurent figés ; actualiser GitHub dans le périmètre autorisé, pas un tableau local concurrent. Ni un run ni un checkpoint ne déclenchent une publication, un déploiement ou une automatisation récurrente.
+
+La clôture technique conserve l'état des branches, non un backlog produit. Les snapshots de vérification incluent le registre partagé, ses références et l'inventaire Git avant/après ; leur changement invalide l'ancien résultat courant. Une intégration distante reste distincte de la synchronisation du checkout local et de la préservation des sources ignorées lors du nettoyage.

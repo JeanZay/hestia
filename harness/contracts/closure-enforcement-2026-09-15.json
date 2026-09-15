@@ -1,0 +1,54 @@
+{
+  "id": "closure-enforcement-2026-09-15",
+  "objective": "Compléter le candidat de harnais existant par des mécanismes vérifiables de clôture des lots, d'intégration pilotée par les agents selon les accords et de prévention des branches oubliées.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Contrôleur local partagé au clone : inventaire Git réel, décisions techniques et preuves de clôture, portes de démarrage, fin, merge et nettoyage.",
+      "Commandes encadrées, raccordement aux vérifications et hooks, tests synthétiques positifs/négatifs ; aucun merge réel dans ce lot.",
+      "Règles de livraison et reprise, mise à jour de hestia-delivery, état initial honnête des branches existantes et conservation des preuves antérieures."
+    ],
+    "excluded": [
+      "Publication, push, merge réel, suppression réelle d'ancienne branche/worktree ou données ; environnements Dev/Production.",
+      "Authentification, UI, nouvelles Issues/sous-Issues, données familiales, secrets, Claude, installations et coûts.",
+      "Backlog parallèle et inférence d'un GO merge à partir de l'accord de construire les mécanismes."
+    ],
+    "ownedPaths": [
+      "Continuation du candidat codex/agentic-lifecycle dans artifacts/worktrees/agentic-lifecycle ; root garde docs, skills, contrat, preuves et bootstrap du registre partagé sous artifacts/closure.",
+      "lifecycle_mechanics_audit : scripts/lib/closure-state.mjs, harness/schemas/closure.schema.json, tests/harness/closure-state.test.mjs uniquement.",
+      "continuity_github_audit : scripts/closure.mjs, scripts/lib/closure-runner.mjs, tests/harness/closure-runner.test.mjs, raccordement scripts/verify.mjs et .githooks après interface convenue.",
+      "Coordinateur : toute intégration aux preuves de vérification, documentation, package et fichiers non attribués ; auditeur documentaire lecture seule."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Amaury, 15 septembre 2026 : « Ok pour une règle supplémentaire, mais introduit directement les mécanismes pour garantir son application sinon ça restera un vœu pieu :) ». Accord sur le complément local de clôture, pas sur un merge ou une publication du candidat.",
+    "allowedActions": [
+      "Modifier et vérifier le candidat local existant, déléguer des chemins disjoints, créer les contrôles et leurs fixtures Git synthétiques, conserver les observations locales et sources minimisées."
+    ],
+    "forbiddenActions": [
+      "Exécuter un merge, un push, une publication ou un nettoyage réel des worktrees existants sans accord distinct applicable.",
+      "Prétendre authentifier un accord humain ou empêcher un contournement volontaire par le propriétaire du clone."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Une branche inconnue ou un lot laissé sans disposition explicite est détecté depuis tous les worktrees et bloque le prochain démarrage encadré.",
+    "Un lot ne peut être déclaré clos par simple réussite des tests ; son candidat, ses preuves, sa disposition et sa prochaine action sont vérifiés.",
+    "Une intégration sans accord exact, preuves ou état distant satisfaisant est refusée avant mutation ; son résultat réel est relu après une mutation autorisée.",
+    "Un nettoyage ne peut perdre des fichiers ignorés utiles ; les données non qualifiées et les chemins dangereux bloquent.",
+    "La suite habituelle contrôle le mécanisme et expose explicitement les limites de CI sans état local ; les hooks et compétences pointent vers les commandes.",
+    "Les tests prouvent les refus et comportements attendus ; un relecteur distinct examine le delta exact et ses corrections."
+  ],
+  "validation": [
+    "Tests du harnais avec vrais dépôts Git temporaires et adaptateurs distants synthétiques ; assertions d'absence de mutation en cas de refus.",
+    "Validation contrats, schémas et skill, guard, lint, types, suite existante et revue indépendante du delta.",
+    "Contrôle de reprise réel sur les branches Hestia présentes sans les fusionner ni les supprimer."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

@@ -12,20 +12,25 @@ Pour une interface, appliquer [la gouvernance de design](docs/design-governance.
 
 Inspecter l'état Git, préserver les changements existants et travailler dans une branche et un worktree isolés. Les auteurs en parallèle se répartissent explicitement les chemins. Préparer le contrat à partir de `harness/contracts/task-template.json` avec l'autorisation applicable et les critères vérifiables.
 
+Appliquer [la clôture des lots](docs/lot-closure.md) : inspecter l'état partagé avec `npm run closure:status`, utiliser le démarrage encadré et conserver le sort explicite des branches existantes. Le registre technique absent doit être reconstruit depuis les preuves, pas remplacé silencieusement par un registre vide. Avant la fin d'un lot, vérifier sa disposition et demander l'accord d'intégration manquant ; l'agent réalise le merge autorisé et sa vérification, Amaury n'effectue pas les commandes Git.
+
 Pour le projet Hestia, installer les dépendances avec `npm ci --ignore-scripts`, puis suivre les commandes du [README](README.md). Cette commande ne vaut pas autorisation d'installer ou d'exécuter un package importé. Le contrôle complet est `npm run verify`. Les preuves indiquent chaque commande réellement exécutée, son résultat, sa date et le candidat concerné. Les contrôles absents de l'environnement restent « non exécutés ».
 
 ## Activer les hooks locaux
 
-Depuis la racine du dépôt :
+Après intégration du harnais, depuis le checkout principal stable et après inspection d'une éventuelle configuration existante :
 
 ```sh
-git config core.hooksPath .githooks
+git config --show-origin --get core.hooksPath
+git config --local core.hooksPath "<chemin-absolu-du-checkout-principal>/.githooks"
 ```
 
 Cette configuration est volontaire, locale à ce clone et n'est pas appliquée automatiquement. Git doit pouvoir exécuter les hooks ; sous Unix, conserver leur bit exécutable (`chmod +x .githooks/pre-commit .githooks/pre-push`). Git for Windows utilise son interpréteur shell. Node doit être disponible sur le PATH.
 
-- `pre-commit` inspecte le contenu indexé pour détecter certains secrets et chemins privés.
-- `pre-push` inspecte les commits sortants selon les règles du guard ; un contrôle réussi ne constitue pas une autorisation de livraison.
+Le chemin doit rester valide après suppression des worktrees temporaires. Les agents le configurent dans le lot d'intégration autorisé, vérifient sa valeur effective et testent ses refus ; ne pas annoncer des hooks actifs parce que les fichiers existent. Ces instructions ne sont pas une tâche d'administration à transférer à Amaury.
+
+- `pre-commit` vérifie d'abord l'état partagé de clôture puis inspecte le contenu indexé pour détecter certains secrets et chemins privés.
+- `pre-push` vérifie l'état partagé puis inspecte les commits sortants selon les règles du guard ; un contrôle réussi ne constitue pas une autorisation de livraison.
 
 Le scan peut aussi être exécuté sans installer les hooks : `node scripts/guard.mjs` pour les fichiers suivis et nouveaux non ignorés, ou `node scripts/guard.mjs --staged` pour l'index. Ces deux modes n'inspectent pas tout l'historique. Le contrôle ne prouve pas l'absence de secrets ou de données personnelles et ne vérifie pas le contenu binaire. Les hooks peuvent être désactivés par celui qui possède le clone ; voir la gouvernance pour leur périmètre exact et celui des protections GitHub.
 

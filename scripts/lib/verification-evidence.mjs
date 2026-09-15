@@ -147,7 +147,7 @@ function validateManifest(manifest, runId, phase) {
 }
 
 /** A latest index is only a locator; all immutable records must agree before display. */
-export function readVerificationRun(root, env = process.env) {
+export function readVerificationRun(root, env = process.env, { closureState = null } = {}) {
   const pointer = JSON.parse(readBytes(root, 'artifacts/verification-latest.json').toString('utf8'));
   requireCondition(pointer.schemaVersion === 2 && pointer.kind === 'verification' && runPattern.test(pointer.runId), 'verification-pointer-invalid');
   const directory = `artifacts/verification-runs/${pointer.runId}`;
@@ -166,11 +166,27 @@ export function readVerificationRun(root, env = process.env) {
   }
   const actualIdentity = !manifests.before || !manifests.after ? 'UNAVAILABLE' : manifests.before.identityDigest === manifests.after.identityDigest ? 'UNCHANGED' : 'CHANGED';
   requireCondition(report.candidate.status === actualIdentity, 'verification-identity-mismatch');
+  if (report.closure) {
+    const snapshots = {};
+    for (const phase of ['before', 'after']) {
+      if (report.closure[phase] === null) continue;
+      const snapshot = readReference(root, report.closure[phase], `${directory}/closure-${phase}.json`);
+      requireCondition(snapshot.schemaVersion === 1 && snapshot.runId === report.runId && snapshot.phase === phase && snapshot.state && typeof snapshot.state === 'object', 'closure-snapshot-invalid');
+      requireCondition(snapshot.stateDigest === digest(JSON.stringify(snapshot.state)) && snapshot.stateDigest === report.closure[phase].stateDigest, 'closure-snapshot-digest-mismatch');
+      snapshots[phase] = snapshot;
+    }
+    const closureIdentity = !snapshots.before || !snapshots.after ? 'UNAVAILABLE' : snapshots.before.stateDigest === snapshots.after.stateDigest ? 'UNCHANGED' : 'CHANGED';
+    requireCondition(report.closure.status === closureIdentity, 'closure-identity-mismatch');
+    if (snapshots.after) {
+      requireCondition(typeof closureState === 'function', 'closure-current-reader-required');
+      requireCondition(digest(JSON.stringify(closureState())) === snapshots.after.stateDigest, 'closure-state-stale');
+    }
+  }
   for (const step of report.results) {
     requireCondition(['PASS', 'FAIL', 'NOT_PERFORMED'].includes(step.status) && typeof step.required === 'boolean', 'verification-step-invalid');
     requireCondition(step.status === 'PASS' ? step.exitCode === 0 : step.status === 'NOT_PERFORMED' ? step.exitCode === null : Number.isInteger(step.exitCode) && step.exitCode !== 0, 'verification-step-invalid');
   }
-  const actualStatus = actualIdentity === 'UNCHANGED' && report.results.every(step => step.status === 'PASS' || (!step.required && step.status === 'NOT_PERFORMED')) && report.errors.length === 0 ? 'PASS' : 'FAIL';
+  const actualStatus = actualIdentity === 'UNCHANGED' && (!report.closure || report.closure.status === 'UNCHANGED') && report.results.every(step => step.status === 'PASS' || (!step.required && step.status === 'NOT_PERFORMED')) && report.errors.length === 0 ? 'PASS' : 'FAIL';
   requireCondition(report.status === actualStatus, 'verification-status-mismatch');
   if (manifests.after) {
     // An entry-point syntax/import failure may happen before any new run can be written.

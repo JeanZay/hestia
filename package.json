@@ -19,6 +19,8 @@
     "test:e2e": "node scripts/e2e.mjs",
     "check:guard": "node scripts/guard.mjs",
     "check:refinement": "node scripts/refinement-check.mjs harness/templates/refinement.template.json",
+    "closure:status": "node scripts/closure.mjs status",
+    "closure:check": "node scripts/closure.mjs check --action verify",
     "verify": "node scripts/verify.mjs",
     "evidence:snapshot": "node scripts/evidence.mjs"
   },

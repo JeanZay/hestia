@@ -32,6 +32,7 @@ QA est l'ensemble des contrôles et la recette sur Dev ; ce n'est pas un troisi�
 4. Exécuter les contrôles appropriés : garde-fous, lint, types, tests de comportements, construction, puis parcours navigateur lorsque l'interface change. Ne pas écrire des tests qui recopient simplement l'implémentation. Un prérequis absent est consigné comme non exécuté ; ne pas fabriquer une réussite.
 5. Figer le candidat, demander la revue indépendante, résoudre ses constats et faire vérifier les corrections. Revalider toute partie modifiée après les contrôles.
 6. Produire un rapport daté et compréhensible, distinguant local, Dev et Production. Conserver les preuves minimales sans secrets ni données privées.
+7. Clôturer selon [le contrôleur de lots](lot-closure.md) : demander spontanément l'accord d'intégration manquant ou effectuer l'intégration déjà autorisée, en vérifier le résultat et conserver une disposition explicite des branches/worktrees. Le démarrage d'un autre lot ne doit pas masquer une intégration en attente. Le contrôle de fin et le registre technique partagé rendent cette obligation vérifiable ; GitHub reste le seul backlog.
 
 Le schéma `harness/contracts/task-contract.schema.json` décrit le contrat. Les modèles de preuves et de revue sont dans `harness/templates/`. Ils organisent la traçabilité ; ils ne déclenchent ni ne certifient une exécution. Le contrôle local `node scripts/refinement-check.mjs --contract <contrat.json>` valide désormais sa structure ; il ne vérifie pas la réalité des autorisations ni la réussite des contrôles déclarés.
 

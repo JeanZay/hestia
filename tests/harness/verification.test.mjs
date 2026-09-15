@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { beginRun, digest, readVerificationRun, writeLatest, writeRunJson } from '../../scripts/lib/verification-evidence.mjs';
 import { runVerification } from '../../scripts/lib/verification-run.mjs';
+import { closureInputs } from '../../scripts/lib/closure-state.mjs';
 
 const summaryEntry = fileURLToPath(new URL('../../scripts/ci-summary.mjs', import.meta.url));
 const snapshotEntry = fileURLToPath(new URL('../../scripts/evidence.mjs', import.meta.url));
@@ -176,7 +177,7 @@ test('unsupported CLI arguments create a failed current run instead of reusing a
   const first = runVerification({ root, steps, execute: success });
   const failed = spawnSync(process.execPath, [verifyEntry, '--unknown'], { cwd: root, encoding: 'utf8' });
   assert.equal(failed.status, 1);
-  const { report } = readVerificationRun(root);
+  const { report } = readVerificationRun(root, process.env, { closureState: () => closureInputs(root) });
   assert.notEqual(report.runId, first.report.runId);
   assert.equal(report.status, 'FAIL');
   assert.ok(report.results.every(step => step.status === 'NOT_PERFORMED'));
@@ -194,7 +195,7 @@ test('CLI forwards the active checkpoint, root and resume action and captures ig
   const result = spawnSync(process.execPath, [verifyEntry, '--checkpoint', 'artifacts/active.json'], { cwd: root, encoding: 'utf8' });
   assert.equal(result.status, 1);
   assert.deepEqual(read(root, 'artifacts/forwarded.json'), ['--checkpoint', 'artifacts/active.json', '--root', root, '--action', 'resume']);
-  const { report, manifests } = readVerificationRun(root);
+  const { report, manifests } = readVerificationRun(root, process.env, { closureState: () => closureInputs(root) });
   assert.equal(report.activeCheckpoint.status, 'FAIL');
   assert.equal(report.results.find(step => step.name === 'lifecycle-active').exitCode, 5);
   assert.deepEqual(manifests.before.activeInputs.map(entry => entry.path), ['artifacts/active.json', 'artifacts/dossier.json']);
@@ -202,7 +203,7 @@ test('CLI forwards the active checkpoint, root and resume action and captures ig
   const automatic = spawnSync(process.execPath, [verifyEntry], { cwd: root, encoding: 'utf8' });
   assert.equal(automatic.status, 1);
   assert.deepEqual(read(root, 'artifacts/forwarded.json'), ['--checkpoint', 'artifacts/active-work.json', '--root', root, '--action', 'resume']);
-  assert.equal(readVerificationRun(root).report.activeCheckpoint.path, 'artifacts/active-work.json');
+  assert.equal(readVerificationRun(root, process.env, { closureState: () => closureInputs(root) }).report.activeCheckpoint.path, 'artifacts/active-work.json');
 });
 
 test('source and output paths traversing a linked parent are refused', t => {

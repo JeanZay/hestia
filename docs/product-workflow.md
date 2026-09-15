@@ -62,3 +62,5 @@ Pour chaque US : critères reliés aux contrôles réellement exécutés, candid
 Les agents préparent une recette courte : support/version à ouvrir, gestes à essayer, résultats attendus et points de décision. Amaury juge l'usage, pas la qualité du code par procuration. Une dépendance à Dev doit être prouvée en Dev, pas par un test local.
 
 Avant de rendre la main, suivre [la reprise et continuité](continuity.md) et donner une prochaine action prioritaire explicite : qui agit, sur quel support/version, quel retour est attendu et ce qu'il débloque. Continuer soi-même les étapes autorisées ; attendre seulement une décision ou une autorisation réellement manquante, et respecter une pause.
+
+La [clôture technique des lots](lot-closure.md) empêche de confondre cette livraison avec une accumulation de branches. Les agents demandent les accords d'intégration au moment utile, exécutent les merges autorisés et vérifient leur résultat. Un lot sans intégration ni disposition explicite bloque le démarrage encadré d'un autre ; le parallélisme réservé dans le même lot reste possible. Cette mécanique ne crée pas une seconde planification produit.
