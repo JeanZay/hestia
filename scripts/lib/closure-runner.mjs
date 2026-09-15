@@ -27,10 +27,13 @@ function safePath(root, relative, missing = false) {
   return resolved;
 }
 
-function immutable(primaryRoot, relative, value) {
-  const content = bytes(value);
+function immutableBytes(primaryRoot, relative, content) {
   writeFileSync(safePath(primaryRoot, relative, true), content, { flag: 'wx' });
   return { path: relative, sha256: hash(content) };
+}
+
+function immutable(primaryRoot, relative, value) {
+  return immutableBytes(primaryRoot, relative, bytes(value));
 }
 
 function readRef(primaryRoot, reference) {
@@ -207,7 +210,8 @@ export function runClosure(options, dependencies = {}) {
     requireCondition(pendingOperations(primaryRoot).length === 0, 'pending-operation-reconciliation-required');
     const gate = inspect(lockedRequest);
     if (!gate.valid) { settled = true; return refused('closure-preflight-refused', { diagnostics: gate.diagnostics }); }
-    const registryDigest = hash(readFileSync(safePath(primaryRoot, 'artifacts/closure/registry.json')));
+    const registryBytes = readFileSync(safePath(primaryRoot, 'artifacts/closure/registry.json'));
+    const registryDigest = hash(registryBytes);
     const registry = structuredClone(gate.registry);
     const selectedBranch = branch ?? gate.lot?.branch ?? gate.entry?.branch;
     const entry = registry.entries.find(item => item.lotId === lotId && (!selectedBranch || item.branch === selectedBranch));
@@ -237,7 +241,9 @@ export function runClosure(options, dependencies = {}) {
     requireCondition(rechecked.valid && fingerprint(rechecked) === fingerprint(gate), 'closure-state-changed');
     if (action === 'start') startDestination(repository, reservationRecord, rechecked.inventory);
     operation = operationDirectory(primaryRoot);
-    immutable(primaryRoot, `${operation.relative}/intent.json`, { schemaVersion: 1, operationId: operation.operationId, action, lotId, branch: branch ?? entry.branch, recordedAtUtc: new Date().toISOString(), beforeDigest: fingerprint(gate), preparation });
+    // Preserve the exact original bytes before any intent or operational mutation.
+    const registryBefore = immutableBytes(primaryRoot, `${operation.relative}/registry-before.json`, registryBytes);
+    immutable(primaryRoot, `${operation.relative}/intent.json`, { schemaVersion: 1, operationId: operation.operationId, action, lotId, branch: branch ?? entry.branch, recordedAtUtc: new Date().toISOString(), beforeDigest: fingerprint(gate), registryBefore, preparation });
     let effect;
     if (action === 'start') {
       const create = dependencies.createWorktree ?? ((args) => git(root, args));

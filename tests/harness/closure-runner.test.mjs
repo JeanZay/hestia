@@ -93,6 +93,7 @@ test('a gate refusal happens before any remote call or worktree mutation', t => 
 test('start creates a real bounded worktree and records its branch under the shared lock', t => {
   const f = fixture(t);
   const request = startRequest(f);
+  const beforeBytes = readFileSync(path.join(f.root, 'artifacts/closure/registry.json'));
   const result = runClosure(request, f);
   assert.equal(result.status, 'COMPLETED', JSON.stringify(result));
   assert.equal(git(path.join(f.root, 'artifacts/worktrees/synthetic'), ['branch', '--show-current']), 'codex/synthetic');
@@ -100,9 +101,62 @@ test('start creates a real bounded worktree and records its branch under the sha
   assert.equal(registry.entries[0].state, 'working');
   assert.equal(registry.entries[0].branch, 'codex/synthetic');
   const operation = `artifacts/closure/operations/${result.operationId}`;
-  assert.equal(read(f.root, `${operation}/intent.json`).action, 'start');
+  const intent = read(f.root, `${operation}/intent.json`);
+  assert.equal(intent.action, 'start');
+  assert.deepEqual(intent.registryBefore, { path: `${operation}/registry-before.json`, sha256: hash(beforeBytes) });
+  assert.deepEqual(readFileSync(path.join(f.root, intent.registryBefore.path)), beforeBytes);
+  assert.deepEqual(readFileSync(path.join(f.root, `${operation}/registry-after.json`)), readFileSync(path.join(f.root, 'artifacts/closure/registry.json')));
   assert.equal(read(f.root, `${operation}/result.json`).status, 'COMPLETED');
   assert.deepEqual(pendingOperations(f.root), []);
+});
+
+test('registry-before preserves compact and CRLF formatting byte for byte before mutation', t => {
+  for (const format of ['compact', 'crlf']) {
+    const f = fixture(t);
+    const request = startRequest(f);
+    const content = format === 'compact' ? JSON.stringify(f.registry) : `${JSON.stringify(f.registry, null, 4).replaceAll('\n', '\r\n')}\r\n`;
+    save(f.root, 'artifacts/closure/registry.json', content);
+    const original = Buffer.from(content);
+    const result = runClosure(request, { ...f, createWorktree: args => {
+      const operations = readdirSync(path.join(f.root, 'artifacts/closure/operations'));
+      assert.equal(operations.length, 1);
+      const directory = `artifacts/closure/operations/${operations[0]}`;
+      const intent = read(f.root, `${directory}/intent.json`);
+      assert.deepEqual(readFileSync(path.join(f.root, intent.registryBefore.path)), original);
+      assert.equal(intent.registryBefore.sha256, hash(original));
+      assert.deepEqual(readFileSync(path.join(f.root, 'artifacts/closure/registry.json')), original);
+      git(f.root, args);
+    } });
+    assert.equal(result.status, 'COMPLETED');
+    const directory = `artifacts/closure/operations/${result.operationId}`;
+    assert.deepEqual(readFileSync(path.join(f.root, `${directory}/registry-before.json`)), original);
+    const completed = read(f.root, `${directory}/result.json`);
+    const after = readFileSync(path.join(f.root, completed.registry.path));
+    assert.equal(completed.registry.sha256, hash(after));
+    assert.deepEqual(after, readFileSync(path.join(f.root, 'artifacts/closure/registry.json')));
+    assert.notDeepEqual(after, original);
+  }
+});
+
+test('process interruption before the before-copy or intent stays pending and preserves the registry', t => {
+  for (const stoppedFile of ['registry-before.json', 'intent.json']) {
+    const f = fixture(t);
+    const request = startRequest(f);
+    const original = readFileSync(path.join(f.root, 'artifacts/closure/registry.json'));
+    const script = `import { runClosure } from ${JSON.stringify(runnerUrl)}; import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module'; const options = JSON.parse(process.argv[1]); const stoppedFile = process.argv[2]; const root = options.root; const originalWrite = fs.writeFileSync; fs.writeFileSync = (file, ...args) => { if (String(file).replaceAll('\\\\', '/').endsWith('/'+stoppedFile)) process.exit(18); return originalWrite(file,...args); }; syncBuiltinESMExports(); const discover=()=>({primaryRoot:root}); const inspect=()=>({valid:true,registry:JSON.parse(fs.readFileSync(root+'/artifacts/closure/registry.json')),inventory:{worktrees:[{path:root}]},diagnostics:[]}); runClosure(options,{discover,inspect});`;
+    const stopped = spawnSync(process.execPath, ['--input-type=module', '-e', script, JSON.stringify(request), stoppedFile], { encoding: 'utf8' });
+    assert.equal(stopped.status, 18, stopped.stdout + stopped.stderr);
+    assert.deepEqual(readFileSync(path.join(f.root, 'artifacts/closure/registry.json')), original);
+    const pending = pendingOperations(f.root);
+    assert.equal(pending.length, 1);
+    const directory = `artifacts/closure/operations/${pending[0]}`;
+    assert.equal(existsSync(path.join(f.root, `${directory}/intent.json`)), false);
+    assert.equal(existsSync(path.join(f.root, `${directory}/result.json`)), false);
+    if (stoppedFile === 'intent.json') assert.deepEqual(readFileSync(path.join(f.root, `${directory}/registry-before.json`)), original);
+    else assert.equal(existsSync(path.join(f.root, `${directory}/registry-before.json`)), false);
+    assert.equal(git(f.root, ['branch', '--list', request.branch]), '');
+    assert.throws(() => runClosure(request, f), /closure-lock-present-or-unavailable/);
+  }
 });
 
 test('real start CLI uses core reservations and refuses shared source ownership despite distinct destinations', t => {

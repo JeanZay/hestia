@@ -95,7 +95,48 @@ function readBounded(root, value) {
     return { absolute, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), sha256: hash(bytes) };
   } finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
-function context(discovered) {
+function validateEvidence(proof, load, currentInputs, primaryRoot) {
+  const report = load(proof.evidence, 'json');
+  const evidenceRoot = proof.evidenceRoot === '.' ? '' : `${relative(proof.evidenceRoot)}/`;
+  if (!proof.evidence.path.startsWith(evidenceRoot)) fail('validation-evidence-root-mismatch');
+  if (report.schemaVersion !== 2 || !/^\d{13}-[a-f0-9-]{36}$/.test(report.runId ?? '') || report.status !== 'PASS' || !Array.isArray(report.errors) || report.errors.length || report.candidate?.status !== 'UNCHANGED' || !Array.isArray(report.results) || !report.results.length || report.results.some((step) => typeof step.required !== 'boolean' || (!(step.status === 'PASS' && step.exitCode === 0) && !(step.required === false && step.status === 'NOT_PERFORMED' && step.exitCode === null)))) fail('validation-report-not-passed');
+  const read = (reference) => { if (!reference) fail('validation-manifest-missing'); return load({ path: `${evidenceRoot}${relative(reference.path)}`, sha256: reference.sha256 }, 'json'); };
+  const references = (entries) => {
+    if (!Array.isArray(entries) || entries.length > 100000) fail('validation-manifest-files-invalid');
+    let previous = null;
+    for (const item of entries) { if (!item || !/^[a-f0-9]{64}$/.test(item.sha256 ?? '') || (previous !== null && previous >= item.path)) fail('validation-manifest-files-invalid'); previous = relative(item.path); }
+  };
+  const manifests = {};
+  for (const phase of ['before', 'after']) {
+    const reference = report.candidate[phase]; const manifest = read(reference); manifests[phase] = manifest;
+    if (manifest.schemaVersion !== 2 || manifest.runId !== report.runId || manifest.phase !== phase || !Number.isFinite(Date.parse(manifest.createdAt))) fail('validation-manifest-run-mismatch');
+    references(manifest.files); references(manifest.activeInputs);
+    if (!Array.isArray(manifest.deletedFiles) || manifest.deletedFiles.some((value, index, all) => relative(value) !== value || (index > 0 && all[index - 1] >= value) || manifest.files.some((item) => item.path === value))) fail('validation-manifest-deletions-invalid');
+    if (manifest.commit !== proof.head || manifest.sourceDigest !== proof.sourceDigest || hash(JSON.stringify(manifest.files)) !== manifest.sourceDigest || hash(JSON.stringify(manifest.activeInputs)) !== manifest.inputDigest) fail('validation-manifest-candidate-mismatch');
+    const identity = { commit: manifest.commit, sourceDigest: manifest.sourceDigest, inputDigest: manifest.inputDigest, deletedFiles: manifest.deletedFiles };
+    if (manifest.identityDigest !== hash(JSON.stringify(identity)) || reference.sourceDigest !== manifest.sourceDigest || reference.identityDigest !== manifest.identityDigest) fail('validation-manifest-identity-mismatch');
+  }
+  if (manifests.before.identityDigest !== manifests.after.identityDigest) fail('validation-candidate-changed');
+  if (!report.activeCheckpoint || !(report.activeCheckpoint.path === null || typeof report.activeCheckpoint.path === 'string') || (report.activeCheckpoint.path !== null && (report.activeCheckpoint.status !== 'PASS' || !manifests.after.activeInputs.some((item) => item.path === report.activeCheckpoint.path)))) fail('validation-checkpoint-unverified');
+  if (currentInputs) for (const reference of manifests.after.activeInputs) load({ path: `${evidenceRoot}${reference.path}`, sha256: reference.sha256 });
+  if (currentInputs && report.activeCheckpoint.path === null) {
+    try { noLinks(path.resolve(primaryRoot, `${evidenceRoot}artifacts/active-work.json`)); fail('validation-active-checkpoint-unverified'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (report.closure !== undefined && report.closure !== null) {
+    if (report.closure.status !== 'UNCHANGED') fail('validation-closure-not-stable');
+    const snapshots = {};
+    for (const phase of ['before', 'after']) {
+      const reference = report.closure[phase]; const snapshot = read(reference); snapshots[phase] = snapshot;
+      if (snapshot.schemaVersion !== 1 || snapshot.runId !== report.runId || snapshot.phase !== phase || !snapshot.state || typeof snapshot.state !== 'object' || Array.isArray(snapshot.state)) fail('validation-closure-snapshot-invalid');
+      if (snapshot.stateDigest !== hash(JSON.stringify(snapshot.state)) || reference.stateDigest !== snapshot.stateDigest) fail('validation-closure-digest-mismatch');
+    }
+    // These historical snapshots predate the ready transition; the current registry is gated separately.
+    if (snapshots.before.stateDigest !== snapshots.after.stateDigest) fail('validation-closure-changed');
+  }
+}
+
+function context(discovered, { action, branch, lotId } = {}) {
   const schema = readJsonSafe(schemaPath); const inputs = new Map();
   function load(reference, type = null) {
     if (!reference || !/^[a-f0-9]{64}$/.test(reference.sha256 ?? '')) fail('reference-required');
@@ -118,29 +159,20 @@ function context(discovered) {
   if (validateJsonSchema(registry, schema).length) fail('invalid-registry');
   inputs.set(REGISTRY, read.sha256);
   const documents = new Map();
+  const matchingLots = registry.entries.filter((entry) => entry.lotId === lotId);
+  const selectedBranch = branch ?? (lotId ? (matchingLots.length === 1 ? matchingLots[0].branch : null) : discovered.worktrees.find((item) => samePath(item.path, discovered.currentRoot))?.branch);
   for (const entry of registry.entries) {
     load(entry.source);
     const docs = {};
+    if (entry.disposition) docs.disposition = load(entry.disposition, 'disposition');
     for (const kind of ['validation', 'review']) if (entry.proofs[kind]) {
       docs[kind] = load(entry.proofs[kind], kind);
       if (docs[kind].evidence.path === entry.proofs[kind].path) fail('evidence-cannot-be-wrapper');
       if (kind === 'review') load(docs[kind].evidence);
-      else {
-        const proof = docs.validation; const report = load(proof.evidence, 'json');
-        const evidenceRoot = proof.evidenceRoot === '.' ? '' : `${relative(proof.evidenceRoot)}/`;
-        if (!proof.evidence.path.startsWith(evidenceRoot)) fail('validation-evidence-root-mismatch');
-        if (report.schemaVersion !== 2 || report.status !== 'PASS' || !Array.isArray(report.errors) || report.errors.length || report.candidate?.status !== 'UNCHANGED' || !Array.isArray(report.results) || !report.results.length || report.results.some((step) => !(step.status === 'PASS' && step.exitCode === 0) && !(step.required === false && step.status === 'NOT_PERFORMED' && step.exitCode === null))) fail('validation-report-not-passed');
-        for (const phase of ['before', 'after']) {
-          const reference = report.candidate[phase];
-          if (!reference) fail('validation-manifest-missing');
-          const manifest = load({ path: `${evidenceRoot}${relative(reference.path)}`, sha256: reference.sha256 }, 'json');
-          if (manifest.commit !== proof.head || manifest.sourceDigest !== proof.sourceDigest || !Array.isArray(manifest.files) || hash(JSON.stringify(manifest.files)) !== proof.sourceDigest) fail('validation-manifest-candidate-mismatch');
-        }
-      }
+      else validateEvidence(docs.validation, load, ['working', 'ready'].includes(entry.state) || (action === 'finish' && entry.branch === selectedBranch && docs.disposition?.kind === 'ready'), discovered.primaryRoot);
     }
     if (entry.authorization) docs.authorization = load(entry.authorization, 'authorization');
     if (entry.reservation) docs.reservation = load(entry.reservation, 'reservation');
-    if (entry.disposition) docs.disposition = load(entry.disposition, 'disposition');
     if (docs.disposition?.authorization) docs.dispositionAuthorization = load(docs.disposition.authorization, 'authorization');
     if (docs.disposition?.remoteReceipt) docs.remoteReceipt = load(docs.disposition.remoteReceipt, 'remoteReceipt');
     for (const doc of [docs.authorization, docs.dispositionAuthorization, docs.reservation].filter(Boolean)) if (!load(doc.source).includes(doc.quote)) fail('source-quote-mismatch');
@@ -173,8 +205,7 @@ function operationState(actual, loaded) {
     const intent = docs['intent.json']; const result = docs['result.json'];
     let complete = Boolean(intent?.schemaVersion === 1 && intent.operationId === name && ['start', 'finish', 'merge'].includes(intent.action) && result?.schemaVersion === 1 && result.operationId === name && result.action === intent.action && result.status === 'COMPLETED');
     if (complete) {
-      const reference = result.registry;
-      complete = Boolean(reference?.path === `${base}/registry-after.json` && reference.sha256 === loaded.inputs.get(reference.path) && docs['registry-after.json']);
+      for (const [phase, reference] of [['before', intent.registryBefore], ['after', result.registry]]) complete = Boolean(complete && reference?.path === `${base}/registry-${phase}.json` && reference.sha256 === loaded.inputs.get(reference.path) && docs[`registry-${phase}.json`]);
     }
     entries.push({ id: name, complete, status: result?.status === 'COMPLETED' ? 'COMPLETED' : result?.status === 'AMBIGUOUS' ? 'AMBIGUOUS' : 'INCOMPLETE', files });
   }
@@ -192,12 +223,12 @@ export function closureInputs(root) {
 export function inspectClosure({ root = process.cwd(), action = 'inspect', branch, lotId, target = 'main', reservation = null, now = new Date(), allowExternalWorktrees = [], lockToken = null } = {}) {
   const diagnostics = []; let actual = null; let loaded = null; let lot = null; let requiredAction = null;
   const add = (code, affected = branch ?? null, blocking = true) => { if (!diagnostics.some((item) => item.code === code && item.branch === affected)) diagnostics.push({ code, branch: affected, blocking }); };
-  const finish = () => ({ valid: !diagnostics.some((item) => item.blocking), action, diagnostics, repository: actual, inventory: actual, registry: loaded?.registry ?? null, sharedDir: actual?.sharedDir ?? null, lot, entry: lot, documents: lot ? loaded?.documents?.get(lot.branch) ?? null : null, nextAction: diagnostics.some((item) => item.blocking) ? null : lot?.nextAction ?? null, requiredAction, consentAuthenticated: false, remoteStateVerified: false, limitations: ['Contrôles locaux en lecture seule ; aucun PASS ne crée une permission.', 'Les reçus distants sont des preuves enregistrées à rapprocher du réseau avant mutation.', 'Registre technique uniquement ; GitHub demeure le backlog.'] });
+  const finish = () => ({ valid: !diagnostics.some((item) => item.blocking), action, diagnostics, repository: actual, inventory: actual, registry: loaded?.registry ?? null, sharedDir: actual?.sharedDir ?? null, lot, entry: lot, documents: lot ? loaded?.documents?.get(lot.branch) ?? null : null, nextAction: diagnostics.some((item) => item.blocking) ? null : lot?.nextAction ?? null, requiredAction, consentAuthenticated: false, remoteStateVerified: false, limitations: ['Contrôles locaux en lecture seule ; aucun PASS ne crée une permission.', 'Les reçus distants sont des preuves enregistrées à rapprocher du réseau avant mutation.', 'Les snapshots de clôture historiques doivent être cohérents entre eux ; le registre courant est requalifié séparément, sans exiger son identité avec l’ancien registre.', 'Registre technique uniquement ; GitHub demeure le backlog.'] });
   try {
     if (!ACTIONS.has(action)) fail('unknown-action');
     const clock = now instanceof Date ? now.getTime() : Date.parse(now);
     if (!Number.isFinite(clock)) fail('invalid-clock');
-    actual = inventory(root, { allowExternalWorktrees }); loaded = context(actual);
+    actual = inventory(root, { allowExternalWorktrees }); loaded = context(actual, { action, branch, lotId });
     const journal = operationState(actual, loaded);
     if (journal.lock.present && !(journal.lock.complete && ['start', 'finish', 'merge'].includes(action) && journal.owner.pid === process.pid && journal.owner.token === lockToken)) add('closure-lock-present-reconciliation-required');
     if (journal.operations.entries.some((entry) => !entry.complete)) add('pending-operation-reconciliation-required');

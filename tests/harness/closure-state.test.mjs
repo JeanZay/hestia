@@ -46,13 +46,19 @@ function fixture(run) {
       entry.disposition = put(primary, `artifacts/closure/${entry.branch.split('/').at(-1)}-disposition.json`, { kind, ...identity(entry), pr: `${repository}/pull/1`, reason: 'Motif synthétique de conservation ou de clôture explicite.', authorization: null, mergeCommit: null, remoteReceipt: null, ...extra });
       save();
     }
-    function ready(entry) {
-      const snapshot = captureCandidate({ root: paths.get(entry.branch), runId: 'synthetic-test', phase: 'snapshot' });
+    function ready(entry, { inputPaths = [], evidenceRoot = '.' } = {}) {
+      const state = closureInputs(primary); const stateDigest = hash(JSON.stringify(state));
+      const runId = '1790000000000-11111111-1111-4111-8111-111111111111';
+      const snapshot = captureCandidate({ root: paths.get(entry.branch), runId, phase: 'before', inputPaths });
       entry.candidate = { head: snapshot.commit, sourceDigest: snapshot.sourceDigest }; entry.state = 'ready'; entry.nextAction = nextAction('Amaury');
       const slug = entry.branch.split('/').at(-1); const base = `artifacts/closure/${slug}`;
-      const before = put(primary, `${base}-before.json`, snapshot); const after = put(primary, `${base}-after.json`, snapshot);
-      const evidence = put(primary, `${base}-verification.json`, { schemaVersion: 2, status: 'PASS', errors: [], candidate: { status: 'UNCHANGED', before, after }, results: [{ name: 'synthetic-behavior', required: true, status: 'PASS', exitCode: 0 }] });
-      entry.proofs.validation = put(primary, `${base}-validation.json`, { kind: 'validation', ...identity(entry), sourceDigest: snapshot.sourceDigest, status: 'PASS', checks: [{ name: 'synthetic-behavior', status: 'PASS', exitCode: 0 }], evidence, evidenceRoot: '.' });
+      const prefix = evidenceRoot === '.' ? '' : `${evidenceRoot}/`;
+      const before = { ...put(primary, `${prefix}${base}-before.json`, snapshot), path: `${base}-before.json`, sourceDigest: snapshot.sourceDigest, identityDigest: snapshot.identityDigest };
+      const after = { ...put(primary, `${prefix}${base}-after.json`, { ...snapshot, phase: 'after' }), path: `${base}-after.json`, sourceDigest: snapshot.sourceDigest, identityDigest: snapshot.identityDigest };
+      const closure = { status: 'UNCHANGED' };
+      for (const phase of ['before', 'after']) closure[phase] = { ...put(primary, `${prefix}${base}-closure-${phase}.json`, { schemaVersion: 1, runId, phase, state, stateDigest }), path: `${base}-closure-${phase}.json`, stateDigest };
+      const evidence = put(primary, `${prefix}${base}-verification.json`, { schemaVersion: 2, runId, status: 'PASS', errors: [], activeCheckpoint: { path: inputPaths[0] ?? null, status: inputPaths.length ? 'PASS' : 'NOT_PERFORMED' }, candidate: { status: 'UNCHANGED', before, after }, closure, results: [{ name: 'synthetic-behavior', required: true, status: 'PASS', exitCode: 0 }] });
+      entry.proofs.validation = put(primary, `${base}-validation.json`, { kind: 'validation', ...identity(entry), sourceDigest: snapshot.sourceDigest, status: 'PASS', checks: [{ name: 'synthetic-behavior', status: 'PASS', exitCode: 0 }], evidence, evidenceRoot });
       const review = put(primary, `${base}-original-review.md`, `# Revue entièrement synthétique de test\n\nCandidat ${snapshot.commit}, ${snapshot.sourceDigest}.\nAucune revue réelle de livraison.\n`);
       entry.proofs.review = put(primary, `${base}-review.json`, { kind: 'review', ...identity(entry), sourceDigest: snapshot.sourceDigest, status: 'PASS', authors: ['author'], reviewer: { identity: 'reviewer', effectiveModel: 'SYNTHETIC-TEST-ONLY', cleanContext: true }, openBlockingFindings: 0, evidence: review, evidenceRead: true });
       disposition(entry, 'ready'); return snapshot;
@@ -60,8 +66,8 @@ function fixture(run) {
     function reservation(branch, lotId, sources = ['src/one'], worktree = `artifacts/worktrees/${branch.split('/').at(-1)}`) {
       return put(primary, `artifacts/closure/${branch.split('/').at(-1)}-reservation.json`, { kind: 'reservation', repository, lotId, branch, target: 'main', baseHead: git(primary, 'rev-parse', 'main'), paths: sources, worktree, recordedAtUtc: when, source, quote, nextAction: nextAction() });
     }
-    function merged(entry) {
-      ready(entry); entry.authorization = authorization(entry, ['merge', 'cleanup']); entry.state = 'merged';
+    function merged(entry, options) {
+      ready(entry, options); entry.authorization = authorization(entry, ['merge', 'cleanup']); entry.state = 'merged';
       const head = entry.candidate.head;
       const receipt = put(primary, `artifacts/closure/${entry.branch.split('/').at(-1)}-remote-receipt.json`, { kind: 'remote-merge-receipt', ...identity(entry), pr: `${repository}/pull/1`, mergeCommit: head, targetHead: head, merged: true, comparison: 'identical' });
       disposition(entry, 'merged', { mergeCommit: head, remoteReceipt: receipt });
@@ -75,6 +81,13 @@ function fixture(run) {
   }
 }
 const has = (result, code) => assert.ok(result.diagnostics.some((item) => item.code === code), JSON.stringify(result.diagnostics));
+function changeReport(f, entry, change) {
+  const wrapper = JSON.parse(readFileSync(path.join(f.primary, entry.proofs.validation.path)));
+  const report = JSON.parse(readFileSync(path.join(f.primary, wrapper.evidence.path)));
+  change(report, wrapper);
+  wrapper.evidence = put(f.primary, wrapper.evidence.path, report);
+  entry.proofs.validation = put(f.primary, entry.proofs.validation.path, wrapper); f.save();
+}
 
 test('every worktree discovers the primary registry and the same deterministic inventory', () => fixture((f) => {
   const entry = f.add(); const checkout = f.paths.get(entry.branch);
@@ -290,9 +303,14 @@ test('operation intent, result and registry snapshots are frozen and AMBIGUOUS c
   put(f.primary, `${base}/intent.json`, { schemaVersion: 1, operationId: id, action: 'finish', recordedAtUtc: when });
   const registry = put(f.primary, `${base}/registry-after.json`, f.registry);
   put(f.primary, `${base}/result.json`, { schemaVersion: 1, operationId: id, action: 'finish', status: 'COMPLETED', registry, recordedAtUtc: when });
+  assert.equal(closureInputs(f.primary).operations.entries[0].complete, false, 'COMPLETED cannot replace the missing original registry.');
+  const registryBefore = put(f.primary, `${base}/registry-before.json`, JSON.stringify(f.registry));
+  put(f.primary, `${base}/intent.json`, { schemaVersion: 1, operationId: id, action: 'finish', recordedAtUtc: when, registryBefore });
   const completed = closureInputs(f.primary); assert.equal(completed.operations.entries[0].complete, true);
   assert.equal(f.check('verify').valid, true);
-  assert.equal(completed.files.filter((file) => file.path.startsWith(base)).length, 3);
+  assert.equal(completed.files.filter((file) => file.path.startsWith(base)).length, 4);
+  put(f.primary, registryBefore.path, f.registry);
+  assert.equal(closureInputs(f.primary).operations.entries[0].complete, false, 'Reformatting the retained original bytes invalidates intent.registryBefore.');
   put(f.primary, `${base}/result.json`, { schemaVersion: 1, operationId: id, action: 'finish', status: 'AMBIGUOUS', recordedAtUtc: when });
   const ambiguous = closureInputs(f.primary); assert.notDeepEqual(ambiguous, completed);
   assert.equal(ambiguous.operations.entries[0].status, 'AMBIGUOUS'); has(f.check('verify'), 'pending-operation-reconciliation-required');
@@ -303,4 +321,89 @@ test('linked operation directories are refused without reading external journal 
   symlinkSync(external, path.join(f.primary, 'artifacts/closure/operations'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => closureInputs(f.primary), /linked-path/);
   has(f.check('verify'), 'linked-path');
+}));
+
+test('ignored active inputs are compared under the original evidence root before finish, merge or verify', () => fixture((f) => {
+  const entry = f.add(); const checkout = f.paths.get(entry.branch); const input = 'artifacts/active-work.json';
+  put(checkout, input, { synthetic: 'original checkpoint' });
+  f.ready(entry, { inputPaths: [input], evidenceRoot: 'artifacts/worktrees/one' });
+  assert.equal(f.check('finish', { branch: entry.branch }).valid, true);
+  assert.ok(closureInputs(f.primary).files.some((item) => item.path === `artifacts/worktrees/one/${input}`));
+  put(checkout, input, { synthetic: 'changed checkpoint after PASS' });
+  for (const action of ['finish', 'verify']) has(f.check(action, { branch: entry.branch }), 'reference-digest-mismatch');
+  entry.authorization = f.authorization(entry, ['merge']); f.save();
+  has(f.check('merge', { branch: entry.branch }), 'reference-digest-mismatch');
+  for (const state of ['blocked', 'deferred']) {
+    entry.state = state; f.save();
+    has(f.check('finish', { branch: entry.branch }), 'reference-digest-mismatch');
+  }
+}));
+
+test('merged historical evidence stays verifiable after its former ignored working input is archived', () => fixture((f) => {
+  const entry = f.add(); const checkout = f.paths.get(entry.branch); const input = 'artifacts/active-work.json';
+  put(checkout, input, { synthetic: 'historic checkpoint' });
+  f.merged(entry, { inputPaths: [input], evidenceRoot: 'artifacts/worktrees/one' });
+  rmSync(path.join(checkout, input));
+  const result = f.check('resume', { branch: entry.branch }); assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.remoteStateVerified, false);
+}));
+
+test('a newly appearing default checkpoint invalidates an older run with empty active inputs', () => fixture((f) => {
+  const entry = f.add(); const checkout = f.paths.get(entry.branch);
+  f.ready(entry, { evidenceRoot: 'artifacts/worktrees/one' });
+  assert.equal(f.check('finish', { branch: entry.branch }).valid, true);
+  put(checkout, 'artifacts/active-work.json', { synthetic: 'checkpoint introduced after the completed run' });
+  for (const action of ['finish', 'verify']) has(f.check(action, { branch: entry.branch }), 'validation-active-checkpoint-unverified');
+  entry.authorization = f.authorization(entry, ['merge']); f.save();
+  has(f.check('merge', { branch: entry.branch }), 'validation-active-checkpoint-unverified');
+}));
+
+test('manifest run, phase, hashes and full candidate identity must agree with the report', () => fixture((f) => {
+  const entry = f.add(); f.ready(entry);
+  const originalWrapper = JSON.parse(readFileSync(path.join(f.primary, entry.proofs.validation.path)));
+  const originalReport = JSON.parse(readFileSync(path.join(f.primary, originalWrapper.evidence.path)));
+  const original = JSON.parse(readFileSync(path.join(f.primary, originalReport.candidate.after.path)));
+  const cases = [
+    [(value) => { value.runId = '1790000000000-22222222-2222-4222-8222-222222222222'; }, 'validation-manifest-run-mismatch'],
+    [(value) => { value.phase = 'before'; }, 'validation-manifest-run-mismatch'],
+    [(value) => { value.inputDigest = 'a'.repeat(64); }, 'validation-manifest-candidate-mismatch'],
+    [(value) => { value.identityDigest = 'b'.repeat(64); }, 'validation-manifest-identity-mismatch'],
+    [(value) => { value.files.push(value.files[0]); }, 'validation-manifest-files-invalid'],
+    [(value) => { value.activeInputs = [{ path: '../outside.json', sha256: 'a'.repeat(64) }]; }, 'path-outside-primary'],
+    [(value) => { value.deletedFiles = ['gone.txt']; value.identityDigest = hash(JSON.stringify({ commit: value.commit, sourceDigest: value.sourceDigest, inputDigest: value.inputDigest, deletedFiles: value.deletedFiles })); }, 'validation-candidate-changed'],
+  ];
+  for (const [mutate, code] of cases) {
+    const value = structuredClone(original); mutate(value);
+    const report = structuredClone(originalReport);
+    report.candidate.after = { ...put(f.primary, report.candidate.after.path, value), sourceDigest: value.sourceDigest, identityDigest: value.identityDigest };
+    const wrapper = structuredClone(originalWrapper); wrapper.evidence = put(f.primary, wrapper.evidence.path, report);
+    entry.proofs.validation = put(f.primary, entry.proofs.validation.path, wrapper); f.save();
+    has(f.check('verify'), code);
+  }
+}));
+
+test('original closure snapshots must prove stability without requiring equality to the post-proof registry', () => fixture((f) => {
+  const entry = f.add(); f.ready(entry);
+  const baseline = f.check('finish', { branch: entry.branch }); assert.equal(baseline.valid, true, JSON.stringify(baseline.diagnostics));
+  const originalWrapper = JSON.parse(readFileSync(path.join(f.primary, entry.proofs.validation.path)));
+  const originalReport = JSON.parse(readFileSync(path.join(f.primary, originalWrapper.evidence.path)));
+  const original = JSON.parse(readFileSync(path.join(f.primary, originalReport.closure.after.path)));
+  assert.notDeepEqual(original.state, closureInputs(f.primary), 'Ready adds proof references after the historical stable verification.');
+  const cases = [
+    [(value) => { value.phase = 'before'; }, 'validation-closure-snapshot-invalid'],
+    [(value) => { value.runId = '1790000000000-22222222-2222-4222-8222-222222222222'; }, 'validation-closure-snapshot-invalid'],
+    [(value) => { value.stateDigest = 'a'.repeat(64); }, 'validation-closure-digest-mismatch'],
+    [(value) => { value.state.present = false; value.stateDigest = hash(JSON.stringify(value.state)); }, 'validation-closure-changed'],
+  ];
+  for (const [mutate, code] of cases) {
+    const value = structuredClone(original); mutate(value); const report = structuredClone(originalReport);
+    report.closure.after = { ...put(f.primary, report.closure.after.path, value), stateDigest: value.stateDigest };
+    const wrapper = structuredClone(originalWrapper); wrapper.evidence = put(f.primary, wrapper.evidence.path, report);
+    entry.proofs.validation = put(f.primary, entry.proofs.validation.path, wrapper); f.save();
+    has(f.check('finish', { branch: entry.branch }), code);
+  }
+  changeReport(f, entry, (report) => { report.closure.status = 'CHANGED'; });
+  has(f.check('finish', { branch: entry.branch }), 'validation-closure-not-stable');
+  changeReport(f, entry, (report) => { report.closure.status = 'UNCHANGED'; report.closure.after = null; });
+  has(f.check('finish', { branch: entry.branch }), 'validation-manifest-missing');
 }));
