@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectFile } from '../guard.mjs';
@@ -13,7 +13,14 @@ const ACTIONS = new Set(['inspect', 'resume', 'verify', 'start', 'finish', 'merg
 const schemaPath = fileURLToPath(new URL('../../harness/schemas/closure.schema.json', import.meta.url));
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fail = (code) => { throw Object.assign(new Error(code), { code }); };
-const normalized = (value) => path.resolve(value).toLowerCase();
+const normalized = (value) => {
+  let resolved = path.resolve(value);
+  // Git can return the long Windows spelling while TEMP or an allowlist uses 8.3.
+  // Reject links before resolving aliases; missing destinations remain lexical.
+  try { resolved = realpathSync.native(noLinks(resolved)); }
+  catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+};
 const samePath = (left, right) => normalized(left) === normalized(right);
 const inside = (root, file) => samePath(root, file) || normalized(file).startsWith(`${normalized(root)}${path.sep}`);
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -91,8 +91,8 @@ function changeReport(f, entry, change) {
 
 test('every worktree discovers the primary registry and the same deterministic inventory', () => fixture((f) => {
   const entry = f.add(); const checkout = f.paths.get(entry.branch);
-  assert.equal(discoverRepository(checkout).primaryRoot, f.primary);
-  assert.equal(discoverRepository(checkout).registryPath, path.join(f.primary, 'artifacts/closure/registry.json'));
+  assert.equal(realpathSync.native(discoverRepository(checkout).primaryRoot), realpathSync.native(f.primary));
+  assert.equal(realpathSync.native(discoverRepository(checkout).registryPath), realpathSync.native(path.join(f.primary, 'artifacts/closure/registry.json')));
   assert.deepEqual(closureInputs(checkout), closureInputs(f.primary));
   assert.equal(inventory(checkout).inventoryDigest, inventory(f.primary).inventoryDigest);
 }));
@@ -252,6 +252,27 @@ test('external checkout contents require an explicit validated allowlist', () =>
   const denied = f.check('resume', { branch: entry.branch }); assert.equal(denied.valid, false); has(denied, 'candidate-source-unverified');
   const allowed = f.check('resume', { branch: entry.branch, allowExternalWorktrees: [f.paths.get(entry.branch)] });
   assert.equal(allowed.valid, true, JSON.stringify(allowed.diagnostics));
+}));
+
+test('external worktree identity accepts Windows short aliases but not an unrelated directory', { skip: process.platform !== 'win32' }, (t) => fixture((f) => {
+  const entry = f.add('codex/external', 'external-lot', true); f.ready(entry);
+  const checkout = f.paths.get(entry.branch);
+  const shortPath = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$fso = New-Object -ComObject Scripting.FileSystemObject; $fso.GetFolder($env:HESTIA_SYNTHETIC_PATH).ShortPath'], { env: { ...process.env, HESTIA_SYNTHETIC_PATH: checkout }, encoding: 'utf8', windowsHide: true }).trim();
+  assert.equal(realpathSync.native(shortPath), realpathSync.native(checkout));
+  if (shortPath.toLowerCase() === checkout.toLowerCase()) t.diagnostic('8.3 alias unavailable on this volume; the unchanged external-allowlist test also covers short TEMP aliases in Windows CI.');
+  const allowed = f.check('resume', { branch: entry.branch, allowExternalWorktrees: [shortPath] });
+  assert.equal(allowed.valid, true, JSON.stringify(allowed.diagnostics));
+  const unrelated = path.join(f.temporary, 'unrelated'); mkdirSync(unrelated);
+  const denied = f.check('resume', { branch: entry.branch, allowExternalWorktrees: [unrelated] });
+  assert.equal(denied.valid, false); has(denied, 'candidate-source-unverified');
+}));
+
+test('a linked external allowlist is rejected before canonical identity resolution', () => fixture((f) => {
+  const entry = f.add('codex/external', 'external-lot', true); f.ready(entry);
+  const alias = path.join(f.temporary, 'external-alias');
+  symlinkSync(f.paths.get(entry.branch), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const denied = f.check('resume', { branch: entry.branch, allowExternalWorktrees: [alias] });
+  assert.equal(denied.valid, false); has(denied, 'linked-path');
 }));
 
 test('references reject traversal and linked parents before reading their content', () => fixture((f) => {

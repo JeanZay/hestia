@@ -5,6 +5,7 @@
   "scope": {
     "included": [
       "Stratégie squash et préflight fail-closed des réglages GitHub, tests de refus et de dérive.",
+      "Correction des alias de chemins Windows détectés par la CI du candidat, sans assouplir les contrôles de liens ni l'autorisation des worktrees externes.",
       "Désactivation autorisée de la suppression automatique des branches, protections main inchangées.",
       "Revue indépendante, publication PR13, CI, merge, synchronisation et hooks stables vérifiés."
     ],
@@ -14,7 +15,7 @@
     ],
     "ownedPaths": [
       "squash_correction : scripts/lib/closure-runner.mjs, tests/harness/closure-runner.test.mjs uniquement.",
-      "root : docs/lot-closure.md, ce contrat, preuves locales, registre, checkpoint et opérations Git/GitHub autorisées.",
+      "root : docs/lot-closure.md, scripts/lib/closure-state.mjs, tests/harness/closure-state.test.mjs, ce contrat, preuves locales, registre, checkpoint et opérations Git/GitHub autorisées.",
       "integration_continuity_advice et relecteur : lecture seule."
     ]
   },
