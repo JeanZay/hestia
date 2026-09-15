@@ -125,6 +125,18 @@ export function githubAdapter({ root, gh = 'gh', command = invoke }) {
     preflight(request) {
       const repository = repositoryName(request.repository);
       const number = pullNumber(repository, request.pr);
+      const settings = api(`repos/${repository}`);
+      requireCondition(typeof settings?.full_name === 'string' && settings.full_name.toLowerCase() === repository.toLowerCase(), 'remote-repository-mismatch');
+      const mergeSettings = {
+        repository: settings.full_name.toLowerCase(),
+        allowMergeCommit: settings.allow_merge_commit,
+        allowRebaseMerge: settings.allow_rebase_merge,
+        allowSquashMerge: settings.allow_squash_merge,
+        deleteBranchOnMerge: settings.delete_branch_on_merge,
+      };
+      requireCondition([mergeSettings.allowMergeCommit, mergeSettings.allowRebaseMerge, mergeSettings.allowSquashMerge, mergeSettings.deleteBranchOnMerge].every(value => typeof value === 'boolean'), 'remote-merge-settings-unavailable');
+      requireCondition(mergeSettings.allowSquashMerge === true, 'remote-squash-merge-disabled');
+      requireCondition(mergeSettings.deleteBranchOnMerge === false, 'remote-automatic-branch-deletion-enabled');
       const pull = api(`repos/${repository}/pulls/${number}`);
       const target = api(`repos/${repository}/branches/${encodeURIComponent(request.target)}`);
       const protection = api(`repos/${repository}/branches/${encodeURIComponent(request.target)}/protection`);
@@ -146,9 +158,9 @@ export function githubAdapter({ root, gh = 'gh', command = invoke }) {
         requireCondition((greenCheck || greenStatus) && (matched.length === 0 || greenCheck) && (status.length === 0 || greenStatus), 'remote-required-check-not-successful');
       }
       requireCondition(shaPattern.test(target.commit?.sha), 'remote-target-sha-unavailable');
-      return { repository: request.repository, pr: request.pr, head: request.head, branch: request.branch, target: request.target, targetHead: target.commit.sha, protectionDigest: hash(JSON.stringify(protection)), remoteStateVerified: true };
+      return { repository: request.repository, pr: request.pr, head: request.head, branch: request.branch, target: request.target, targetHead: target.commit.sha, protectionDigest: hash(JSON.stringify(protection)), mergeMethod: 'squash', mergeSettingsDigest: hash(JSON.stringify(mergeSettings)), remoteStateVerified: true };
     },
-    merge(request) { command(gh, ['pr', 'merge', request.pr, '--merge', '--match-head-commit', request.head], root); },
+    merge(request) { command(gh, ['pr', 'merge', request.pr, '--squash', '--match-head-commit', request.head], root); },
     confirm(request) {
       const repository = repositoryName(request.repository);
       const pull = api(`repos/${repository}/pulls/${pullNumber(repository, request.pr)}`);

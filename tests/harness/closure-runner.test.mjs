@@ -65,6 +65,26 @@ function remoteAdapter(f, overrides = {}) {
     ...overrides,
   };
 }
+function githubFixture(request, settingsAtRead = () => ({ full_name: 'synthetic/hestia', allow_merge_commit: false, allow_rebase_merge: false, allow_squash_merge: true, delete_branch_on_merge: false })) {
+  const mergeCommit = 'b'.repeat(40), targetHead = 'c'.repeat(40);
+  let merged = false, settingsReads = 0;
+  const calls = [];
+  const command = (executable, args) => {
+    calls.push({ executable, args });
+    if (args[0] === 'pr') { merged = true; return ''; }
+    assert.deepEqual(args.slice(0, 3), ['api', '--method', 'GET']);
+    const endpoint = args[3];
+    if (endpoint === 'repos/synthetic/hestia') return JSON.stringify(settingsAtRead(++settingsReads));
+    if (endpoint.endsWith('/pulls/1')) return JSON.stringify({ state: merged ? 'closed' : 'open', merged, draft: false, mergeable: true, mergeable_state: 'clean', html_url: request.pr, head: { sha: request.head, ref: request.branch, repo: { full_name: 'synthetic/hestia' } }, base: { ref: 'main', repo: { full_name: 'synthetic/hestia' } }, merge_commit_sha: merged ? mergeCommit : null });
+    if (endpoint.endsWith('/protection')) return JSON.stringify({ enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false }, required_linear_history: { enabled: true }, required_conversation_resolution: { enabled: true }, required_pull_request_reviews: {}, required_status_checks: { strict: true, checks: [{ context: 'verify', app_id: 1 }] } });
+    if (endpoint.endsWith('/branches/main')) return JSON.stringify({ protected: true, commit: { sha: targetHead } });
+    if (endpoint.includes('/check-runs')) return JSON.stringify({ total_count: 1, check_runs: [{ name: 'verify', app: { id: 1 }, head_sha: request.head, status: 'completed', conclusion: 'success' }] });
+    if (endpoint.includes('/status?')) return JSON.stringify({ sha: request.head, total_count: 0, statuses: [] });
+    if (endpoint.includes('/compare/')) return JSON.stringify({ status: 'ahead', merge_base_commit: { sha: mergeCommit } });
+    throw new Error('unexpected-endpoint');
+  };
+  return { calls, command, mergeCommit, remote: githubAdapter({ root: '.', command }) };
+}
 
 test('checks never write a registry or call the remote adapter without explicit apply', t => {
   const f = fixture(t);
@@ -318,31 +338,95 @@ test('cleanup apply is explicitly unavailable and leaves ignored data untouched'
   assert.equal(readFileSync(path.join(f.root, 'artifacts/valuable.txt'), 'utf8'), 'SYNTHETIC PRESERVE');
 });
 
-test('GitHub adapter checks real response shapes, uses SHA match and confirms ancestry', () => {
-  const head = 'a'.repeat(40), mergeCommit = 'b'.repeat(40), targetHead = 'c'.repeat(40);
+test('GitHub adapter checks squash-only response shapes, uses SHA match and confirms ancestry', () => {
+  const head = 'a'.repeat(40);
   const request = { repository: repositoryUrl, pr: `${repositoryUrl}/pull/1`, branch: 'codex/synthetic', target: 'main', head };
-  let merged = false;
-  const calls = [];
-  const command = (executable, args) => {
-    calls.push({ executable, args });
-    if (args[0] === 'pr') { merged = true; return ''; }
-    assert.deepEqual(args.slice(0, 3), ['api', '--method', 'GET']);
-    const endpoint = args[3];
-    if (endpoint.endsWith('/pulls/1')) return JSON.stringify({ state: merged ? 'closed' : 'open', merged, draft: false, mergeable: true, mergeable_state: 'clean', html_url: request.pr, head: { sha: head, ref: request.branch, repo: { full_name: 'synthetic/hestia' } }, base: { ref: 'main', repo: { full_name: 'synthetic/hestia' } }, merge_commit_sha: merged ? mergeCommit : null });
-    if (endpoint.endsWith('/protection')) return JSON.stringify({ enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false }, required_conversation_resolution: { enabled: true }, required_pull_request_reviews: {}, required_status_checks: { strict: true, checks: [{ context: 'verify', app_id: 1 }] } });
-    if (endpoint.endsWith('/branches/main')) return JSON.stringify({ protected: true, commit: { sha: targetHead } });
-    if (endpoint.includes('/check-runs')) return JSON.stringify({ total_count: 1, check_runs: [{ name: 'verify', app: { id: 1 }, head_sha: head, status: 'completed', conclusion: 'success' }] });
-    if (endpoint.includes('/status?')) return JSON.stringify({ sha: head, total_count: 0, statuses: [] });
-    if (endpoint.includes('/compare/')) return JSON.stringify({ status: 'ahead', merge_base_commit: { sha: mergeCommit } });
-    throw new Error('unexpected-endpoint');
-  };
-  const remote = githubAdapter({ root: '.', command });
-  assert.equal(remote.preflight(request).remoteStateVerified, true);
+  const { calls, remote, mergeCommit } = githubFixture(request);
+  const preflight = remote.preflight(request);
+  assert.equal(preflight.remoteStateVerified, true);
+  assert.equal(preflight.mergeMethod, 'squash');
+  assert.match(preflight.mergeSettingsDigest, /^[a-f0-9]{64}$/);
   remote.merge(request);
-  assert.deepEqual(calls.find(call => call.args[0] === 'pr').args, ['pr', 'merge', request.pr, '--merge', '--match-head-commit', head]);
+  assert.deepEqual(calls.find(call => call.args[0] === 'pr').args, ['pr', 'merge', request.pr, '--squash', '--match-head-commit', head]);
   assert.equal(remote.confirm(request).mergeCommit, mergeCommit);
   assert.throws(() => remote.preflight({ ...request, head: 'd'.repeat(40) }), /remote-candidate-mismatch/);
-  assert.ok(calls.every(call => !call.args.some(arg => ['--admin', '--auto', '--delete-branch'].includes(arg))));
+  assert.ok(calls.every(call => !call.args.some(arg => ['--admin', '--auto', '--delete-branch', '--merge', '--rebase'].includes(arg))));
+});
+
+test('guarded merge uses the real GitHub adapter with stable permitted settings and squash confirmation', t => {
+  const f = fixture(t);
+  const entry = mergeEntry(f);
+  const request = { repository: repositoryUrl, pr: `${repositoryUrl}/pull/1`, branch: entry.branch, target: entry.target, head: f.head };
+  const { remote, calls, mergeCommit } = githubFixture(request, count => ({ full_name: 'synthetic/hestia', allow_merge_commit: false, allow_rebase_merge: false, allow_squash_merge: true, delete_branch_on_merge: false, stargazers_count: count }));
+  const result = runClosure({ root: f.root, action: 'merge', lotId: entry.lotId, branch: entry.branch, apply: true }, { ...f, remote });
+  assert.equal(result.status, 'COMPLETED', JSON.stringify(result));
+  assert.equal(calls.filter(call => call.args[3] === 'repos/synthetic/hestia').length, 2);
+  assert.deepEqual(calls.filter(call => call.args[0] === 'pr').map(call => call.args), [['pr', 'merge', request.pr, '--squash', '--match-head-commit', f.head]]);
+  assert.notEqual(mergeCommit, f.head);
+  assert.equal(result.effect.mergeCommit, mergeCommit);
+  assert.equal(read(f.root, 'artifacts/closure/registry.json').entries[0].state, 'merged');
+  assert.equal(git(f.root, ['rev-parse', 'HEAD']), f.head);
+});
+
+test('repository identity, unknown merge settings and unsafe settings fail before any remote mutation', t => {
+  const f = fixture(t);
+  const entry = mergeEntry(f);
+  const request = { repository: repositoryUrl, pr: `${repositoryUrl}/pull/1`, branch: entry.branch, target: entry.target, head: f.head };
+  const known = { full_name: 'synthetic/hestia', allow_merge_commit: false, allow_rebase_merge: false, allow_squash_merge: true, delete_branch_on_merge: false };
+  const cases = [
+    { settings: null, code: 'remote-repository-mismatch' },
+    ...[undefined, null, 1, 'another/hestia'].map(full_name => ({ settings: { ...known, full_name }, code: 'remote-repository-mismatch' })),
+    ...['allow_merge_commit', 'allow_rebase_merge', 'allow_squash_merge', 'delete_branch_on_merge'].flatMap(field => [undefined, null, 0, 1, 'true', 'false'].map(value => ({ settings: { ...known, [field]: value }, code: 'remote-merge-settings-unavailable' }))),
+    { settings: { ...known, allow_squash_merge: false }, code: 'remote-squash-merge-disabled' },
+    { settings: { ...known, delete_branch_on_merge: true }, code: 'remote-automatic-branch-deletion-enabled' },
+  ];
+  const original = readFileSync(path.join(f.root, 'artifacts/closure/registry.json'));
+  for (const { settings, code } of cases) {
+    const { remote, calls } = githubFixture(request, () => settings);
+    const result = runClosure({ root: f.root, action: 'merge', lotId: entry.lotId, branch: entry.branch, apply: true }, { ...f, remote });
+    assert.equal(result.code, code, JSON.stringify(settings));
+    assert.equal(result.applied, false);
+    assert.deepEqual(calls.map(call => call.args), [['api', '--method', 'GET', 'repos/synthetic/hestia']]);
+    assert.deepEqual(readFileSync(path.join(f.root, 'artifacts/closure/registry.json')), original);
+    assert.equal(existsSync(path.join(f.root, 'artifacts/closure/operations')), false);
+    assert.equal(existsSync(path.join(f.root, 'artifacts/closure/operation.lock')), false);
+  }
+});
+
+test('unavailable repository settings fail closed without an operation to replay', t => {
+  const f = fixture(t);
+  const entry = mergeEntry(f);
+  const calls = [];
+  const remote = githubAdapter({ root: f.root, command: (_executable, args) => { calls.push(args); throw new Error('command-failed-or-outcome-unavailable'); } });
+  const result = runClosure({ root: f.root, action: 'merge', lotId: entry.lotId, apply: true }, { ...f, remote });
+  assert.equal(result.code, 'command-failed-or-outcome-unavailable');
+  assert.deepEqual(calls, [['api', '--method', 'GET', 'repos/synthetic/hestia']]);
+  assert.equal(existsSync(path.join(f.root, 'artifacts/closure/operations')), false);
+  assert.equal(read(f.root, 'artifacts/closure/registry.json').entries[0].state, 'ready');
+});
+
+test('both preflights reject settings drift before journaling or submitting a merge', t => {
+  const f = fixture(t);
+  const entry = mergeEntry(f);
+  const request = { repository: repositoryUrl, pr: `${repositoryUrl}/pull/1`, branch: entry.branch, target: entry.target, head: f.head };
+  const original = readFileSync(path.join(f.root, 'artifacts/closure/registry.json'));
+  const cases = [
+    { field: 'allow_merge_commit', value: true, code: 'remote-preflight-changed' },
+    { field: 'allow_rebase_merge', value: true, code: 'remote-preflight-changed' },
+    { field: 'allow_squash_merge', value: false, code: 'remote-squash-merge-disabled' },
+    { field: 'delete_branch_on_merge', value: true, code: 'remote-automatic-branch-deletion-enabled' },
+  ];
+  for (const { field, value, code } of cases) {
+    const { remote, calls } = githubFixture(request, count => ({ full_name: 'synthetic/hestia', allow_merge_commit: false, allow_rebase_merge: false, allow_squash_merge: true, delete_branch_on_merge: false, ...(count === 2 ? { [field]: value } : {}) }));
+    const result = runClosure({ root: f.root, action: 'merge', lotId: entry.lotId, branch: entry.branch, apply: true }, { ...f, remote });
+    assert.equal(result.code, code, field);
+    assert.equal(result.applied, false);
+    assert.equal(calls.filter(call => call.args[3] === 'repos/synthetic/hestia').length, 2);
+    assert.ok(calls.every(call => call.args[0] === 'api' && call.args[2] === 'GET'));
+    assert.deepEqual(readFileSync(path.join(f.root, 'artifacts/closure/registry.json')), original);
+    assert.equal(existsSync(path.join(f.root, 'artifacts/closure/operations')), false);
+    assert.equal(existsSync(path.join(f.root, 'artifacts/closure/operation.lock')), false);
+  }
 });
 
 test('real CLI reports an absent local registry as blocked and never creates it', t => {

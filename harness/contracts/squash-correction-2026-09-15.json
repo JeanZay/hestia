@@ -1,0 +1,51 @@
+{
+  "id": "squash-correction-2026-09-15",
+  "objective": "Corriger et qualifier le merge squash protégé, puis intégrer le harnais via PR13 sans perte de contexte.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Stratégie squash et préflight fail-closed des réglages GitHub, tests de refus et de dérive.",
+      "Désactivation autorisée de la suppression automatique des branches, protections main inchangées.",
+      "Revue indépendante, publication PR13, CI, merge, synchronisation et hooks stables vérifiés."
+    ],
+    "excluded": [
+      "Produit, UI, authentification, sous-Issues, Dev/Production, secrets, données familiales, coûts et Claude.",
+      "Suppression de branches/worktrees ou affaiblissement des protections."
+    ],
+    "ownedPaths": [
+      "squash_correction : scripts/lib/closure-runner.mjs, tests/harness/closure-runner.test.mjs uniquement.",
+      "root : docs/lot-closure.md, ce contrat, preuves locales, registre, checkpoint et opérations Git/GitHub autorisées.",
+      "integration_continuity_advice et relecteur : lecture seule."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "GO correctif et intégration, Amaury, 15 septembre 2026 ; reçu détaillé conservé localement.",
+    "allowedActions": [
+      "Corriger les seuls blocages identifiés et intégrer le candidat corrigé après qualification.",
+      "Changer delete_branch_on_merge à false et conserver toutes les protections existantes.",
+      "Préserver les sources ignorées et synchroniser sans destruction."
+    ],
+    "forbiddenActions": [
+      "Contournement administrateur, force-push, nouvelle PR concurrente, élargissement implicite.",
+      "Déploiement, suppression et lancement Claude."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Le contrôleur refuse une configuration absente/incompatible/instable et utilise --squash avec tête exacte.",
+    "Tests et revue indépendante applicables au candidat publié ; CI requise verte avant merge.",
+    "PR fusionnée et arbre intégré vérifiés ; contexte conservé et hooks stables testés."
+  ],
+  "validation": [
+    "Tests ciblés du contrôleur, npm run verify, revue indépendante du candidat exact.",
+    "Préflight distant répété, contrôle post-merge de la PR, cible, arbre et protections.",
+    "Reprise locale vérifiée et tests des hooks ; aucune ancienne preuve présentée comme courante."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "GitHub"
+}
