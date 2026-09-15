@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "path": "docs/design/prompts/design-system-v1.md",
+      "sha256": "20032e168b4276e5c74284c9f4b79d138ad95705ea830c560ae9a5e2befc8d7f",
+      "status": "historical",
+      "stage": "setup"
+    },
+    {
+      "path": "docs/design/prompts/design-system-v2.md",
+      "sha256": "c1f2f509fadb07508ba5e4f882d04836c9db9b1bed57de247ed11803bdfbbbeb",
+      "status": "active",
+      "stage": "setup"
+    }
+  ]
+}

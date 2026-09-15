@@ -4,7 +4,9 @@ Décision d'Amaury du 13 septembre 2026 : Claude Design réalise la conception U
 
 ## Responsabilités et portée
 
-Amaury utilise lui-même Claude Design et décide de la validation du design. Les agents clarifient les besoins, parcours, comportements attendus et critères d'acceptation, puis lui transmettent un prompt exploitable. Ils ne créent pas leur propre maquette, écran, composant visuel, palette ou token graphique, même provisoire. Le [premier prompt de Design System](design/prompts/design-system-v1.md) prépare la première étape.
+Toute demande à Claude Design suit désormais le [protocole de qualification des prompts](design/claude-design-workflow.md) : sources officielles relues, dossier/revue du prompt exact et contrôle exécutable avant remise, y compris pour une correction ou un dossier ignoré. Le catalogue versionné et son audit CI détectent les prompts non enregistrés ; ils ne prouvent pas l'actualité des sources. Les [constats du 15 septembre](design/anthropic-notes.md) ne remplacent pas une relecture future.
+
+Amaury utilise lui-même Claude Design et décide de la validation du design. Les agents clarifient les besoins, parcours, comportements attendus et critères d'acceptation, puis lui transmettent un prompt qualifié. Ils ne créent pas leur propre maquette, écran, composant visuel, palette ou token graphique, même provisoire. Le [prompt Design System v2](design/prompts/design-system-v2.md) vise sa création native avec validations intermédiaires ; les anciennes versions sont historiques. Aucun asset préalable n'est imposé à ce parcours sur la seule base du guide d'import.
 
 Dans un lot dont l'exécution est autorisée, les agents peuvent intégrer techniquement les sources retenues et reproduire fidèlement le design transmis : composants définis, styles, interactions et adaptations documentées. Le choix d'un détail visuel ou d'un état manquant revient à Claude Design via un prompt complémentaire. Les choix purement techniques restent possibles dans le contrat, tant qu'ils ne redéfinissent pas l'interface validée.
 

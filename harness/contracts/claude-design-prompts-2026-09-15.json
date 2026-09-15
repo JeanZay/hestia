@@ -1,0 +1,55 @@
+{
+  "id": "claude-design-prompts-2026-09-15",
+  "objective": "Aligner le prompt Design System sur la documentation officielle actuelle de Claude Design et imposer un contrôle vérifiable avant la remise de tout prompt futur.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Recherche en lecture seule sur les sources officielles Anthropic ; distinguer faits documentés, adaptations Hestia et capacités non vérifiées.",
+      "Circuit documenté de préparation, qualification et remise ; correction du prompt initial, routage systématique depuis AGENTS.md et les deux skills Hestia.",
+      "Contrôle exécutable de fraîcheur des sources, du prompt exact, des prérequis et de la revue indépendante ; tests de refus et branchement aux contrôles du harnais.",
+      "Dossier local de preuve, conservation du checkpoint Issue 2 et préparation d'une demande d'intégration du candidat exact."
+    ],
+    "excluded": [
+      "Conception UI, création du Design System par les agents, implémentation identité ou autre produit, découpage de l'Issue 2.",
+      "Lancement Claude ou MCP Claude Design, transmission de données familiales, secrets, coûts, modifications GitHub, déploiement ou suppression de branche/worktree.",
+      "Garantie absolue de qualité visuelle, SOTA permanent sans relecture, ou protection contre un agent/propriétaire qui contourne volontairement le harnais."
+    ],
+    "ownedPaths": [
+      "root : AGENTS.md, .agents/skills/hestia-delivery/SKILL.md, .agents/skills/hestia-refinement/SKILL.md, docs/design-governance.md, docs/design/, scripts/verify.mjs, package.json, ce contrat et preuves locales.",
+      "design_prompt_gate : scripts/design-prompt.mjs, scripts/lib/design-prompt.mjs, tests/harness/design-prompt.test.mjs, tests/harness/fixtures/design-prompt/ uniquement.",
+      "claude_design_official_audit et relecteur final : lecture seule."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Demande directe d'Amaury du 15 septembre 2026 : vérifier le prompt contre la documentation Anthropic et inscrire ses trouvailles avec un mécanisme applicable à tous les prompts futurs. Source exacte conservée dans artifacts/closure/claude-design-prompts-2026-09-15/source.md de la racine primaire.",
+    "allowedActions": [
+      "Lire les pages officielles publiques et les sources locales pertinentes.",
+      "Développer localement le seul harnais demandé, tests et documentation, dans le worktree réservé ; déléguer les sous-tâches indépendantes.",
+      "Préparer et faire relire le prompt corrigé, enregistrer les preuves réelles et présenter le candidat à intégrer."
+    ],
+    "forbiddenActions": [
+      "Publier ou intégrer sur GitHub sans accord applicable, exécuter Claude ou un package de design, modifier le produit ou présumer les réponses de l'Issue 2.",
+      "Déployer, engager un coût, traiter des données réelles ou prétendre avoir validé le fonctionnement dans le compte Claude Design d'Amaury."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Les écarts du prompt existant sont reliés à des sources officielles datées, avec distinction entre bootstrap visuel, Design System configuré, export ZIP et handoff natif.",
+    "Avant remise, le contrôle refuse sources absentes/périmées/modifiées/non officielles, prompt modifié, revue absente/non indépendante/inapplicable et prérequis insuffisants selon la phase.",
+    "AGENTS.md et les skills routent vers la procédure et la commande ; une vérification de dépôt/CI détecte un prompt versionné non enregistré. Les fixtures testent réellement les refus.",
+    "La preuve du prompt remis est liée à ses octets ; aucun PASS de CI hors ligne n'est présenté comme une relecture officielle actuelle ou un essai Claude Design.",
+    "L'état du lot et la demande de GO d'intégration sont explicites, le travail antérieur et les réponses produit sont conservés."
+  ],
+  "validation": [
+    "Tests ciblés du contrôle et tests complets du harnais, lint, types, tests unitaires, build et parcours existants via verify.",
+    "Relecture officielle en direct sans envoi de données privées, contrôles du dossier courant, invalidation par modification et rejeu sur fixtures.",
+    "Revue indépendante du candidat exact et mise en situation de remise d'un prompt sans prérequis ; validation structurelle des skills modifiées."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}
