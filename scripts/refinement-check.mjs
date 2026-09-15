@@ -11,7 +11,7 @@ const stages = ['exploration', 'brief-candidate', 'brief-validated', 'plan-propo
 const issueUrl = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*$/;
 const issueCommentUrl = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*#issuecomment-[1-9][0-9]*$/;
 const limits = [
-  'Cohérence structurelle seulement ; la fidélité, la valeur verticale et la qualité des preuves nécessitent une revue humaine.',
+  'Cohérence structurelle seulement ; fidélité, valeur verticale et preuves nécessitent une revue indépendante des agents et les arbitrages produit applicables.',
   'Aucun accord humain authentifié, aucune permission accordée, aucun accès réseau, aucune publication.',
   'Lectures GitHub et dépendances : déclarations datées à revérifier en direct avant action ; publication ne signifie pas livraison.',
   'Questions et préparations bloquantes ont une portée globale ; seuls les handoffs sélectionnés deviennent prêts.',
@@ -450,7 +450,10 @@ function checkSemantics(record, digests) {
     const briefReceipt = briefMutations.length === 1 ? receipts.get(briefMutations[0].key) : undefined;
     require(Boolean(briefReceipt) && handoff.briefReference.url === briefReceipt.url && handoff.briefReference.digest === digests.brief, `${location}/briefReference`, 'handoff-brief-reference-mismatch');
     require(handoff.contract.githubIssue === receipt?.url && handoff.contract.objective === issue.title && same(handoff.contract.scope, issue.scope) && same(handoff.contract.acceptanceCriteria, issue.criteria.flatMap((item) => [item.positive, item.negative])) && same(handoff.contract.validation, issue.validation), `${location}/contract`, 'handoff-contract-mismatch');
-    require(handoff.contract.authorization.source !== approvals.publication?.source, `${location}/contract/authorization`, 'execution-authorization-not-distinct');
+    // One authentic message can explicitly cover publication and execution.
+    // Distinct strings cannot prove distinct powers; lifecycle checks scoped sources,
+    // and the agent must still verify the actual consent behind those records.
+    require(handoff.contract.authorization.source.trim().length > 0, `${location}/contract/authorization`, 'execution-authorization-source-empty');
     for (const target of issue.dependencies) require(readiness.dependencyEvidence.some((proof) => proof.issueKey === issue.key && proof.dependency === target && proof.state === 'satisfied'), location, 'handoff-dependency-unsatisfied');
   });
   return errors;

@@ -39,6 +39,9 @@ test('active harness Markdown links resolve after skill discovery relocation', (
     path.join(root, 'CLAUDE.md'),
     path.join(root, 'CONTRIBUTING.md'),
     path.join(root, 'docs', 'delivery-governance.md'),
+    path.join(root, 'docs', 'product-workflow.md'),
+    path.join(root, 'docs', 'continuity.md'),
+    path.join(root, 'docs', 'design-governance.md'),
     ...markdownFiles(path.join(root, '.agents', 'skills'))
   ];
 

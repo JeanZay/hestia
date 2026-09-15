@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "dataPolicy": "synthetic-only",
+  "stage": "exploration",
+  "source": { "original": "Exemple synthétique : retrouver une sélection fictive après rechargement.", "capturedAt": "2026-09-15T00:00:00Z", "reference": "Modèle synthétique de test, aucune demande ni autorisation réelle." },
+  "nuances": [],
+  "brief": {
+    "need": "Explorer un exemple fictif de sélection persistante.",
+    "outcome": "Préciser le résultat attendu avant tout engagement.",
+    "actors": [], "scope": { "included": [], "excluded": [] },
+    "decisions": { "product": [], "ux": [], "security": [], "architecture": [] },
+    "questions": [], "hypotheses": [], "risks": [], "criteria": [], "preparations": []
+  },
+  "plan": { "repository": "https://github.com/example/hestia-lifecycle-fixture", "project": null, "issues": [], "order": [], "mutations": [] },
+  "approvals": { "brief": null, "publication": null },
+  "publication": { "receipts": [] },
+  "readiness": { "dependencyEvidence": [], "handoffs": [] }
+}

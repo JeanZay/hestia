@@ -17,10 +17,13 @@ test('source evidence includes new files and records the absence of a tracked de
     rmSync(path.join(temporary, 'removed.txt'));
     writeFileSync(path.join(temporary, 'new.txt'), 'SYNTHETIC NEW FILE\n');
     execFileSync(process.execPath, [entry], { cwd: temporary });
-    const report = JSON.parse(readFileSync(path.join(temporary, 'artifacts/source-manifest.json')));
+    const pointer = JSON.parse(readFileSync(path.join(temporary, 'artifacts/evidence-latest.json')));
+    const report = JSON.parse(readFileSync(path.join(temporary, pointer.report.path)));
     assert.deepEqual(report.files.map(file => file.path), ['.gitignore', 'new.txt']);
     assert.match(report.sourceDigest, /^[a-f0-9]{64}$/);
     assert.equal(report.commit, null);
+    assert.deepEqual(report.deletedFiles, ['removed.txt']);
+    assert.equal(report.runId, pointer.runId);
   } finally {
     assert.equal(path.dirname(path.resolve(temporary)), path.resolve(os.tmpdir()));
     assert.ok(path.basename(temporary).startsWith('hestia-evidence-test-'));

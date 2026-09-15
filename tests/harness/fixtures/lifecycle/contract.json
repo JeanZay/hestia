@@ -1,0 +1,12 @@
+{
+  "id": "synthetic-lifecycle-template",
+  "objective": "Illustrer la reprise d'un dossier synthétique encore en exploration.",
+  "githubIssue": null,
+  "scope": { "included": ["Lecture de fixtures synthétiques."], "excluded": ["Implémentation produit et toute action distante."], "ownedPaths": ["Aucun chemin de produit attribué par ce modèle."] },
+  "dataPolicy": "synthetic-only",
+  "authorization": { "source": "Modèle synthétique sans autorisation réelle.", "allowedActions": ["Le modèle n'accorde aucune action."], "forbiddenActions": ["Aucun développement produit, réseau, donnée réelle ou déploiement."] },
+  "acceptanceCriteria": ["Retrouver un contexte synthétique sans prétendre pouvoir l'exécuter."],
+  "validation": ["Vérification structurelle et des empreintes des fixtures locales."],
+  "independentReview": { "required": true, "reviewerMustDifferFromAuthor": true, "cleanContext": true, "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest" },
+  "deliveryTarget": "local"
+}

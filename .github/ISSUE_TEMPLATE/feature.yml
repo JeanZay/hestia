@@ -1,5 +1,5 @@
 name: Besoin ou évolution
-description: Décrire un résultat utile au foyer et ses critères d'acceptation.
+description: Capturer un besoin large ; le refinement et les US viendront au moment de l'engager.
 title: "[Besoin] "
 body:
   - type: textarea
@@ -12,8 +12,8 @@ body:
   - type: textarea
     id: acceptance
     attributes:
-      label: Résultat observable et critères d'acceptation
-      description: Ce qui permettra de dire que le besoin est satisfait, y compris sur mobile.
+      label: Résultat recherché et questions connues
+      description: Exprimer l'effet utile attendu ; des critères détaillés ne sont pas exigés pour un besoin futur. Les agents mèneront le refinement avant développement.
     validations:
       required: true
   - type: textarea

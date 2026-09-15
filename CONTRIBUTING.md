@@ -4,13 +4,15 @@ Hestia est ouvert aux contributions sous [licence Apache-2.0](LICENSE). Contribu
 
 ## Préparer une modification
 
-Si le besoin reste flou ou qu'une Issue regroupe plusieurs résultats, commencer par [hestia-refinement](.agents/skills/hestia-refinement/SKILL.md) : rounds courts, décisions explicites, brief validable, puis petites Issues avec preuves et dépendances. La discussion conserve les nuances et sépare produit, UX, sécurité et architecture. Le dossier temporaire de préparation reste local et synthétique ; après publication autorisée, GitHub conserve le besoin et le suivi. L'accord produit sur un brief, l'accord de publication et l'autorisation d'exécuter un lot ont des portées distinctes.
+Si le besoin reste flou ou qu'une Issue regroupe plusieurs résultats, commencer par [hestia-refinement](.agents/skills/hestia-refinement/SKILL.md) : rounds courts, décisions explicites et cahier des charges validable. Conserver les besoins futurs larges ; découper en petites Issues avec preuves et dépendances seulement le besoin explicitement engagé maintenant, après cadrage complet et validation, lorsque son démarrage est crédible. Appliquer le [workflow produit](docs/product-workflow.md). La discussion conserve les nuances et sépare produit, UX, sécurité et architecture. Le dossier temporaire de préparation reste local et synthétique ; après publication autorisée, GitHub conserve le besoin et le suivi. Les accords sur le périmètre, le brief, l'engagement, la publication et l'exécution ont des portées distinctes.
 
 Lire [AGENTS.md](AGENTS.md) et [la gouvernance](docs/delivery-governance.md). Rattacher le travail à une [GitHub Issue](https://github.com/JeanZay/hestia/issues) et au GitHub Project du dépôt. Ils constituent l'unique backlog ; le contrat de tâche décrit seulement le lot courant et ses critères. Ne pas créer de backlog Markdown ou réactiver le fichier d'import ponctuel.
 
+Pour une interface, appliquer [la gouvernance de design](docs/design-governance.md) : Amaury utilise Claude Design à partir du prompt préparé par les agents, puis dépose le hand-off à la racine. Le Design System validé précède les nouveaux écrans. L'intégration technique exige un hand-off inspecté et suffisant ainsi qu'un lot autorisé ; les agents ne comblent pas ses lacunes en concevant une UI. Les règles d'inspection des archives et de conservation des originaux s'appliquent avant toute reprise de leurs sources.
+
 Inspecter l'état Git, préserver les changements existants et travailler dans une branche et un worktree isolés. Les auteurs en parallèle se répartissent explicitement les chemins. Préparer le contrat à partir de `harness/contracts/task-template.json` avec l'autorisation applicable et les critères vérifiables.
 
-Installer les dépendances avec `npm ci --ignore-scripts`, puis suivre les commandes du [README](README.md). Le contrôle complet est `npm run verify`. Les preuves indiquent chaque commande réellement exécutée, son résultat, sa date et le candidat concerné. Les contrôles absents de l'environnement restent « non exécutés ».
+Pour le projet Hestia, installer les dépendances avec `npm ci --ignore-scripts`, puis suivre les commandes du [README](README.md). Cette commande ne vaut pas autorisation d'installer ou d'exécuter un package importé. Le contrôle complet est `npm run verify`. Les preuves indiquent chaque commande réellement exécutée, son résultat, sa date et le candidat concerné. Les contrôles absents de l'environnement restent « non exécutés ».
 
 ## Activer les hooks locaux
 

@@ -1,6 +1,6 @@
 # Gouvernance de développement et de livraison
 
-Statut : gouvernance actualisée pour la publication autorisée du 12 septembre 2026. Ce document est la source unique des règles de livraison pour Codex, Claude Code et les contributeurs. Les autres fichiers y renvoient ; aucune règle documentaire ne vaut mécanisme technique déjà déployé.
+Statut : actualisée le 13 septembre 2026 pour le circuit Claude Design, après la publication autorisée du 12 septembre. Ce document est la source unique des règles de livraison pour Codex, Claude Code et les contributeurs. La [gouvernance de design](design-governance.md) fixe le circuit de conception UI et de reprise des hand-offs. Les autres fichiers y renvoient ; aucune règle documentaire ne vaut mécanisme technique déjà déployé.
 
 ## Autorisations et périmètre
 
@@ -11,6 +11,8 @@ La fondation initiale autorise la conception, les fichiers locaux, une applicati
 La fondation initiale excluait push, dépôt distant et licence appliquée. Après sa vérification, Amaury a explicitement autorisé Apache-2.0 et la publication publique sur le compte GitHub connecté. Le contrat [publication-2026-09-12](../harness/contracts/publication-2026-09-12.json) borne cette nouvelle autorisation à `JeanZay/hestia`, ses Issues, son Project, ses réglages et les contrôles gratuits associés. Aucun déploiement Dev ou Production, donnée familiale, secret, coût supplémentaire, service payant ou lancement Claude n'est autorisé par ce lot.
 
 Pour tout lot ultérieur, le contrat consigne les actions déjà autorisées, les données utilisables, les exclusions et les critères d'acceptation. Une question n'est nécessaire que si une décision indispensable manque, si la demande franchit le périmètre autorisé ou si une protection effective refuse une opération nécessaire. Ne pas transformer une règle de prudence en interdiction universelle des actions déjà autorisées.
+
+Depuis le 13 septembre 2026, la conception UI passe exclusivement par Claude Design utilisé manuellement par Amaury, sur un prompt préparé par les agents. Ceux-ci réalisent l'intégration technique fidèle depuis un hand-off suffisant dans un lot autorisé, selon la [gouvernance de design](design-governance.md). Le dépôt d'un package et la validation du design ne valent ni autorisation d'exécuter ses scripts ni GO de livraison. Cette décision ne supprime pas la démonstration existante ; sa reprise doit être qualifiée selon cette même gouvernance.
 
 ## Deux environnements durables
 
@@ -35,9 +37,11 @@ Le schéma `harness/contracts/task-contract.schema.json` décrit le contrat. Les
 
 ## Refinement et passage à la livraison
 
+Le [workflow produit agentique](product-workflow.md), acté le 15 septembre 2026, définit le besoin large, le refinement approfondi unique et l'engagement juste-à-temps. Lire le [protocole de reprise](continuity.md) à chaque nouvelle tâche. Les anciens stades V1 restent lisibles mais ne constituent pas à eux seuls une qualification d'engagement ou d'exécution.
+
 Le skill local [hestia-refinement](../.agents/skills/hestia-refinement/SKILL.md) prépare l'amont d'un lot. Le responsable produit pilote les choix ; l'agent conserve les formulations, reformule et challenge les hypothèses, contradictions, risques et exclusions. Les décisions produit, UX, sécurité et architecture restent distinctes. Un accord sur l'outillage ou sur une méthode ne répond pas implicitement aux questions produit du cas étudié.
 
-Les étapes sont exploration, brief candidat, brief validé, plan d'Issues proposé, publication autorisée, publication relue et Issues prêtes pour delivery. Le brief et le plan exacts reçoivent des accords distincts et sourcés. Une modification de leur contenu impose de revoir l'accord affecté ; le silence, une recommandation d'agent, une réussite de test ou un champ JSON ne remplacent jamais la décision d'Amaury. Avant toute écriture GitHub, vérifier l'accord réel de la session et relire l'état distant pour détecter les changements et doublons. Une publication partielle exige une réconciliation avant toute reprise.
+Les étapes de maturité V1 sont exploration, brief candidat, brief validé, plan d'Issues proposé, publication autorisée, publication relue et Issues prêtes pour delivery. Un brief validé peut rester large, sans plan, tant que le besoin n'est pas engagé maintenant. Les accords de brief, engagement, publication et exécution sont distincts par portée et sourcés ; un même message peut en exprimer plusieurs explicitement sans imposer des micro-GOs. Une modification de contenu impose de revoir l'accord affecté ; le silence, une recommandation d'agent, une réussite de test ou un champ JSON ne remplacent jamais la décision d'Amaury. Avant toute écriture GitHub, vérifier l'accord réel et relire l'état distant pour détecter les changements et doublons. Une publication partielle exige une réconciliation avant toute reprise.
 
 Les dossiers de refinement sont des préparations temporaires, locales, synthétiques, normalement sous `artifacts/refinement/`. Ils ne suivent pas la livraison en parallèle de GitHub. Après publication, le brief de référence et les Issues vivent sur GitHub ; seul un reçu figé des URLs, empreintes et observations est utile pour attester l'opération. Les ADR durables gardent leur place dans `docs/adr/`. Ne jamais copier d'échanges privés ni de données familiales dans les éléments publiables.
 
@@ -46,6 +50,8 @@ Le schéma `harness/contracts/refinement.schema.json` et `scripts/refinement-che
 Une Issue est prête à exécuter lorsque son résultat et ses exclusions sont bornés, ses critères et preuves sont observables, les questions bloquantes de son périmètre sont résolues, ses dépendances ont des preuves de satisfaction, les décisions préparatoires nécessaires sont prises et ses données et actions sont autorisées. Sa publication seule ne satisfait aucune dépendance. Le handoff contient l'URL réelle relue, les références au brief et aux décisions, puis un contrat `hestia-delivery` cohérent avec le résultat, les critères, les preuves et le périmètre. Les chemins sont attribués lors de la préparation du worktree. L'autorisation d'exécuter ce lot est vérifiée séparément de celle de publier des Issues ; Dev et Production gardent leurs frontières propres.
 
 ## Revue indépendante du candidat exact
+
+Avant l'implémentation, une revue indépendante du cahier des charges éprouve la couverture du périmètre engagé, les contradictions et hypothèses, en plus de la revue du candidat implémenté. Chaque critère conduit à une preuve attendue ; la livraison du besoin exige aussi le parcours intégré et les non-régressions pertinentes. Amaury reçoit une recette d'usage sur une version identifiée, jamais une obligation de relire le code ou les rapports techniques.
 
 Le relecteur ne doit pas être l'auteur des changements examinés. Lui donner un contexte propre : demande initiale, critères, contraintes, fichiers du candidat et commandes de test, sans lui fournir le raisonnement défensif de l'auteur ni un verdict à confirmer. Pour un sous-agent, utiliser un contexte neuf lorsque l'outil le permet. Un autre agent est indépendant de l'implémentation ; cela ne constitue pas une garantie absolue contre les erreurs communes aux modèles.
 
@@ -58,7 +64,7 @@ La preuve contient :
 
 Un auteur peut exécuter ses tests ; il ne peut pas produire lui-même le verdict indépendant. Une revue planifiée, non exécutée, interrompue ou sans identité de candidat reste `NOT_PERFORMED` ou `BLOCKED` et ne vaut jamais PASS.
 
-Pour ce lot local, une revue Codex indépendante est requise. La contre-revue Claude n'est pas effectuée ni exigée pour conclure ce seul lot local autorisé. Tout lancement Claude ultérieur nécessite une autorisation explicite portant sur l'usage externe et son coût éventuel ; utiliser exclusivement `claude-opus-5` et vérifier le modèle effectif sans substitution. Une CLI installée ou un modèle demandé n'est pas une preuve du modèle effectivement utilisé.
+Pour ce lot local, une revue Codex indépendante est requise. La contre-revue Claude n'est pas effectuée ni exigée pour conclure ce seul lot local autorisé. Une future contre-revue de code par Claude exige une autorisation explicite portant sur l'usage externe et son coût éventuel ; utiliser exclusivement `claude-opus-5` et vérifier le modèle effectif sans substitution. Une CLI installée ou un modèle demandé n'est pas une preuve du modèle effectivement utilisé. Cette règle de modèle concerne la contre-revue de code, pas Claude Design utilisé manuellement par Amaury. Le choix de Claude Design n'autorise aucun lancement Claude ni envoi externe par les agents.
 
 ## Contrôles techniques réellement présents
 

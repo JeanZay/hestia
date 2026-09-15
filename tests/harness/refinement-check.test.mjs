@@ -31,6 +31,16 @@ test('all stages are reachable with their distinct synthetic evidence', () => {
   for (const record of [brief, plan(), authorized(), published(), ready()]) valid(record);
 });
 
+test('one consent reference can describe distinct publication and execution scopes', () => {
+  const record = ready();
+  const before = computeDigests(record);
+  record.readiness.handoffs[0].contract.authorization.source = record.approvals.publication.source;
+  valid(record);
+  assert.deepEqual(computeDigests(record), before, 'Source validation must not silently change historical digest semantics.');
+  record.readiness.handoffs[0].contract.authorization.source = '   ';
+  assert.ok(invalid(record).errors.some((error) => error.code === 'execution-authorization-source-empty'));
+});
+
 test('schema rejects missing domains, unknown fields, invalid dates and real-data mode', () => {
   for (const mutate of [
     (r) => { delete r.brief.decisions.security; },

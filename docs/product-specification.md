@@ -1,6 +1,6 @@
 # Spécification produit Hestia
 
-Version de cadrage : 12 septembre 2026, actualisée après la décision Apache-2.0 et l'autorisation de publication GitHub. Ce document exprime les besoins et décisions ; il ne constitue pas un backlog. Les travaux, priorités et états de livraison sont suivis uniquement dans GitHub Issues et GitHub Projects.
+Version de cadrage : 13 septembre 2026, actualisée pour les droits indépendants de l'âge et le circuit Claude Design, après les décisions Apache-2.0 et publication GitHub du 12 septembre. Ce document exprime les besoins et décisions ; il ne constitue pas un backlog. Les travaux, priorités et états de livraison sont suivis uniquement dans GitHub Issues et GitHub Projects.
 
 ## Origine et portée
 
@@ -15,7 +15,7 @@ Hestia est un socle numérique familial privé, francophone et open source sous 
 | ID | Décision validée |
 | --- | --- |
 | VIS-01 | Une instance indépendante par foyer ; aucune plateforme SaaS centralisant plusieurs familles n'est décidée. |
-| VIS-02 | Les membres adultes du foyer sont les utilisateurs initiaux. Les documents peuvent concerner d'autres personnes ; cela ne leur crée pas automatiquement un compte ou un accès. |
+| VIS-02 | Les personnes décrites par le foyer et les comptes autorisés sont distincts. Les droits reposent sur les rôles et permissions explicitement attribués, sans profils adulte/enfant ni droit accordé selon l'âge ou le lien familial. Les documents peuvent concerner un enfant ou un proche très âgé sans lui créer un compte ni un accès. Une personne aidante agit avec son propre compte et ses seuls droits ; le rôle d'aide ne donne aucun accès automatique aux documents de la personne aidée. |
 | VIS-03 | Le responsable produit exprime ses besoins en langage naturel, teste l'application et décide ajustement, non-GO ou GO. Il n'écrit ni ne relit de code. |
 | VIS-04 | Le projet vise aussi à démontrer une pratique professionnelle du développement agentique : orchestration, contrôle, preuves et livraison supervisée. Cette finalité n'intègre pas l'animation ou la communication privée au produit public ; la frontière PUB-01 à PUB-06 s'applique. |
 | VIS-05 | Les échanges et décisions restent courts, compréhensibles et orientés vers l'usage. Les incertitudes utiles de l'exploration sont conservées, même sans décision finale. |
@@ -31,6 +31,8 @@ Hestia est un socle numérique familial privé, francophone et open source sous 
 | UX-05 | Retrouver un document et poser une question sont les usages centraux. Le contrôle des connecteurs reste simple, sans plateforme d'administration complexe dans la première version. |
 
 La première conception doit permettre une navigation au clavier, des champs nommés, des états compréhensibles sans dépendre de la couleur et une lecture sur petit écran. Ces critères de qualité d'interface précisent UX-03 ; ils ne promettent aucune certification d'accessibilité.
+
+Selon la décision EXP-07 du 13 septembre 2026, Claude Design réalise la conception UI, avec un Design System initial validé puis réemployé à chaque écran. La [gouvernance de design](design-governance.md) définit les prompts remis à Amaury, l'import manuel des hand-offs et leur intégration technique fidèle par les agents ; elle s'applique aux nouveaux travaux et encadre la reprise de la démonstration antérieure.
 
 ## Coffre documentaire
 
@@ -109,13 +111,13 @@ Pour la cible, la désactivation doit être vérifiée avant toute nouvelle tent
 | GOV-04 | Deux environnements et bases durables seulement : Dev et Production, strictement séparés. Local, previews de PR et bases jetables de migrations sont isolés et éphémères. La QA est un ensemble de contrôles et une recette sur Dev, sans troisième base permanente. |
 | GOV-05 | Flux cible : issue prête → worktree → développement → tests → revue indépendante → PR → preview → intégration sur develop → recette Dev liée à la version → GO explicite du responsable produit → promotion de l'artefact approuvé en Production. |
 | GOV-06 | La branche de Production est protégée. Toute livraison exige les contrôles requis, une sauvegarde vérifiée, des migrations contrôlées, un retour arrière préparé et des tests après déploiement. Aucun GO implicite, aucune publication ni livraison distante dans le lot initial. |
-| GOV-07 | GitHub Issues et GitHub Projects sont l'unique backlog. Le pilote produit agentique transforme les échanges validés en issues, les découpe, les déduplique et propose critères, dépendances et priorités. Le responsable produit décide les choix importants sans administration manuelle des détails. |
+| GOV-07 | GitHub Issues et GitHub Projects sont l'unique backlog, tenu par les agents dans les autorisations applicables. Les besoins futurs restent larges. Un seul besoin est approfondi à la fois par rounds de refinement jusqu'au cahier des charges complet du périmètre retenu ; les US verticales n'apparaissent que pour le besoin engagé maintenant après validation, pas dès qu'une idée est comprise. Les agents dédupliquent, proposent les priorités et gèrent critères, dépendances, ordre technique et preuves. Amaury pilote les choix sans coder, relire le code ni administrer les détails. Voir le [workflow produit](product-workflow.md), acté le 15 septembre 2026. |
 | GOV-08 | Les statuts reflètent des preuves réelles : développé, testé, revu, disponible en Dev ou livré en Production. Une issue n'est fermée comme livrée qu'après vérification indépendante de la version effectivement déployée. L'interface de pilotage expose un backlog lisible, une preview et un verdict clair. |
 | OSS-01 | Le projet est open source sous Apache-2.0 après décision explicite du 12 septembre 2026 : code du produit installable, harnais de développement du produit, tests, données synthétiques, documentation de contribution autorisée et backlog GitHub sont publiables sur JeanZay/hestia. Ce périmètre exclut l'usine privée décrite par PUB-01 à PUB-06 et n'autorise aucune publication des données d'un foyer. |
 | OSS-02 | Les utilisateurs doivent recevoir des versions stables, une installation guidée, des migrations et des outils de sauvegarde/restauration. Le harnais et le backlog servent surtout aux contributeurs. |
 | OSS-03 | Le code partageable reste strictement séparé des données, configurations et secrets de chaque foyer. |
 
-La traduction opérationnelle de ces règles est donnée par [AGENTS.md](../AGENTS.md), la [gouvernance de livraison](delivery-governance.md) et la [sécurité](security.md).
+La traduction opérationnelle de ces règles est donnée par [AGENTS.md](../AGENTS.md), la [gouvernance de livraison](delivery-governance.md), la [gouvernance de design](design-governance.md) et la [sécurité](security.md).
 
 ## Frontière entre produit public et animation privée
 
@@ -132,9 +134,9 @@ Cette décision ajoutée au carnet le 12 septembre 2026 borne le dépôt Hestia.
 
 ## Idées à l'étude
 
-Cette table conserve les options du carnet. EXP-01 à EXP-06 reprennent sa rubrique « Idées à l'étude » ; EXP-07 et EXP-08 conservent les possibilités évoquées ailleurs dans le cadrage. Elle n'est ni une liste de tâches planifiées ni un second système de suivi. L'animation privée constitue désormais une frontière validée selon PUB-01 à PUB-06, pas une option de module Hestia.
+Cette table conserve les options du carnet et les décisions qui les ont tranchées. EXP-01 à EXP-06 reprennent sa rubrique « Idées à l'étude » ; EXP-07 et EXP-08 proviennent de possibilités évoquées ailleurs dans le cadrage. EXP-05 et EXP-07 sont désormais des choix actés. Cette table n'est ni une liste de tâches planifiées ni un second système de suivi. L'animation privée constitue une frontière validée selon PUB-01 à PUB-06, pas une option de module Hestia.
 
-| ID | Option et décision restant à prendre |
+| ID | Option conservée ou décision actée |
 | --- | --- |
 | EXP-01 | Inbox locale synchronisée vers le service distant ou dépôt directement hébergé. Comparer disponibilité, confidentialité, doublons, capacité mobile et reprise après panne. |
 | EXP-02 | Forme des rappels : dans l'application, e-mail, calendrier ou notification mobile. Définir permissions, consentement, fréquence et erreurs visibles avant activation. |
@@ -142,7 +144,7 @@ Cette table conserve les options du carnet. EXP-01 à EXP-06 reprennent sa rubri
 | EXP-04 | Hébergement principal et fournisseur indépendant de sauvegarde ; vérifier coûts, localisation, conditions de traitement, export et restauration. |
 | EXP-05 | Option tranchée après cadrage : Apache-2.0 adoptée explicitement le 12 septembre 2026. Le choix initial et son application sont documentés dans [Licence](licensing.md). |
 | EXP-06 | Périmètre initial de documentation anglaise destinée aux contributeurs. Le français utilisateur demeure prioritaire. |
-| EXP-07 | Claude Design est un outil envisagé pour l'interface et l'expérience ; aucun abonnement, transfert de données ou usage n'est activé par cette mention. |
+| EXP-07 | Choix acté par Amaury le 13 septembre 2026 : conception UI exclusivement dans Claude Design utilisé manuellement par Amaury, à partir de prompts préparés par les agents ; Design System initial validé et réemployé, puis hand-offs déposés à la racine pour intégration technique autorisée. Les agents ne conçoivent aucune UI de remplacement. Voir la [gouvernance de design](design-governance.md). Ce choix n'autorise aucun lancement Claude par les agents, transfert externe de données, abonnement ou coût supplémentaire. |
 | EXP-08 | SQL, Supabase, sites web, IA et combinaisons pertinentes restent des solutions envisageables si elles respectent les exigences. L'ADR choisit un socle de départ sans engagement d'hébergement. |
 
 ## Questions ouvertes

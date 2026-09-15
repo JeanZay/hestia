@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "templateOnly": true,
+  "id": "synthetic-lifecycle-template",
+  "recordedAtUtc": "2026-09-15T00:00:00Z",
+  "status": "active",
+  "need": { "id": "synthetic-selection", "title": "Explorer une sélection fictive persistante", "githubIssue": null },
+  "refinement": { "path": "tests/harness/fixtures/lifecycle/refinement.json", "sha256": "6c428574cf9b50c0915c920b2dfcf318d97f0b1c65644822305ac0056f70a505" },
+  "contract": { "path": "tests/harness/fixtures/lifecycle/contract.json", "sha256": "574d134c29822cdaa90b81276bd1dd4f858934dd18bbe87a1446cdb42ae0cb15" },
+  "sources": [],
+  "agreements": [],
+  "engagement": null,
+  "qualification": { "status": "pending", "briefDigest": null, "coverage": [], "review": null },
+  "candidate": null,
+  "observations": [],
+  "dependencyLevels": [],
+  "ownership": [],
+  "nextAction": { "owner": "agent", "action": "Explorer le besoin synthétique avant de préparer un brief.", "support": "Les fixtures locales de ce modèle.", "expectedResponse": "Des questions produit bornées et les constats vérifiés.", "unblocks": "Un brief candidat ; aucune planification ou exécution n'est autorisée par le modèle." }
+}

@@ -5,6 +5,9 @@ coverage/
 playwright-report/
 test-results/
 artifacts/
+# Hand-offs Claude Design bruts déposés manuellement à la racine ; voir docs/design-governance.md.
+/claude-design-handoff/
+/claude-design-handoff*.zip
 .env*
 !.env.example
 *.tsbuildinfo
