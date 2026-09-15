@@ -203,6 +203,38 @@ test('extractor refuses absent sections and retains content changes', () => {
   assert.throws(() => extractArticle(`${syntheticHtml(source)}<article>second</article>`, source), /official-article-title-or-structure/);
 });
 
+test('only observed Intercom image signatures are volatile; content and URL identity remain bound', () => {
+  const source = OFFICIAL_SOURCES[0];
+  const signed = `https://downloads.intercomcdn.com/i/o/synthetic/image.png?expires=1789486200&amp;signature=${'a'.repeat(64)}&amp;req=synthetic%2Frequest&amp;width=100`;
+  const wrap = (url) => syntheticHtml(source).replace('</article>', `<a href="${url}"><img src="${url}" alt="Synthetic diagram"></a></article>`);
+  const digest = (html) => extractArticle(html, source).articleSha256;
+  const original = wrap(signed);
+  const rotated = signed.replace('1789486200', '1789487100').replace('a'.repeat(64), 'b'.repeat(64)).replace('synthetic%2Frequest', 'changed%2Frequest');
+  assert.equal(digest(original), digest(wrap(rotated)));
+  for (const changed of [signed.replace('image.png', 'other.png'), signed.replace('width=100', 'width=200'), signed.replace('downloads.intercomcdn.com', 'example.invalid'), signed.replace('https:', 'http:')]) {
+    assert.notEqual(digest(original), digest(wrap(changed)));
+  }
+  assert.notEqual(digest(original), digest(original.replace('alt="Synthetic diagram"', 'alt="Changed meaning"')));
+  const outside = signed.replace('downloads.intercomcdn.com', 'example.invalid');
+  assert.notEqual(digest(wrap(outside)), digest(wrap(outside.replace('1789486200', '1789487100'))));
+  const noReq = signed.replace('&amp;req=synthetic%2Frequest', '');
+  assert.notEqual(digest(wrap(noReq)), digest(wrap(noReq.replace('1789486200', '1789487100'))));
+  const duplicate = `${signed}&amp;signature=${'c'.repeat(64)}`;
+  assert.notEqual(digest(wrap(duplicate)), digest(wrap(duplicate.replace('1789486200', '1789487100'))));
+  for (const url of [signed.replace('.com/', '.com:443/'), signed.replace('https://', 'https://synthetic@'), signed.replace('/i/o/', '/other/')]) {
+    assert.notEqual(digest(wrap(url)), digest(wrap(url.replace('1789486200', '1789487100'))));
+  }
+  for (const template of [
+    `<img data-src="${signed}">`,
+    `<a data-info='literal href="${signed}"'>Synthetic</a>`,
+    `<p>literal href="${signed}"</p>`,
+  ]) {
+    const embedded = syntheticHtml(source).replace('</article>', `${template}</article>`);
+    assert.notEqual(digest(embedded), digest(embedded.replaceAll('1789486200', '1789487100')));
+  }
+  assert.notEqual(digest(wrap(`${signed}#one`)), digest(wrap(`${signed}#two`)));
+});
+
 test('CLI audit is offline JSON and unknown/network override options fail', () => fixture(async (state) => {
   const report = JSON.parse(execFileSync(process.execPath, [cli, 'audit', '--root', state.root], { encoding: 'utf8', timeout: 5000 }));
   assert.equal(report.status, 'AUDIT_PASS'); assert.equal(report.handoffAllowed, false);

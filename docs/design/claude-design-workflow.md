@@ -49,7 +49,7 @@ Le contrôle lie la revue au dossier complet et au contrôleur exécuté, pas se
 
 Absence réseau, page non conforme, source changée, revue absente/non indépendante, hash différent, prérequis manquant : ne pas remettre le prompt, même sous l'étiquette « non qualifié ». Continuer les recherches ou corrections autorisées et expliquer la pièce manquante. Ne pas changer une date, déplacer un fichier ou renommer la phase pour faire disparaître un refus. Les sorties `CANDIDATE` et `AUDIT_PASS` ne sont jamais un PASS de remise.
 
-Les captures conservent le brut ; la comparaison porte sur le titre et l'article, sans retrait du contenu de fond. La version d'extraction est identifiée. Un changement purement technique dans l'article peut provoquer un refus conservateur ; le documenter plutôt qu'ignorer silencieusement la différence.
+Les captures conservent le brut ; la comparaison porte sur le titre et l'article, sans retrait du contenu de fond. La version d'extraction est identifiée. Seules les valeurs `expires`, `signature` et `req` des URLs HTTPS `downloads.intercomcdn.com/i/o/` dans les liens/images sont neutralisées : leur volatilité a été constatée le 15 septembre sans autre différence entre deux captures. Leur sémantique interne complète n'est pas documentée par les sources consultées. Hôte, chemin, fragments, autres paramètres, texte et attributs restent comparés. Les pixels des images ne sont pas téléchargés ni vérifiés par ce contrôle ; examiner manuellement les illustrations si une affirmation en dépend. Toute autre différence technique provoque encore un refus conservateur, à documenter plutôt qu'ignorer silencieusement.
 
 ## Couverture durable dans le dépôt
 

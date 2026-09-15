@@ -7,7 +7,7 @@ import { inspectFile } from '../guard.mjs';
 import { containedPath } from './verification-evidence.mjs';
 
 export const CATALOG = 'docs/design/prompt-catalog.json';
-export const EXTRACTION_VERSION = 'article-html-v1';
+export const EXTRACTION_VERSION = 'article-html-intercom-signatures-v2';
 export const MAX_SOURCE_AGE_MS = 24 * 60 * 60 * 1000;
 const LOCAL_LIMIT = 1024 * 1024;
 const HTTP_LIMIT = 2 * 1024 * 1024;
@@ -80,15 +80,31 @@ function isIgnoredPrompt(root, name) {
   } catch { return false; }
 }
 
-/** Preserve every byte inside the article, including links/attributes. Navigation and
- * hydration scripts outside it are not article content. Unexpected structure fails. */
+/** Only the three observed volatile image URL values are normalized.
+ * Keep URL identity, other parameters, tag attributes and all article text intact. */
+function normalizeImageSignatures(article) {
+  return article.replace(/<(?:a|img)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi, (tag) => tag.replace(/(\s+)([^\s"'<>/=]+)(\s*=\s*)("([^"]*)"|'[^']*'|[^\s"'=<>`]+)/g, (attribute, space, key, equals, quoted, value) => {
+    if (!['href', 'src'].includes(key) || !quoted.startsWith('"') || !value.startsWith('https://downloads.intercomcdn.com/i/o/')) return attribute;
+    let url;
+    try { url = new URL(value.replaceAll('&amp;', '&')); } catch { return attribute; }
+    if (url.origin !== 'https://downloads.intercomcdn.com' || url.username || url.password || !url.pathname.startsWith('/i/o/')) return attribute;
+    const fields = ['expires', 'signature', 'req'];
+    if (fields.some((field) => url.searchParams.getAll(field).length !== 1 || !url.searchParams.get(field))) return attribute;
+    if (!/^\d+$/.test(url.searchParams.get('expires')) || !/^[a-f0-9]{64}$/.test(url.searchParams.get('signature'))) return attribute;
+    const normalized = value.replace(/([?&](?:amp;)?)(expires|signature|req)=([^&#]*)/g, '$1$2=__VOLATILE_IMAGE_AUTH__');
+    return `${space}${key}${equals}"${normalized}"`;
+  }));
+}
+
+/** Preserve article content and attributes except explicitly versioned ephemeral
+ * image authorization values. Raw captures remain separately hashed and retained. */
 export function extractArticle(html, source) {
   const titles = [...html.matchAll(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi)];
   const articles = [...html.matchAll(/<article\b[^>]*>[\s\S]*?<\/article>/gi)];
   requireValue(titles.length === 1 && articles.length === 1 && titles[0][1] === source.title, 'official-article-title-or-structure');
   const articleHtml = articles[0][0];
   requireValue(articleHtml.length >= 500 && /<p\b/i.test(articleHtml) && new RegExp(`<h[23]\\b[^>]*>${source.section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<\\/h[23]>`, 'i').test(articleHtml), 'official-article-content-missing');
-  return { title: titles[0][1], articleSha256: hash(canonical({ extractionVersion: EXTRACTION_VERSION, title: titles[0][1], articleHtml })) };
+  return { title: titles[0][1], articleSha256: hash(canonical({ extractionVersion: EXTRACTION_VERSION, title: titles[0][1], articleHtml: normalizeImageSignatures(articleHtml) })) };
 }
 
 async function getOfficial(source, fetcher, timeoutMs) {
