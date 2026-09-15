@@ -1,0 +1,57 @@
+{
+  "id": "agentic-lifecycle-2026-09-15",
+  "objective": "Auditer et renforcer en profondeur le harnais Hestia pour besoins larges, refinement complet du périmètre engagé, découpage juste-à-temps, exécution sans lecture de code par Amaury et reprise inter-chats vérifiable.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Audit local et lectures GitHub datées ; rapprochement des règles dispersées sans modifier leurs sources.",
+      "Gouvernance et skills locales découvrables : planification progressive, décisions sourcées, preuves agents et prochaine action explicite.",
+      "Mécanismes de reprise et contrôles déterministes, tests synthétiques, scénarios de contexte neuf et revue indépendante.",
+      "Persistance fidèle des accords de cette conversation et liens vers brief v2, sans élargir un accord sur son seul périmètre."
+    ],
+    "excluded": [
+      "Mutations GitHub, merge main, push, sous-Issues réelles, application/authentification/UI, déploiement.",
+      "Claude exécuté par agents, services ou automatisations récurrentes activés, données familiales, secrets et coûts.",
+      "Backlog concurrent à GitHub et permission implicite de développer les besoins produits."
+    ],
+    "ownedPaths": [
+      "Coordinateur : nouveau worktree artifacts/worktrees/agentic-lifecycle, branche codex/agentic-lifecycle ; scripts/contrats/tests/docs/skills du harnais selon répartition explicitée avant écritures concurrentes.",
+      "lifecycle_mechanics_audit : scripts/lifecycle-check.mjs, harness/schemas/lifecycle.schema.json, harness/templates/lifecycle.template.json, tests/harness/lifecycle*.test.mjs et fixtures lifecycle uniquement.",
+      "continuity_github_audit : scripts/verify.mjs, scripts/evidence.mjs, scripts/ci-summary.mjs, scripts/lib/verification*.mjs, tests/harness/verification*.test.mjs et evidence*.test.mjs uniquement.",
+      "Coordinateur : règles, skills, documentation, contrats, point de reprise et intégration ; autres auditeurs sans écriture.",
+      "Preuves locales et snapshots sous artifacts/agentic-lifecycle/ ; originaux des autres worktrees conservés."
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Amaury, 15 septembre 2026 : accepte la continuité inter-chats et demande un audit et travail approfondi ; ne code ni ne relit ; refinement doit obtenir tous les éléments du cahier des charges avant développement ; backlog de besoins larges, US seulement au moment d'engager le développement du besoin.",
+    "allowedActions": [
+      "Audit approfondi et construction locale réversible du harnais dans une branche/worktree isolés, tests et revue indépendante."
+    ],
+    "forbiddenActions": [
+      "Assimiler l'autonomie du backlog à un GO GitHub/exécution produit global non exprimé.",
+      "Contourner une décision utilisateur manquante, une dépendance, un hand-off design ou une preuve manquante."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Le démarrage d'un nouvel agent route vers instructions communes, travail courant, accords applicables, candidat et prochaines actions sans dépendre de ce chat.",
+    "Les besoins non engagés restent larges ; une validation de brief seule ne provoque pas de découpage anticipé.",
+    "Un besoin engagé n'est livré à l'implémentation qu'après cadrage produit/UX/sécurité/architecture suffisant, cas limites et preuves ; inconnues bloquantes empêchent démarrage.",
+    "Les agents assument découpage technique, tests, revue et consolidation de preuves ; Amaury n'est pas invité à relire code, JSON ou infrastructure pour contrôler la qualité.",
+    "Les contrôles distinguent état documentaire, réalité des accords, état GitHub daté, exécution locale, Dev et Production, sans produire un faux GO.",
+    "Les snapshots et liens de reprise sont identifiés, contrôlés et séparés du backlog officiel ; les éléments absents ou périmés provoquent un diagnostic exploitable."
+  ],
+  "validation": [
+    "Tests unitaires du harnais et cas négatifs des nouveaux mécanismes ; validation des contrats/dossiers concernés ; guard et diffcheck.",
+    "Validateurs officiels des skills ; contrôle liens/découverte ; simulations en contexte neuf sans conversation héritée.",
+    "Contrôles complets existants lorsque disponibles et pertinents, sans nouveau téléchargement ou installation non autorisés ; preuve de toute limite.",
+    "Revue indépendante du candidat exact et correction des constats avant livraison locale."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

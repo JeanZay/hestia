@@ -1,4 +1,12 @@
 #!/bin/sh
 set -eu
-cd "$(git rev-parse --show-toplevel)"
-node scripts/guard.mjs --pre-push "$1" "$2"
+worktree_root=$(git rev-parse --show-toplevel)
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+harness_root=$(CDPATH= cd -- "$hook_dir/.." && pwd)
+cd "$worktree_root"
+if [ ! -f "$harness_root/scripts/closure.mjs" ]; then
+  printf '%s\n' 'Hestia : harnais de clôture absent du chemin stable des hooks ; intégration et activation à vérifier.' >&2
+  exit 1
+fi
+node "$harness_root/scripts/guard.mjs" --pre-push "$1" "$2"
+node "$harness_root/scripts/closure.mjs" check --action verify --root "$worktree_root"

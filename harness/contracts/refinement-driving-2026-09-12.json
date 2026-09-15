@@ -1,0 +1,20 @@
+{
+  "id": "refinement-driving-2026-09-12",
+  "objective": "Corriger hestia-refinement pour piloter activement les rounds jusqu'au brief et au passage de relais, sans arrêts sur de simples accusés de réception ni extension des autorisations.",
+  "githubIssue": null,
+  "scope": {
+    "included": ["Correction ciblée des instructions de conduite des rounds de refinement.", "Vérification du format, du candidat exact et revue indépendante avec scénarios conversationnels."],
+    "excluded": ["Code d'authentification, autres fonctionnalités Hestia et modification du validateur.", "Publication GitHub, Issues/sous-Issues, PR, déploiement, données familiales, secrets, coûts et Claude."],
+    "ownedPaths": ["Auteur : .agents/skills/hestia-refinement/SKILL.md et présent contrat, dans codex/refinement-driving.", "Relecteur : artifacts/driving-review/ seulement ; aucune modification des sources.", "Preuves auteur : artifacts/driving-evidence/ ; dossier produit existant maintenu séparément dans son worktree d'exploration."]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Amaury, 12 septembre 2026 : demande de piloter la suite sans laisser la discussion sur un accusé de réception et « Modifie la skill au besoin ».",
+    "allowedActions": ["Correction locale bornée sur branche/worktree isolés, contrôles et revue indépendante.", "Préparation et poursuite des questions de refinement sans choisir à la place du responsable produit."],
+    "forbiddenActions": ["Déduire un accord de publication ou d'implémentation de la demande de persistance.", "Mutation GitHub, déploiement, données familiales, secrets, coûts ou Claude."]
+  },
+  "acceptanceCriteria": ["Après une réponse partielle, la skill fait progresser les points restants sans redemander de continuer ni inventer de réponse.", "La skill distingue arbitrages produit, instruction technique et idées futures ; elle ne transforme pas le refinement en questionnaire sans fin.", "Une information ou autorisation indispensable manquante conduit à une demande précise ; une pause explicite est respectée.", "Lorsque les éléments suffisent, l'agent passe au brief puis au découpage dans les limites des accords existants."],
+  "validation": ["Validateur officiel de skill, liens locaux, git diff --check et guard.", "node scripts/refinement-check.mjs --contract harness/contracts/refinement-driving-2026-09-12.json", "node --test tests/harness/*.test.mjs", "Revue indépendante du candidat identifié et essais conversationnels synthétiques ; aucun test applicatif requis pour ce seul changement documentaire."],
+  "independentReview": { "required": true, "reviewerMustDifferFromAuthor": true, "cleanContext": true, "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest" },
+  "deliveryTarget": "local"
+}

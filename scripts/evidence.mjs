@@ -1,15 +1,15 @@
-import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { beginRun, captureCandidate, writeLatest, writeRunJson } from './lib/verification-evidence.mjs';
 
-// Covers tracked AND untracked deliverables in a repository with no initial commit.
-// Excludes this output and volatile local artifacts via .gitignore.
-const paths = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean))].filter(path => existsSync(path)).sort();
-const files = paths.map(path => ({ path, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') }));
-const sourceDigest = createHash('sha256').update(JSON.stringify(files)).digest('hex');
-let commit = null;
-try { commit = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* Initial foundation has no parent commit. */ }
-const report = { createdAt: new Date().toISOString(), sourceDigest, commit, files };
-mkdirSync('artifacts', { recursive: true });
-writeFileSync('artifacts/source-manifest.json', `${JSON.stringify(report, null, 2)}\n`);
-console.log(`Source SHA-256: ${sourceDigest} (${files.length} files)`);
+// Standalone snapshots have their own namespace and can never become verification evidence.
+try {
+  if (process.argv.length !== 2) throw new Error('unsupported-arguments');
+  const run = beginRun(process.cwd(), 'evidence');
+  const manifest = captureCandidate({ root: process.cwd(), runId: run.runId, phase: 'snapshot' });
+  const reference = writeRunJson(run, 'source-manifest.json', manifest);
+  writeLatest(run, reference);
+  console.log(`Source SHA-256: ${manifest.sourceDigest} (${manifest.files.length} files)`);
+  console.log(`Preuve figée : ${reference.path}. Aucun contrôle exécuté par ce snapshot.`);
+} catch {
+  console.error('Snapshot indisponible : entrée, dépôt ou sortie non vérifiable. Aucune preuve PASS.');
+  process.exitCode = 1;
+}

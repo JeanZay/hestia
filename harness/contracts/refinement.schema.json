@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Dossier temporaire de refinement Hestia, sans fonction de backlog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "dataPolicy", "stage", "source", "nuances", "brief", "plan", "approvals", "publication", "readiness"],
+  "properties": {
+    "version": { "const": 1 },
+    "dataPolicy": { "const": "synthetic-only" },
+    "stage": { "enum": ["exploration", "brief-candidate", "brief-validated", "plan-proposed", "publication-authorized", "published", "ready"] },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["original", "capturedAt", "reference"],
+      "properties": { "original": { "$ref": "#/$defs/text" }, "capturedAt": { "$ref": "#/$defs/date" }, "reference": { "$ref": "#/$defs/text" } }
+    },
+    "nuances": { "$ref": "#/$defs/texts" },
+    "brief": {
+      "type": "object", "additionalProperties": false,
+      "required": ["need", "outcome", "actors", "scope", "decisions", "questions", "hypotheses", "risks", "criteria", "preparations"],
+      "properties": {
+        "need": { "$ref": "#/$defs/text" }, "outcome": { "$ref": "#/$defs/text" }, "actors": { "$ref": "#/$defs/texts" },
+        "scope": {
+          "type": "object", "additionalProperties": false, "required": ["included", "excluded"],
+          "properties": { "included": { "$ref": "#/$defs/texts" }, "excluded": { "$ref": "#/$defs/texts" } }
+        },
+        "decisions": {
+          "type": "object", "additionalProperties": false, "required": ["product", "ux", "security", "architecture"],
+          "properties": {
+            "product": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/decision" } },
+            "ux": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/decision" } },
+            "security": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/decision" } },
+            "architecture": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/decision" } }
+          }
+        },
+        "questions": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/question" } },
+        "hypotheses": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/hypothesis" } },
+        "risks": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/risk" } },
+        "criteria": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/criterion" } },
+        "preparations": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/preparation" } }
+      }
+    },
+    "plan": {
+      "type": "object", "additionalProperties": false, "required": ["repository", "project", "issues", "order", "mutations"],
+      "properties": {
+        "repository": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "project": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/projectUrl" }] },
+        "issues": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/issue" } },
+        "order": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/key" } },
+        "mutations": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/mutation" } }
+      }
+    },
+    "approvals": {
+      "type": "object", "additionalProperties": false, "required": ["brief", "publication"],
+      "properties": {
+        "brief": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/approval" }] },
+        "publication": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/approval" }] }
+      }
+    },
+    "publication": {
+      "type": "object", "additionalProperties": false, "required": ["receipts"],
+      "properties": { "receipts": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/receipt" } } }
+    },
+    "readiness": {
+      "type": "object", "additionalProperties": false, "required": ["dependencyEvidence", "handoffs"],
+      "properties": {
+        "dependencyEvidence": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/dependencyEvidence" } },
+        "handoffs": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/handoff" } }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 20000, "pattern": "\\S" },
+    "texts": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/text" } },
+    "nonEmptyTexts": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/text" } },
+    "optionalText": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/text" }] },
+    "key": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+    "date": { "type": "string", "format": "date-time" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "issueUrl": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*$" },
+    "issueCommentUrl": { "type": "string", "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*#issuecomment-[1-9][0-9]*$" },
+    "githubUrl": { "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^https://github\\.com/[A-Za-z0-9_./#?=&%-]+$" },
+    "projectUrl": { "type": "string", "pattern": "^https://github\\.com/(?:users|orgs)/[A-Za-z0-9_.-]+/projects/[1-9][0-9]*$" },
+    "dependency": { "anyOf": [{ "$ref": "#/$defs/key" }, { "$ref": "#/$defs/issueUrl" }] },
+    "criterion": {
+      "type": "object", "additionalProperties": false, "required": ["id", "positive", "negative", "evidence"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "positive": { "$ref": "#/$defs/text" }, "negative": { "$ref": "#/$defs/text" }, "evidence": { "$ref": "#/$defs/text" } }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false, "required": ["id", "status", "statement", "rationale", "source"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "status": { "enum": ["proposed", "accepted", "deferred"] }, "statement": { "$ref": "#/$defs/text" }, "rationale": { "$ref": "#/$defs/text" }, "source": { "$ref": "#/$defs/optionalText" } }
+    },
+    "question": {
+      "type": "object", "additionalProperties": false, "required": ["id", "domain", "text", "blocking", "status", "answer", "evidence"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "domain": { "enum": ["product", "ux", "security", "architecture"] }, "text": { "$ref": "#/$defs/text" }, "blocking": { "type": "boolean" }, "status": { "enum": ["open", "answered", "deferred"] }, "answer": { "$ref": "#/$defs/optionalText" }, "evidence": { "$ref": "#/$defs/optionalText" } }
+    },
+    "hypothesis": {
+      "type": "object", "additionalProperties": false, "required": ["id", "statement", "status", "evidence"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "statement": { "$ref": "#/$defs/text" }, "status": { "enum": ["untested", "supported", "rejected"] }, "evidence": { "$ref": "#/$defs/optionalText" } }
+    },
+    "risk": {
+      "type": "object", "additionalProperties": false, "required": ["id", "description", "mitigation", "status", "evidence"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "description": { "$ref": "#/$defs/text" }, "mitigation": { "$ref": "#/$defs/text" }, "status": { "enum": ["open", "accepted", "resolved"] }, "evidence": { "$ref": "#/$defs/optionalText" } }
+    },
+    "preparation": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "reason", "status", "blocking", "evidence"],
+      "properties": { "id": { "$ref": "#/$defs/key" }, "kind": { "enum": ["adr", "prototype", "spike"] }, "reason": { "$ref": "#/$defs/text" }, "status": { "enum": ["proposed", "needed", "completed", "deferred"] }, "blocking": { "type": "boolean" }, "evidence": { "$ref": "#/$defs/optionalText" } }
+    },
+    "issue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "title", "body", "labels", "scope", "briefCriteria", "criteria", "validation", "dependencies"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" }, "title": { "$ref": "#/$defs/text" }, "body": { "$ref": "#/$defs/text" }, "labels": { "$ref": "#/$defs/texts" },
+        "scope": {
+          "type": "object", "additionalProperties": false, "required": ["included", "excluded", "ownedPaths"],
+          "properties": { "included": { "$ref": "#/$defs/nonEmptyTexts" }, "excluded": { "$ref": "#/$defs/nonEmptyTexts" }, "ownedPaths": { "$ref": "#/$defs/nonEmptyTexts" } }
+        },
+        "briefCriteria": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/key" } },
+        "criteria": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/criterion" } },
+        "validation": { "$ref": "#/$defs/nonEmptyTexts" },
+        "dependencies": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/dependency" } }
+      }
+    },
+    "mutation": {
+      "description": "Contenu exact proposé : create/update-issue publie title/body/labels ; publish-brief publie body rendu intégralement, une seule fois. Seul publish-brief peut avoir issueKey null, avec une Issue existante comme target. Les autres opérations sont également du JSON exact.",
+      "type": "object", "additionalProperties": false, "required": ["key", "kind", "target", "issueKey", "payload"],
+      "anyOf": [{ "properties": { "kind": { "const": "publish-brief" } } }, { "properties": { "issueKey": { "$ref": "#/$defs/key" } } }],
+      "properties": { "key": { "$ref": "#/$defs/key" }, "kind": { "enum": ["create-issue", "update-issue", "project-update", "link-dependency", "publish-brief"] }, "target": { "$ref": "#/$defs/githubUrl" }, "issueKey": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/key" }] }, "payload": { "$ref": "#/$defs/text" } }
+    },
+    "approval": {
+      "description": "Trace explicite saisie depuis la conversation ; le validateur ne peut authentifier son auteur ni autoriser une action.",
+      "type": "object", "additionalProperties": false, "required": ["author", "at", "source", "explicit", "digest"],
+      "properties": { "author": { "$ref": "#/$defs/text" }, "at": { "$ref": "#/$defs/date" }, "source": { "$ref": "#/$defs/text" }, "explicit": { "const": true }, "digest": { "$ref": "#/$defs/digest" } }
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false, "required": ["mutationKey", "url", "readAt", "evidence", "digest"],
+      "properties": { "mutationKey": { "$ref": "#/$defs/key" }, "url": { "$ref": "#/$defs/githubUrl" }, "readAt": { "$ref": "#/$defs/date" }, "evidence": { "$ref": "#/$defs/text" }, "digest": { "$ref": "#/$defs/digest" } }
+    },
+    "dependencyEvidence": {
+      "type": "object", "additionalProperties": false, "required": ["issueKey", "dependency", "url", "verifiedAt", "state", "evidence"],
+      "properties": { "issueKey": { "$ref": "#/$defs/key" }, "dependency": { "$ref": "#/$defs/dependency" }, "url": { "$ref": "#/$defs/issueUrl" }, "verifiedAt": { "$ref": "#/$defs/date" }, "state": { "enum": ["pending", "satisfied"] }, "evidence": { "$ref": "#/$defs/text" } }
+    },
+    "handoff": {
+      "type": "object", "additionalProperties": false, "required": ["issueKey", "briefReference", "authorizationConfirmedSeparately", "contract"],
+      "properties": {
+        "issueKey": { "$ref": "#/$defs/key" },
+        "briefReference": {
+          "type": "object", "additionalProperties": false, "required": ["url", "digest"],
+          "properties": { "url": { "$ref": "#/$defs/issueCommentUrl" }, "digest": { "$ref": "#/$defs/digest" } }
+        },
+        "authorizationConfirmedSeparately": { "const": true }, "contract": { "$ref": "task-contract.schema.json" }
+      }
+    }
+  }
+}

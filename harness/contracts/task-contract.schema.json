@@ -7,7 +7,7 @@
   "properties": {
     "id": { "type": "string", "minLength": 1 },
     "objective": { "type": "string", "minLength": 1 },
-    "githubIssue": { "type": ["string", "null"], "description": "URL GitHub après publication ; null pour la fondation non publiée." },
+    "githubIssue": { "type": ["string", "null"], "description": "URL GitHub après publication ; null pour un lot local autorisé dont la publication n'est pas encore approuvée." },
     "scope": {
       "type": "object",
       "additionalProperties": false,
