@@ -83,7 +83,7 @@ function isIgnoredPrompt(root, name) {
 /** Only the three observed volatile image URL values are normalized.
  * Keep URL identity, other parameters, tag attributes and all article text intact. */
 function normalizeImageSignatures(article) {
-  return article.replace(/<(?:a|img)\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi, (tag) => tag.replace(/(\s+)([^\s"'<>/=]+)(\s*=\s*)("([^"]*)"|'[^']*'|[^\s"'=<>`]+)/g, (attribute, space, key, equals, quoted, value) => {
+  const normalizeTag = (tag) => tag.replace(/(\s+)([^\s"'<>/=]+)(\s*=\s*)("([^"]*)"|'[^']*'|[^\s"'=<>`]+)/g, (attribute, space, key, equals, quoted, value) => {
     if (!['href', 'src'].includes(key) || !quoted.startsWith('"') || !value.startsWith('https://downloads.intercomcdn.com/i/o/')) return attribute;
     let url;
     try { url = new URL(value.replaceAll('&amp;', '&')); } catch { return attribute; }
@@ -91,9 +91,48 @@ function normalizeImageSignatures(article) {
     const fields = ['expires', 'signature', 'req'];
     if (fields.some((field) => url.searchParams.getAll(field).length !== 1 || !url.searchParams.get(field))) return attribute;
     if (!/^\d+$/.test(url.searchParams.get('expires')) || !/^[a-f0-9]{64}$/.test(url.searchParams.get('signature'))) return attribute;
-    const normalized = value.replace(/([?&](?:amp;)?)(expires|signature|req)=([^&#]*)/g, '$1$2=__VOLATILE_IMAGE_AUTH__');
+    const fragmentAt = value.indexOf('#');
+    const main = fragmentAt < 0 ? value : value.slice(0, fragmentAt);
+    const fragment = fragmentAt < 0 ? '' : value.slice(fragmentAt);
+    const queryAt = main.indexOf('?');
+    const query = main.slice(queryAt + 1).split(/(&(?:amp;)?)/).map((field, index) => index % 2 === 0 && /^(expires|signature|req)=/.test(field) ? `${field.slice(0, field.indexOf('=') + 1)}__VOLATILE_IMAGE_AUTH__` : field).join('');
+    const normalized = main.slice(0, queryAt + 1) + query + fragment;
     return `${space}${key}${equals}"${normalized}"`;
-  }));
+  });
+  // Visit all markup in order, not just a/img substrings. Quoted attributes,
+  // comments, CDATA and raw-text elements must never become normalization targets.
+  let cursor = 0; let result = '';
+  while (cursor < article.length) {
+    const start = article.indexOf('<', cursor);
+    if (start < 0) return result + article.slice(cursor);
+    result += article.slice(cursor, start);
+    const terminator = article.startsWith('<!--', start) ? '-->' : article.startsWith('<![CDATA[', start) ? ']]>' : null;
+    if (terminator) {
+      const end = article.indexOf(terminator, start + (terminator === '-->' ? 4 : 9));
+      if (end < 0) return result + article.slice(start);
+      cursor = end + terminator.length; result += article.slice(start, cursor); continue;
+    }
+    let quote = null; let end = start + 1;
+    for (; end < article.length; end += 1) {
+      const char = article[end];
+      if (quote) { if (char === quote) quote = null; }
+      else if (char === '"' || char === "'") quote = char;
+      else if (char === '>') break;
+    }
+    if (end === article.length) return result + article.slice(start);
+    const tag = article.slice(start, end + 1);
+    const name = /^<([a-z][a-z0-9:-]*)(?=[\s/>])/i.exec(tag)?.[1].toLowerCase();
+    result += ['a', 'img'].includes(name) ? normalizeTag(tag) : tag;
+    cursor = end + 1;
+    if (name === 'plaintext') return result + article.slice(cursor);
+    if (['script', 'style', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes', 'noscript'].includes(name)) {
+      const close = new RegExp(`</${name}\\s*>`, 'gi'); close.lastIndex = cursor;
+      const found = close.exec(article);
+      if (!found) return result + article.slice(cursor);
+      result += article.slice(cursor, close.lastIndex); cursor = close.lastIndex;
+    }
+  }
+  return result;
 }
 
 /** Preserve article content and attributes except explicitly versioned ephemeral

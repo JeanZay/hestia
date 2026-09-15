@@ -228,11 +228,19 @@ test('only observed Intercom image signatures are volatile; content and URL iden
     `<img data-src="${signed}">`,
     `<a data-info='literal href="${signed}"'>Synthetic</a>`,
     `<p>literal href="${signed}"</p>`,
+    `<div data-info='<img src="${signed}">'>Synthetic</div>`,
+    `<!-- <img src="${signed}"> -->`,
+    `<![CDATA[<img src="${signed}">]]>`,
+    `<script>const example = '<img src="${signed}">';</script>`,
+    `<style>/* <img src="${signed}"> */</style>`,
+    `<textarea><img src="${signed}"></textarea>`,
   ]) {
     const embedded = syntheticHtml(source).replace('</article>', `${template}</article>`);
     assert.notEqual(digest(embedded), digest(embedded.replaceAll('1789486200', '1789487100')));
   }
   assert.notEqual(digest(wrap(`${signed}#one`)), digest(wrap(`${signed}#two`)));
+  assert.notEqual(digest(wrap(`${signed}#section?req=FIRST`)), digest(wrap(`${signed}#section?req=SECOND`)));
+  assert.notEqual(digest(wrap(`${signed}&amp;redirect=/page?req=FIRST`)), digest(wrap(`${signed}&amp;redirect=/page?req=SECOND`)));
 });
 
 test('CLI audit is offline JSON and unknown/network override options fail', () => fixture(async (state) => {
