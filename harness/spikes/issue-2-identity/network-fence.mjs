@@ -10,7 +10,7 @@ net.Socket.prototype.connect = deny('socket');
 net.connect = deny('net');
 net.createConnection = deny('net');
 tls.connect = deny('tls');
-for (const module of [http, https]) { module.request = deny('http'); module.get = deny('http'); }
+for (const transport of [http, https]) { transport.request = deny('http'); transport.get = deny('http'); }
 process.env.BETTER_AUTH_TELEMETRY = 'false';
 delete process.env.BETTER_AUTH_TELEMETRY_ENDPOINT;
 process.env.NODE_ENV = 'test';

@@ -76,7 +76,7 @@ test('R2 invitation cannot commit after recovery invalidates its previously chec
   const proof=await find(`reset-password:${token}`);
   // Only the gateway's first lookup is pre-resolved. The library still uses
   // its real lookup/consumption; no fabricated member mutation is injected.
-  adapter.findVerificationValue=value=>{adapter.findVerificationValue=find;return proof;};
+  adapter.findVerificationValue=()=>{adapter.findVerificationValue=find;return proof;};
   let release,entered,pendingReset;
   const gate=new Promise(r=>release=r),arrived=new Promise(r=>entered=r);
   adapter.deleteUserSessions=async id=>{entered();await gate;return remove(id);};
