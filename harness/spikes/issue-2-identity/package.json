@@ -1,0 +1,10 @@
+{
+  "name": "hestia-issue-2-identity-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=24 <25" },
+  "scripts": { "test": "node run.mjs" },
+  "dependencies": { "better-auth": "1.7.5", "pg": "8.16.3" }
+}

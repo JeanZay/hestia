@@ -1,0 +1,64 @@
+{
+  "id": "issue-2-local-qualification",
+  "objective": "Compléter le même banc Issue 2 par des essais PostgreSQL 17 réels multi-connexion/processus, sans intégration produit ; réviser les réserves avec preuves et revue indépendantes.",
+  "githubIssue": "https://github.com/JeanZay/hestia/issues/2",
+  "scope": {
+    "included": [
+      "Dépendances exactes, licences, avis, scripts inspectés avant installation avec lifecycle scripts désactivés ; aucun telemetry ni e-mail externe.",
+      "Tests synthétiques intégrés de bibliothèque : inscription fermée, invitation/identité vérifiée, sessions DB révocables, récupération et confirmation liée à intention.",
+      "Modèle expérimental distinct d'autorisation et tests adversariaux : sept capacités, provenance, cascade, limites de pouvoirs, concurrence et remise de dérivés.",
+      "Base jetable locale dédiée ; préférer PostgreSQL 17 si exécutable sans toucher services existants ; toute substitution expérimentale conserve les limites de concurrence et ne modifie pas ADR produit.",
+      "Preuves exactes, revue indépendante propre et clôture locale avec disposition du worktree.",
+      "Reprise du 27 septembre : PostgreSQL dédié éphémère, image locale exacte, transactions/races/crash de processus clients ; préserver les 61 essais SQLite et le candidat v3 historique."
+    ],
+    "excluded": [
+      "Code dans src/app ou integration Next ; UI, design/prompt Claude ; US ou mutations GitHub, push/PR/merge.",
+      "Données et secrets réels, e-mail réel, coût supplémentaire, service distant, Production/Dev ; suppression de branches/worktrees.",
+      "Certification de bibliothèque, audit exhaustif, fermeture implicite B1/B2 ou faux gate execute produit."
+    ],
+    "ownedPaths": [
+      "harness/spikes/issue-2-identity/ (root, sauf pg-protocol.mjs, pg-protocol.test.mjs, pg-worker.mjs réservés à postgres_qualification_design)",
+      "harness/contracts/issue-2-local-qualification.json (root)",
+      "artifacts/qualification/issue-2-postgres-2026-09-27/ (root ; review.md réservé au reviewer indépendant)",
+      "artifacts/active-work.json, artifacts/closure/registry.json, artifacts/qualification-inputs/ du worktree (root ; préserver historiques)"
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Autorisations locales du banc du 15 septembre et de sa poursuite PostgreSQL du 27 septembre 2026, conservées hors des sources publiables dans le dossier local de qualification référencé par le checkpoint. Les citations privées ne sont pas reproduites ici. Docker répond ; aucune réparation nécessaire. Ce contrat ne crée aucune permission de publication, intégration produit ou déploiement.",
+    "allowedActions": [
+      "Préparation, lecture officielle/GitHub sans mutation ; branche/worktree encadrés locaux.",
+      "Installation de seules dépendances inspectées dans le worktree avec scripts désactivés ; démarrage d'outils locaux existants pour une base dédiée, pas de modification d'autres conteneurs/services.",
+      "Code expérimental séparé du produit, tests synthétiques, commandes locales, commit local éventuel, revue indépendante et preuves minimisées.",
+      "Créer/démarrer/arrêter un conteneur PostgreSQL de test appartenant à ce run uniquement, données synthétiques sur tmpfs ; aucun port hors loopback, volume hôte ou accès aux autres bases. Installation du seul pilote pg après inspection. Interruptions des seuls processus clients de ce banc. Les données jetables du banc disparaissent à son arrêt."
+    ],
+    "forbiddenActions": [
+      "UI ou intégration produit ; toute écriture GitHub et merge ; données/secrets/e-mail réels ; dépense/service externe/Claude ; suppression de branche/worktree.",
+      "Aucune réparation Docker puisqu'il est rétabli ; aucun restart de Docker/WSL, reset usine, modification/suppression de données ou conteneurs d'autres projets ; aucune réutilisation de leurs connexions/secrets."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Q1 Arbre verrouillé audité, scripts inspectés, avis applicables expliqués ; pas d'adoption si alerte matérielle non résolue.",
+    "Q2 Les routes réellement exécutées prouvent inscription publique refusée, identité/invitation liée, session DB refusée après révocation et récupération non rejouable ; limites et défaillances consignées.",
+    "Q3 Actes sensibles liés à acteur/intention/cible/version/échéance avec usage unique ; races de bootstrap/confirmation/attribution-révocation testées ou blocage explicite.",
+    "Q4 Corpus fini de droits positifs/négatifs vérifie défaut de refus, quotas/projections bornées, combinaison des capacités, cascades et indépendant survivant, titulaire et succession.",
+    "Q5 Preuves incluent candidat exact, résultat réel de chaque contrôle, limites (dont PostgreSQL/transport si non éprouvés), revue indépendante et prochaine action applicable ; src/app inchangé.",
+    "P1 Identifier moteur/image/version effectifs, conteneur unique et propriétés d'isolement ; comparaison avant/après des conteneurs préexistants sans les modifier.",
+    "P2 Vraie bibliothèque Better Auth et pilote pg : migrations confinées, vérification/session/révocation/reset et limites de concurrence réellement éprouvées.",
+    "P3 Corpus PostgreSQL de transactions à plusieurs connexions/processus : propriétaire unique, consommation unique et effet atomique, révocation vs droits dérivés, interruption avant/après COMMIT et reprise sans double effet. Un test de modèle SQL n'est pas une preuve de l'intégration produit.",
+    "P4 Revue exacte, preuve distincte des essais de crash client et limites DB/host/crash durable ; arrêter le seul runtime jetable créé par ce run. Clôture du lot sans faux merge ou faux B1 complet."
+  ],
+  "validation": [
+    "node --test sur banc ; tests intégrés avec vraie bibliothèque et DB dédiée ; état avant/après et pas de serveur exposé hors loopback.",
+    "Inspecter package-lock, licences, scripts et audit officiels avant npm ci --ignore-scripts ; test refus egress et captures in-memory uniquement.",
+    "Contrat/refinement/reprise/guard explicite des fichiers ignorés ; tests harnais pertinents et git diff --check.",
+    "Figer manifeste ; revue indépendante du candidat exact ; contrôleur closure fin avec disposition et preuves."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}
