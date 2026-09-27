@@ -6,7 +6,7 @@ ses fixtures, son provisioning SQL ou ses API privées dans une application.
 
 ## Exécution
 
-Node 24.15.0, Better Auth 1.7.5, verrou exact. Après inspection du verrou et des
+Node 24.15.0, Better Auth 1.7.6, verrou exact. Après inspection du verrou et des
 archives : `npm ci --ignore-scripts --no-audit --no-fund`, puis `npm test`.
 `node run.mjs identity.test.mjs` exécute seulement l'identité. Le lanceur réduit
 l'environnement hérité ; le processus d'identité refuse fetch, sockets et HTTP.
@@ -82,14 +82,15 @@ Les options de réseau limitent masquerade/inter-container ; ce n'est pas un
 air-gap certifié. La barrière JavaScript du client n'autorise que ce port PG
 et refuse fetch/TLS/HTTP/autres sockets ; ce n'est pas un sandbox système.
 
-`pg-identity.test.mjs` appelle la vraie bibliothèque Better Auth 1.7.5 avec pg
+`pg-identity.test.mjs` appelle la vraie bibliothèque Better Auth avec pg
 8.16.3 : deux pools, second processus, cookies/secrets cohérents, révocation,
 expiration, reset et non-rejeu. Deux appels reset lancés concurremment ne sont
 pas une preuve de contention déterministe. Le hook de reset défaillant conserve
 une ancienne session : ce résultat attendu est un CONTRE-EXEMPLE, pas une
 garantie de sécurité. Le dépassement de longueur de mot de passe en connexion
-est également un diagnostic de 1.7.5 ; la version 1.7.6 doit être réévaluée avant
-toute adoption, elle n'a pas été substituée silencieusement à ce candidat.
+était également un diagnostic de 1.7.5, conservé dans le candidat de PR15.
+Le lot suivant passe explicitement à 1.7.6 et exige maintenant le rejet avant
+vérification du mot de passe ; voir la décision de version ci-dessous.
 
 `pg-protocol*.mjs` est un MODÈLE SQL distinct, sans appel Better Auth : propriétaire
 unique, activation unique, intention et effet synthétique atomiques, révocation,
@@ -121,3 +122,59 @@ pas une solution prête à brancher. Les contre-exemples doivent rester des test
 de régression ; aucune adoption de production n'est déduite de tests verts.
 La revue indépendante et les preuves exactes sont conservées séparément dans
 le dossier local de qualification référencé par le checkpoint principal.
+
+## Qualification intégrée bornée — lot suivant du 27 septembre 2026
+
+Contrat : `harness/contracts/issue-2-integrated-qualification.json`. Le terme
+« intégrée » désigne ici bibliothèque + admission Hestia + droits courants
+dans le banc, jamais un raccordement à Next.js ou une livraison produit.
+
+`pg-integrated.mjs` relie le cookie réellement signé par Better Auth à une
+admission persistante dont la génération a été capturée AVANT la vérification
+du mot de passe. Chaque accès relit l'état PostgreSQL : session, admission,
+membre actif, génération, récupération, état des dossiers et provenance des
+droits. Aucun rôle global ne donne la lecture d'un espace personnel.
+Les ressources et attributions sont synthétiques ; l'oracle de politique
+existant est chargé depuis un snapshot conservé en base, sous verrou de banc.
+
+Seules la lecture O01 et l'export synthétique O07 sont exécutés par cette
+frontière. Les bindings O01–O10 sont explicites mais les autres opérations y
+sont refusées ; leurs tests historiques restent des modèles séparés. La
+création atomique des sept droits d'un espace est une commande de fixture de
+confiance, pas une activation d'invitation ni un bootstrap utilisable. Les
+contrôles de récupération modélisent une transition persistante de génération,
+pas l'admission d'une vraie preuve ni le protocole complet de changement du
+secret. Ne pas fermer les cinq scénarios produit ouverts à partir de ce lot.
+
+La remise d'un résultat préparé recontrôle toutes ses sources et les droits.
+Cela mesure la frontière d'appel en mémoire, pas les buffers HTTP, le streaming
+réseau ou des octets déjà transmis. Les essais à deux pools/instances ne sont
+pas des essais de crash serveur ou de durabilité disque ; le driver reste tmpfs.
+Le verrou de banc n'est pas une stratégie de contention adoptée pour le produit.
+
+### Décision technique de version
+
+Better Auth **1.7.6 exact** remplace 1.7.5 ; pg **8.16.3**, Kysely **0.29.5** et
+nanostores **1.5.3** sont conservés pour limiter le delta. La
+[release officielle](https://github.com/better-auth/better-auth/releases/tag/v1.7.6)
+corrige le rejet tardif des mots de passe trop longs. Le test PostgreSQL
+vérifie désormais HTTP 400, `PASSWORD_TOO_LONG` et zéro appel de vérification.
+Le contre-exemple du hook de reset défaillant reste attendu : cette mise à
+jour ne rend pas la récupération Hestia complète ni atomique.
+
+Relecture officielle au 27 septembre 2026 :
+
+- [PostgreSQL](https://better-auth.com/docs/adapters/postgresql) et
+  [base/migrations/hooks](https://better-auth.com/docs/concepts/database) :
+  surfaces publiques, sans garantie de transaction commune avec nos droits.
+- [Sessions](https://better-auth.com/docs/concepts/session-management) :
+  cache cookie désactivé, pas de stockage secondaire dans ce candidat.
+- [GHSA-fmh4-wcc4-5jm3](https://github.com/better-auth/better-auth/security/advisories/GHSA-fmh4-wcc4-5jm3) :
+  le plugin organization concerné n'est pas activé ; l'e-mail vérifié reste
+  requis. Son ajout exigerait une nouvelle qualification. Un audit npm vide
+  ne constitue pas une certification ni la résolution de cet avis.
+
+Les 37 archives du verrou ont été inspectées avant installation : intégrité,
+inventaire, licences MIT/Apache-2.0/ISC et scripts ; installation avec scripts
+désactivés. Aucun envoi d'e-mail, activation de plugin supplémentaire, donnée
+réelle, appel Claude, UI, route produit ou déploiement.

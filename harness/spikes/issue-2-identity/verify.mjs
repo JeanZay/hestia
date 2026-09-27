@@ -15,11 +15,11 @@ env.NODE_ENV='test';env.BETTER_AUTH_TELEMETRY='false';
 const result=runVerification({root,inputPaths:()=>inputs,closureState:()=>closureInputs(root),env,
   steps:[
     {name:'spike-scope-syntax-guard',args:[prefix+'verify-scope.mjs']},
-    {name:'contract',args:['scripts/refinement-check.mjs','--contract','harness/contracts/issue-2-local-qualification.json']},
+    {name:'contract',args:['scripts/refinement-check.mjs','--contract','harness/contracts/issue-2-integrated-qualification.json']},
     {name:'harness-regression',args:['--test','tests/harness/*.test.mjs']},
     {name:'identity-policy-network-bench',args:[prefix+'run.mjs']},
     {name:'closure',args:['scripts/closure.mjs','check','--action','verify']},
-    {name:'postgresql-library-and-sql-model',args:[prefix+'pg-run.mjs']},
+    {name:'postgresql-library-model-and-integrated-boundary',args:[prefix+'pg-run.mjs']},
     {name:'app-ui-dev-production',args:[],required:false,skipReason:'No app implementation or design handoff; outside this local spike'},
   ],execute:args=>spawnSync(process.execPath,args,{cwd:root,env,encoding:'utf8',timeout:180000,maxBuffer:16000000,stdio:'inherit'})});
 console.log(JSON.stringify({status:result.report.status,reference:result.reference,scope:'bounded-spike-only',noProductExecutionApproval:true}));
