@@ -9,7 +9,7 @@ const git=args=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
 // Otherwise committing the spike would silently turn this guard into a no-op.
 const base=git(['merge-base','HEAD','main']);
 const changed=[...new Set([...git(['diff','--name-only',base]).split('\n'),...git(['ls-files','--others','--exclude-standard']).split('\n')].filter(Boolean))];
-const allowed=p=>p.startsWith('harness/spikes/issue-2-identity/')||p==='harness/contracts/issue-2-local-qualification.json';
+const allowed=p=>p.startsWith('harness/spikes/issue-2-identity/')||p==='harness/contracts/issue-2-local-qualification.json'||p==='harness/contracts/issue-2-integrated-qualification.json';
 if(changed.some(p=>!allowed(p)))throw Error('Out-of-scope source change');
 const inputs=fs.readdirSync(path.join(root,'artifacts/qualification-inputs')).map(n=>'artifacts/qualification-inputs/'+n);
 const findings=[];

@@ -54,11 +54,13 @@ test('PG library: hashed reset identifier, unknown-account response, DB expiry a
   const again=await b.login();await b.pool.query('UPDATE session SET "expiresAt"=now()-interval \'1 second\'');
   assert.equal(await b.authB.api.getSession({headers:new Headers({cookie:again.cookie})}),null);
 });
-test('PG1.7.5 diagnostic: maxPasswordLength is not an early verification guard on login',async t=>{
+test('PG1.7.6 regression: oversized login is rejected before password verification',async t=>{
   const b=await make(t);await b.seed('member@example.invalid');let calls=0;const verify=b.ctxA.password.verify;
   b.ctxA.password.verify=async(...args)=>{calls++;return verify(...args);};
-  assert.equal((await b.login(b.authA,'member@example.invalid','x'.repeat(129))).response.status,401);
-  assert.equal(calls,1,'A diagnostic regression; 1.7.6 changes this behavior and needs separate qualification');
+  const response=await b.login(b.authA,'member@example.invalid','x'.repeat(129));
+  assert.equal(response.response.status,400);
+  assert.equal((await response.response.json()).code,'PASSWORD_TOO_LONG');
+  assert.equal(calls,0,'Reject before expensive verification; 1.7.5 counterexample remains in PR15 history');
 });
 test('PG network: DB endpoint permitted, other sockets and HTTP refused, no SDK egress observed',()=>{
   assert.deepEqual(deniedNetwork,[]);

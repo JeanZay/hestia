@@ -1,0 +1,55 @@
+{
+  "id": "issue-2-integrated-qualification",
+  "objective": "Qualifier une frontière serveur intégrée entre les vraies sessions Better Auth PostgreSQL et les droits courants Hestia, avant adoption dans l'application.",
+  "githubIssue": "https://github.com/JeanZay/hestia/issues/2",
+  "scope": {
+    "included": [
+      "Version bibliothèque verrouillée et requalifiée après inspection des mises à jour.",
+      "Adaptateur expérimental intégré : identité réelle, admission de session persistante, droits chargés depuis PostgreSQL et recontrôlés avant résultat.",
+      "Preuves synthétiques de refus par défaut, administrateur sans lecture automatique, accès explicites et révoqués, résultat dérivé multi-source, génération de sessions face à récupération concurrente.",
+      "Dossier de décision technique fini, limites restantes et revue indépendante."
+    ],
+    "excluded": [
+      "Toute UI, parcours utilisateur, route Next, intégration de l'authentification au produit.",
+      "Fermeture globale de B1/B2, implémentation de tous les actes sensibles, secours exceptionnel, e-mail réel, sauvegarde durable, Dev/Production.",
+      "Publication GitHub, sous-Issues, merge, données familiales, coût, suppression de branches/worktrees."
+    ],
+    "ownedPaths": [
+      "harness/spikes/issue-2-identity/",
+      "harness/contracts/issue-2-integrated-qualification.json",
+      "artifacts/qualification/issue-2-integrated-2026-09-27/"
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "Délégation technique explicite d'Amaury du 27 septembre 2026, conservée dans le dossier local référencé par le checkpoint. Choix et exécution locale du socle non UI sous responsabilité des agents ; les décisions rôles/BDD restent acquises.",
+    "allowedActions": [
+      "Étude et implémentation expérimentale locale bornée, installation après inspection avec scripts désactivés, tests et commit local.",
+      "Runtime PostgreSQL jetable propre au run via le driver existant ; arrêter ses seules ressources, conserver tous les travaux précédents.",
+      "Lecture officielle/GitHub et revue indépendante ; aucune mutation distante."
+    ],
+    "forbiddenActions": [
+      "UI/parcours, données réelles, e-mail réel, coût, service distant, Claude, GitHub write, merge, déploiement, nettoyage des anciennes branches/worktrees."
+    ]
+  },
+  "acceptanceCriteria": [
+    "I1 Les décisions d'autorisation utilisent une session réelle de bibliothèque validée en base et un membre actif ; aucune autorité fournie par le client ni rôle global donnant lecture.",
+    "I2 Une session créée pendant/après un changement de génération ou une récupération ne devient pas utilisable avec un ancien contexte ; états persistants partagés par deux instances et refus après redémarrage d'adaptateur.",
+    "I3 Toutes les capacités documentaires O01–O10 ont un binding explicite ; opération inconnue refusée. Pour lecture/export : absence, provenance révoquée et source dérivée interdite refusent tout contenu.",
+    "I4 Une révocation observée avant remise d'un résultat préparé entraîne le refus ; deux droits distincts ne sont pas supprimés ensemble par erreur.",
+    "I5 Migrations et provisioning restent ceux d'un banc identifié ; aucune preuve de tmpfs n'est présentée comme durabilité de production. Limites de récupération complète et transport réseau explicites.",
+    "I6 Tests réels, manifeste exact et revue indépendante ; src, UI et route publique inchangés."
+  ],
+  "validation": [
+    "Corpus historique et nouveau corpus intégré contre PostgreSQL dédié.",
+    "Audit verrou et scripts avant npm ci --ignore-scripts ; garde réseau existante.",
+    "Guard, syntaxe, lint explicite, tests harnais, contrat et clôture avec preuves liées au candidat."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}
