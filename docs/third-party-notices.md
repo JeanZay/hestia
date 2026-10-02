@@ -1,6 +1,6 @@
 # Dépendances et notices tierces
 
-État du verrou npm examiné le 12 septembre 2026. La licence Apache-2.0 de Hestia couvre ses éléments originaux ; elle ne remplace pas celles des composants tiers téléchargés lors de l'installation.
+État du verrou npm examiné le 12 septembre 2026 ; versions Next.js actualisées le 2 octobre 2026 après correction de dépendances. La licence Apache-2.0 de Hestia couvre ses éléments originaux ; elle ne remplace pas celles des composants tiers téléchargés lors de l'installation.
 
 La publication initiale contient les sources Hestia et [package-lock.json](../package-lock.json). Elle ne contient ni `node_modules`, ni navigateurs Playwright, ni bibliothèques natives, ni image Docker préconstruite. Construire une image localement ne publie pas cette image.
 
@@ -10,7 +10,7 @@ Cette sélection signale des licences distinctes à prendre en compte. Les entr�
 
 | Composant verrouillé | Version | Licence déclarée dans le verrou |
 | --- | --- | --- |
-| Next.js, React et React DOM | 16.3.5 ; 19.3.0 | MIT |
+| Next.js, React et React DOM | 16.3.8 ; 19.3.0 | MIT |
 | `@img/sharp-libvips-*` | 1.3.3 | LGPL-3.0-or-later |
 | `@img/sharp-win32-*` | 0.35.4 | Apache-2.0 AND LGPL-3.0-or-later |
 | `@img/sharp-wasm32` | 0.35.4 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
