@@ -8,6 +8,11 @@ if (process.env.HESTIA_ENVIRONMENT !== 'local' || !process.env.HESTIA_TEST_RUN_I
   || new URL(process.env.DATABASE_URL).hostname !== '127.0.0.1') {
   throw new Error('Only the owned ephemeral test database is accepted.');
 }
+if (process.env.HESTIA_STORAGE_MODE !== 'local' || process.env.HESTIA_S3_BUCKET_ACCESS !== 'private'
+  || new URL(process.env.AWS_ENDPOINT_URL_S3).hostname !== '127.0.0.1'
+  || process.env.HESTIA_S3_BUCKET !== `hestia-test-${process.env.HESTIA_TEST_RUN_ID.slice('hestia-app-'.length)}`) {
+  throw new Error('Only the owned ephemeral private object store is accepted.');
+}
 const temp = resolve('artifacts/playwright-temp');
 mkdirSync(temp, { recursive: true });
 const env = { ...process.env, TEMP: temp, TMP: temp, TMPDIR: temp,

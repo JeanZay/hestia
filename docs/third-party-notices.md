@@ -11,15 +11,21 @@ Cette sélection signale des licences distinctes à prendre en compte. Les entr�
 | Composant verrouillé | Version | Licence déclarée dans le verrou |
 | --- | --- | --- |
 | Next.js, React et React DOM | 16.3.8 ; 19.3.0 | MIT |
-| `@img/sharp-libvips-*` | 1.3.3 | LGPL-3.0-or-later |
-| `@img/sharp-win32-*` | 0.35.4 | Apache-2.0 AND LGPL-3.0-or-later |
-| `@img/sharp-wasm32` | 0.35.4 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
+| `@img/sharp-libvips-*` | 1.3.4 | LGPL-3.0-or-later |
+| `@img/sharp-win32-*` | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later |
+| `@img/sharp-wasm32` | 0.35.5 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
+| `sharp` | 0.35.5 | Apache-2.0 |
+| `@aws-sdk/client-s3` | 3.1146.0 | Apache-2.0 |
+| `pdfjs-dist` | 6.4.299 | Apache-2.0 |
+| `libheif-js` | 1.23.2 | LGPL-3.0 |
 | `caniuse-lite` | 1.0.30001810 | CC-BY-4.0 |
 | `axe-core` | 4.13.0 | MPL-2.0 |
 | `lightningcss` et ses paquets de plateforme | 1.33.0 | MPL-2.0 |
 | `argparse` | 2.0.1 | Python-2.0 |
 
 Les paquets natifs sélectionnés dépendent de la plateforme. Leurs fichiers et notices peuvent couvrir d'autres bibliothèques embarquées ; la déclaration du verrou ne suffit pas à les inventorier. Sharp documente les modalités de ses installations et binaires dans sa [documentation officielle](https://sharp.pixelplumbing.com/install/).
+
+Le lecteur HEIF est chargé comme module distinct non modifié et remplaçable depuis `node_modules/libheif-js` ; sa licence et ses sources amont doivent accompagner toute redistribution qui l'embarque. Le worker PDF.js local provient du paquet verrouillé, sous sa propre licence Apache-2.0. Le serveur S3 RustFS 1.0.1 est utilisé uniquement dans le banc Docker jetable sous Apache-2.0 ; son image n'est pas publiée par Hestia. Ces ajouts du 3 octobre 2026 ne changent pas la licence des sources originales Hestia.
 
 ## Avant de publier un artefact contenant des dépendances
 

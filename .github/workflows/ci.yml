@@ -28,6 +28,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Fetch pinned disposable PostgreSQL image
         run: docker pull postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+      - name: Fetch pinned disposable S3 test image
+        run: docker pull rustfs/rustfs@sha256:7465b31993156ca5cc0eb4b3c59a01ff69651961be62bcfeb6ce569f22034a56
       - run: npm run verify
       - name: Verification summary
         if: always()

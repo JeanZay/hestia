@@ -105,3 +105,39 @@ button { cursor: pointer; }
 .h-skeleton-row > div { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .h-skeleton-row > div > span { border-radius: 4px; background: var(--cdv-surface-2); }
 @media (max-width: 599px) { .h-breadcrumb { display: none; } .h-mobile-back { display: flex; } }
+/* Technical port of Documents hand-off panels, FileThumb, UploadItem, Progress and Dropzone. */
+.h-file-stack { display:flex;flex-direction:column;gap:16px;width:100%;min-width:0; }
+.h-file-stack h2 { margin:0;font-family:var(--cdv-font-title);font-size:var(--cdv-h3-size);line-height:var(--cdv-h3-line);letter-spacing:var(--cdv-h3-tracking);font-weight:700;overflow-wrap:anywhere; }
+.h-file-stack p { margin:0;font-size:15px;color:var(--cdv-ink-2); }
+.h-file-thumb { flex:none;width:34px;height:40px;border-radius:var(--cdv-radius-s);font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center; }
+.h-file-pdf { background:var(--cdv-action-tint);color:var(--cdv-action); }
+.h-file-image { background:var(--cdv-info-tint);color:var(--cdv-info); }
+.h-upload-item { display:flex;flex-direction:column;gap:12px;padding:14px;border:1.5px solid var(--cdv-border);border-radius:var(--cdv-radius-l);font-size:15px;overflow-wrap:anywhere; }
+.h-upload-done { border-color:var(--cdv-success);background:var(--cdv-success-tint); }
+.h-upload-done > span { display:flex;align-items:center;gap:10px;color:var(--cdv-success);font-weight:700; }
+.h-upload-rejected { border-color:var(--cdv-danger);background:var(--cdv-danger-tint); }
+.h-upload-heading { display:flex;align-items:center;gap:10px;min-width:0; }
+.h-upload-heading > span:not(.h-file-thumb) { flex:1;min-width:0;font-size:14px;color:var(--cdv-ink-3);overflow-wrap:anywhere; }
+.h-file-progress { height:8px;border-radius:4px;background:var(--cdv-surface-2);overflow:hidden;position:relative; }
+.h-file-progress > span { display:block;height:100%;background:var(--cdv-action);transition:width var(--cdv-duration) var(--cdv-ease); }
+.h-dropzone { display:flex;flex-direction:column;align-items:center;gap:10px;padding:28px 20px;border:2px dashed var(--cdv-border-strong);border-radius:var(--cdv-radius-l);text-align:center;background:var(--cdv-bg); }
+.h-dropzone-over { min-height:180px;border:2px solid var(--cdv-action);background:var(--cdv-action-tint);color:var(--cdv-action-hover); }
+.h-preview { position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:260px;padding:24px;box-sizing:border-box;background:var(--cdv-surface-2);border:1.5px solid var(--cdv-border);border-radius:var(--cdv-radius-l);overflow:hidden;text-align:center; }
+.h-preview > span { font-size:15px;color:var(--cdv-ink-2);line-height:1.45;max-width:320px; }
+.h-preview-unavailable { border:1.5px dashed var(--cdv-border-strong); }
+.h-preview-image { padding:0;background:var(--cdv-inverse-bg); }
+.h-preview-image img { display:block;max-width:100%;max-height:480px;object-fit:contain; }
+.h-preview-pdf { padding:0;min-height:420px;max-height:480px;overflow:auto;justify-content:flex-start; }
+.h-preview-pdf canvas { display:block;width:100%;height:auto;background:white; }
+.h-file-metadata { margin:0;display:flex;flex-direction:column;font-size:15px; }
+.h-file-metadata > div { display:flex;flex-direction:column;gap:2px;padding:10px 0;border-bottom:1.5px solid var(--cdv-border-subtle); }
+.h-file-metadata > div:last-child { border-bottom:0; }
+.h-file-metadata dt { font-size:14px;color:var(--cdv-ink-3); }
+.h-file-metadata dd { margin:0;overflow-wrap:anywhere; }
+.h-file-panel-host { display:contents; }
+.h-top-search { flex:1;max-width:400px;min-width:120px;height:36px;border:1.5px solid var(--cdv-inverse-ink-2);border-radius:var(--cdv-radius-m);padding:0 12px;background:transparent;color:var(--cdv-inverse-ink);font-size:14px; }
+.h-top-search::placeholder { color:var(--cdv-inverse-ink-2); }
+@media (max-width:1023px) { .h-workspace:has(.h-files-panel) > .h-main { display:none; } }
+@media (max-width:599px) { .h-top-search { display:none; } }
+.h-pdf-page { width:100%;flex:none;position:relative;background:white; }
+.h-pdf-page canvas { position:absolute;inset:0;width:100%;height:100%; }

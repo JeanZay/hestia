@@ -4,93 +4,17 @@ import { createAuth } from "./auth/options";
 import type { ServerConfig } from "./config";
 import { CAPABILITIES } from "./permissions/capabilities";
 
-class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) { super(message); }
-}
-const unavailable = () => new HttpError(404, "NOT_FOUND", "Dossier indisponible.");
-const unauthenticated = () => new HttpError(401, "UNAUTHENTICATED", "Veuillez vous reconnecter.");
-const invalid = () => new HttpError(400, "INVALID_INPUT", "Vérifiez les informations saisies.");
-const response = (data: unknown, status = 200, extra?: Headers) => {
-  const headers = new Headers(extra);
-  headers.set("Cache-Control", "private, no-store");
-  headers.set("Vary", "Cookie");
-  headers.set("X-Content-Type-Options", "nosniff");
-  return Response.json(data, { status, headers });
-};
-async function guarded(action: () => Promise<Response>) {
-  try { return await action(); }
-  catch (error) {
-    if (error instanceof HttpError) return response({ error: { code: error.code, message: error.message } }, error.status);
-    // Never return database, connection or credential details to the browser.
-    return response({ error: { code: "UNAVAILABLE", message: "Service momentanément indisponible. Réessayez." } }, 503);
-  }
-}
-async function json(request: Request, keys: string[]) {
-  if (request.headers.get("content-type")?.split(";")[0] !== "application/json") throw invalid();
-  const reader = request.body?.getReader();
-  if (!reader) throw invalid();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      size += part.value.byteLength;
-      if (size > 4096) { await reader.cancel(); throw invalid(); }
-      chunks.push(part.value);
-    }
-    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!value || typeof value !== "object" || Array.isArray(value)
-      || Object.keys(value).some(key => !keys.includes(key))) throw invalid();
-    return value as Record<string, unknown>;
-  } catch { throw invalid(); }
-  finally { reader.releaseLock(); }
-}
-function folderName(value: unknown) {
-  if (typeof value !== "string") throw invalid();
-  const name = value.trim();
-  if (!name || [...name].length > 120 || /[\u0000-\u001f\u007f]/.test(name)) throw invalid();
-  return name;
-}
-type Actor = { id: string; name: string; email: string };
+import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, type Actor } from "./access";
+import { createDocuments, type DocumentDependencies } from "./documents/service";
+const folderName = (value: unknown) => textField(value, 120);
 type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number };
 
-export function createApplication(pool: Pool, config: ServerConfig) {
+export function createApplication(pool: Pool, config: ServerConfig, dependencies?: DocumentDependencies) {
   const auth = createAuth(pool, config);
-  function origin(request: Request) {
-    if (request.headers.get("origin") !== config.origin) throw new HttpError(403, "FORBIDDEN", "Origine de la requête refusée.");
-  }
-  async function transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await action(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) { await client.query("ROLLBACK"); throw error; }
-    finally { client.release(); }
-  }
-  async function withActor<T>(request: Request, action: (client: PoolClient, actor: Actor) => Promise<T>, touch = true) {
-    const signed = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } });
-    if (!signed) throw unauthenticated();
-    return transaction(async client => {
-      // Admission lock is held through the effect. Removal must take this same
-      // row lock; a removed/re-admitted member cannot recover an earlier session.
-      const member = await client.query("SELECT active,epoch FROM hestia_member WHERE user_id=$1 FOR UPDATE", [signed.user.id]);
-      if (!member.rows[0]?.active) throw unauthenticated();
-      const session = await client.query(`SELECT s.id FROM session s
-        JOIN hestia_session_policy p ON p.session_id=s.id
-        WHERE s.id=$1 AND s."userId"=$2 AND s."expiresAt">clock_timestamp()
-          AND p.member_epoch=$3 AND p.started_at > clock_timestamp()-interval '12 hours'
-          AND p.touched_at > clock_timestamp()-interval '30 minutes'
-        FOR UPDATE OF s,p`, [signed.session.id,signed.user.id,member.rows[0].epoch]);
-      if (!session.rowCount) throw unauthenticated();
-      if (touch) await client.query("UPDATE hestia_session_policy SET touched_at=clock_timestamp() WHERE session_id=$1", [signed.session.id]);
-      return action(client, { id: signed.user.id, name: signed.user.name, email: signed.user.email });
-    });
-  }
+  const access = createAccess(pool, config, auth);
+  const { origin, transaction, withActor } = access;
   async function foldersFor(client: PoolClient, actor: Actor, id?: string): Promise<Folder[]> {
-    const found = await client.query(`SELECT f.id,f.name,f.version,
+    const found = await client.query(`SELECT f.id,f.name,f.version,(SELECT count(*) FROM hestia_document d WHERE d.folder_id=f.id AND d.trashed_at IS NULL AND d.purged_at IS NULL) AS document_count,
       array_agg(DISTINCT g.capability ORDER BY g.capability) AS capabilities
       FROM hestia_folder f JOIN hestia_grant g ON g.folder_id=f.id
       WHERE g.user_id=$1 AND g.revoked_at IS NULL
@@ -98,7 +22,7 @@ export function createApplication(pool: Pool, config: ServerConfig) {
         AND ($2::uuid IS NULL OR f.id=$2::uuid)
       GROUP BY f.id HAVING bool_or(g.capability='consulter')
       ORDER BY f.created_at,f.id`, [actor.id,id ?? null]);
-    return found.rows.map(row => ({ ...row, documentCount: 0 }));
+    return found.rows.map(row => ({ id: row.id, name: row.name, version: row.version, capabilities: row.capabilities, documentCount: Number(row.document_count) }));
   }
   function handleAuth(request: Request) {
     return guarded(async () => {
@@ -177,5 +101,7 @@ export function createApplication(pool: Pool, config: ServerConfig) {
       return response({ folder });
     });
   }
-  return { handleAuth, handleSession, handleFolders, handleFolder };
+  return { handleAuth, handleSession, handleFolders, handleFolder, ...createDocuments(pool, access, dependencies) };
 }
+
+
