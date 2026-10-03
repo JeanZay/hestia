@@ -4,10 +4,11 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { POSTGRES_IMAGE, resolvePostgresImage, assertPostgresContainerImage } from './postgres-image.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const runner = path.join(root, 'tests/helpers/run-application.mjs');
-const image = 'sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73';
+const image = POSTGRES_IMAGE;
 const suffix = randomBytes(8).toString('hex');
 const runId = `hestia-app-${suffix}`;
 const database = `hestia_test_${suffix}`;
@@ -97,6 +98,8 @@ async function runApplication(env) {
 try {
   if (!fs.existsSync(runner)) throw Error('APPLICATION_RUNNER_MISSING');
   receipt.before = inventory();
+  const resolvedImage = resolvePostgresImage(JSON.parse(docker(['image', 'inspect', image])));
+  receipt.resolvedImage = resolvedImage;
   network = docker(['network', 'create', '--opt', 'com.docker.network.bridge.enable_ip_masquerade=false', '--opt', 'com.docker.network.bridge.enable_icc=false', '--label', `hestia.qualification=${runId}`, runId]);
   container = docker(['run', '--detach', '--rm', '--pull', 'never', '--name', runId, '--label', `hestia.qualification=${runId}`, '--network', network,
     '--memory', '1536m', '--cpus', '1', '--pids-limit', '128', '--publish', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data:rw,nosuid,nodev,size=1073741824',
@@ -105,13 +108,14 @@ try {
   receipt.networkId = network;
   const info = JSON.parse(docker(['inspect', container]))[0];
   const netInfo = JSON.parse(docker(['network', 'inspect', network]))[0];
+  assertPostgresContainerImage(info.Image, resolvedImage.id);
   const bindings = info.NetworkSettings.Ports['5432/tcp'];
   receipt.isolation = {
     owned: info.Config.Labels['hestia.qualification'] === runId,
     image: info.Image, bindings, mounts: info.Mounts.map(mount => ({ type: mount.Type, destination: mount.Destination })),
     tmpfs: info.HostConfig.Tmpfs, networkOptions: netInfo.Options,
   };
-  if (!receipt.isolation.owned || info.Image !== image || bindings?.length !== 1 || bindings[0].HostIp !== '127.0.0.1'
+  if (!receipt.isolation.owned || bindings?.length !== 1 || bindings[0].HostIp !== '127.0.0.1'
     || info.Mounts.some(mount => mount.Type !== 'tmpfs') || !info.HostConfig.Tmpfs['/var/lib/postgresql/data']
     || netInfo.Labels['hestia.qualification'] !== runId || netInfo.Options['com.docker.network.bridge.enable_ip_masquerade'] !== 'false'
     || netInfo.Options['com.docker.network.bridge.enable_icc'] !== 'false') throw Error('ISOLATION_MISMATCH');
