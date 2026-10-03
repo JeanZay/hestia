@@ -117,8 +117,13 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
         || typeof input.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.sha256) || !["import","camera"].includes(String(input.source))) throw invalid();
       const identity = hash(JSON.stringify([input.folderId,fileName,title,input.size,input.mediaType,input.sha256,input.source]));
       // Authenticate before opportunistic maintenance; no public cleanup route.
-      await withActor(request, async () => undefined);
-      await cleanupUploads(1, 1);
+      const actorId = await withActor(request, async (_client, actor) => actor.id);
+      try { await cleanupUploads(1, 1, actorId); }
+      catch {
+        // Opportunistic deletion must not deny an unrelated upload. The ledger
+        // and reservation remain charged; explicit maintenance reports errors.
+        // The following transaction still enforces current admission and quota.
+      }
       const result = await withActor(request, async (client,actor) => {
         await budget(client);
         const { ownerId } = await permissions(client,actor,input.folderId as string,["déposer"]);
@@ -335,12 +340,14 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     }
     return keys.length;
   }
-  async function cleanupUploads(limit = 20, maxObjects = 1100) {
+  async function cleanupUploads(limit = 20, maxObjects = 1100, priorityActorId?: string) {
     if (!Number.isInteger(limit) || limit<1 || limit>100 || !Number.isInteger(maxObjects) || maxObjects<1 || maxObjects>1100) throw new Error("Invalid cleanup batch");
     const candidates = await db().query(`SELECT u.id FROM hestia_upload u WHERE
       (u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp()) OR
       (u.status='cancelled' AND NOT u.reservation_released) OR (u.status IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM hestia_upload_object o WHERE o.upload_id=u.id AND o.deleted_at IS NULL
-        AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key))) ORDER BY u.created_at LIMIT $1`, [limit]);
+        AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)))
+      ORDER BY CASE WHEN u.actor_id=$2 AND u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp() THEN 0
+        WHEN u.actor_id=$2 THEN 1 ELSE 2 END, u.created_at LIMIT $1`, [limit,priorityActorId ?? null]);
     let cleaned = 0;
     for (const candidate of candidates.rows) {
       if (cleaned>=maxObjects) break;
@@ -374,6 +381,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   }
   return { handleUploads, handleUploadChunk, handleUploadComplete, handleUpload, handleDocuments, handleDocument, handleDocumentContent, cleanupUploads };
 }
+
 
 
 

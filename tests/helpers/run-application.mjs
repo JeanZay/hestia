@@ -17,9 +17,9 @@ const temp = resolve('artifacts/playwright-temp');
 mkdirSync(temp, { recursive: true });
 const env = { ...process.env, TEMP: temp, TMP: temp, TMPDIR: temp,
   NEXT_TELEMETRY_DISABLED: '1', BETTER_AUTH_TELEMETRY: 'false' };
-function start(entry, args, overrides = {}) {
+function start(entry, args, overrides = {}, cwd = process.cwd()) {
   const processChild = spawn(process.execPath, [resolve(entry), ...args], {
-    stdio: 'inherit', env: { ...env, ...overrides },
+    cwd, stdio: 'inherit', env: { ...env, ...overrides },
   });
   const completion = new Promise(done => {
     processChild.once('error', () => done(1));
@@ -45,7 +45,9 @@ try {
     cpSync('public', '.next/standalone/public', { recursive: true });
     cpSync('.next/static', '.next/standalone/.next/static', { recursive: true });
     await assertPortAvailable('127.0.0.1', 3210);
-    server = start(entry, [], { HOSTNAME: '127.0.0.1', PORT: '3210', NODE_ENV: 'production' });
+    // Exercise the packaged application, including traced decoder/worker assets,
+    // without accidentally loading those files from the source checkout's cwd.
+    server = start(entry, [], { HOSTNAME: '127.0.0.1', PORT: '3210', NODE_ENV: 'production' }, resolve('.next/standalone'));
     let ended = false;
     server.completion.then(() => { ended = true; });
     let ready = false;

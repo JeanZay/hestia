@@ -8,7 +8,7 @@ Hestia est un projet open source francophone sous [licence Apache-2.0](LICENSE),
 
 ## État du développement
 
-**Connexion et dossiers persistants — tranche #17, 3 octobre 2026.** Un membre déjà admis peut se connecter, créer un dossier privé, le retrouver et le renommer. Les autorisations sont relues côté serveur ; le rôle d'administrateur global ne donne pas accès aux dossiers d'autrui. Le design reprend le hand-off Claude Design validé.
+**Dossiers, factures et photos — tranches #17/#18, 3 octobre 2026.** Un membre déjà admis peut se connecter, créer un dossier privé, le retrouver et le renommer. Les autorisations sont relues côté serveur ; le rôle d'administrateur global ne donne pas accès aux dossiers d'autrui. Le design reprend le hand-off Claude Design validé.
 
 La tranche #18 ajoute les factures et photos : import séquentiel, contrôle du format et de l'intégrité, recherche par titre/nom, aperçu et téléchargement sous droits courants. Sur mobile, la prise de photo propose une confirmation avant enregistrement. Les fichiers acceptés sont PDF, JPEG, PNG, WebP et HEIC/HEIF, jusqu'à 20 Mio ; HEIC/HEIF sont conservés et téléchargeables mais sans aperçu intégré.
 

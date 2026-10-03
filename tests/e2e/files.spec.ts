@@ -27,20 +27,50 @@ async function folder(page: Page) {
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   return result.folder.id as string;
 }
-async function selectFiles(page: Page, paths: string | string[]) {
+async function selectFiles(page: Page, paths: string | string[], background = false) {
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Ajouter un document", exact: true }).click();
-  await (await chooser).setFiles(paths);
+  const selected = await chooser;
+  if (background) {
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>true}); document.dispatchEvent(new Event("visibilitychange")); });
+    await expect(page.getByRole("complementary")).toHaveCount(0);
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
+  }
+  await selected.setFiles(paths);
 }
 const panel = (page: Page) => page.getByRole("complementary", { name: "Ajout de documents", exact: true });
 const fileList = async (page: Page, id: string) => (await (await page.request.get(`/api/hestia/documents?folderId=${id}`)).json()).documents;
 
 test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async ({ page, isMobile }) => {
   const id = await folder(page);
-  await selectFiles(page, ["tests/fixtures/documents/synthetic.png", "tests/fixtures/documents/synthetic.pdf"]);
+  await selectFiles(page, "tests/fixtures/documents/synthetic.png", isMobile);
   const fields = panel(page).getByLabel("Titre du document");
   await fields.nth(0).fill("Étiquette synthétique");
+  const more = page.waitForEvent("filechooser");
+  await panel(page).getByRole("button", {name:"Ajouter d’autres fichiers",exact:true}).click();
+  const morePicker = await more;
+  if (isMobile) {
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>true}); document.dispatchEvent(new Event("visibilitychange")); });
+    await expect(panel(page)).toHaveCount(0);
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
+  }
+  await morePicker.setFiles("tests/fixtures/documents/synthetic.pdf");
+  await expect(fields.nth(0)).toHaveValue("Étiquette synthétique");
   await fields.nth(1).fill("Facture synthétique");
+  const cancelled = page.waitForEvent("filechooser");
+  await panel(page).getByRole("button", {name:"Ajouter d’autres fichiers",exact:true}).click();
+  const cancelledPicker = await cancelled;
+  if (isMobile) {
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>true}); document.dispatchEvent(new Event("visibilitychange")); });
+    await expect(panel(page)).toHaveCount(0);
+    await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
+  }
+  const cancelCheck = page.waitForResponse(r => r.url().endsWith("/api/hestia/folders") && r.request().method() === "GET");
+  await cancelledPicker.element().dispatchEvent("cancel");
+  await cancelCheck;
+  await expect(fields).toHaveCount(2);
+  await expect(fields.nth(0)).toHaveValue("Étiquette synthétique");
+  await expect(fields.nth(1)).toHaveValue("Facture synthétique");
   await panel(page).getByRole("button", { name: "Enregistrer", exact: true }).click();
   await expect(panel(page).getByText("Document enregistré.", { exact: true })).toHaveCount(2, { timeout: 30_000 });
   await panel(page).getByRole("button", { name: "Terminé", exact: true }).click();
@@ -144,4 +174,26 @@ test("aperçu sans Exporter, révocation et purge des URLs privées", async ({pa
   await expect(page.getByRole("complementary")).toHaveCount(0);
   expect(await page.evaluate(async url => { try { await fetch(url!); return false; } catch { return true; } },blob)).toBe(true);
   expect(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length}))).toEqual({local:0,session:0});
+});
+
+test("JPEG, WebP et HEIC : originaux acceptés, HEIC exporté sans conversion", async ({page}) => {
+  const id = await folder(page);
+  await selectFiles(page, ["tests/fixtures/documents/synthetic.jpg", "tests/fixtures/documents/synthetic.webp", "tests/fixtures/documents/synthetic.heic"]);
+  await expect(panel(page).getByLabel("Titre du document")).toHaveCount(3);
+  await panel(page).getByRole("button",{name:"Enregistrer",exact:true}).click();
+  await expect(panel(page).getByText("Document enregistré.",{exact:true})).toHaveCount(3,{timeout:30_000});
+  await panel(page).getByRole("button",{name:"Terminé",exact:true}).click();
+  const documents = await fileList(page,id);
+  expect(documents).toHaveLength(3);
+  expect(documents.map((d:{mediaType:string})=>d.mediaType).sort()).toEqual(["image/heic","image/jpeg","image/webp"]);
+  await page.getByRole("main").getByRole("button",{name:/synthetic\.heic/}).click();
+  const detail=page.getByRole("complementary",{name:"Document",exact:true});
+  await expect(detail.getByText("Aperçu indisponible",{exact:true})).toBeVisible();
+  const pending=page.waitForEvent("download");
+  await detail.getByRole("button",{name:"Télécharger",exact:true}).click();
+  const download=await pending;
+  expect(download.suggestedFilename()).toBe("synthetic.heic");
+  const bytes=await readFile((await download.path())!);
+  expect(bytes.equals(await readFile("tests/fixtures/documents/synthetic.heic"))).toBe(true);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(documents.find((d:{mediaType:string})=>d.mediaType==="image/heic").sha256);
 });

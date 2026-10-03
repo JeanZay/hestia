@@ -218,6 +218,41 @@ describe("private immutable originals over SQL and real S3", () => {
     deleteHook=undefined; await limited.cleanupUploads();
     expect((await pool.query("SELECT reservation_released FROM hestia_upload WHERE id=$1",[id])).rows[0].reservation_released).toBe(true);
   });
+  it("prioritizes the requesting actor's expired upload over older multi-part cleanup",async()=>{
+    const otherFolder=await folder(otherCookie), oldBytes=Buffer.alloc(CHUNK_SIZE*2+1,65);
+    const older=await begin(metadata(oldBytes,{folderId:otherFolder}),app,otherCookie);
+    await chunks(older,oldBytes,app,otherCookie);
+    const own=await begin(); await chunks(own);
+    await pool.query("UPDATE hestia_upload SET expires_at=now()-interval '1 second' WHERE id IN ($1,$2)",[older,own]);
+    const removed:string[]=[];
+    deleteHook=async key=>{removed.push(key);};
+    const next=await begin(); expect(next).not.toBe(own);
+    expect(removed).toHaveLength(1); expect(removed[0]).toContain(`/`+own+`/`);
+    expect((await pool.query("SELECT status,reservation_released FROM hestia_upload WHERE id=$1",[own])).rows[0]).toEqual({status:"cancelled",reservation_released:true});
+    expect((await pool.query("SELECT count(*)::int AS n FROM hestia_upload_object WHERE upload_id=$1 AND deleted_at IS NULL",[older])).rows[0].n).toBe(3);
+    expect((await finish(own)).status).toBe(409);
+  });
+  it("does not let unrelated deletion failure block deposits and still enforces busy state and retained quota",async()=>{
+    const otherFolder=await folder(otherCookie),older=await begin(metadata(image,{folderId:otherFolder}),app,otherCookie);
+    await chunks(older,image,app,otherCookie);
+    await pool.query("UPDATE hestia_upload SET expires_at=now()-interval '1 second' WHERE id=$1",[older]);
+    let attempted=0;
+    deleteHook=async()=>{attempted++;throw new Error("Synthetic unrelated cleanup outage");};
+    const own=await begin(); expect(attempted).toBe(1);
+    expect((await pool.query("SELECT status,reservation_released FROM hestia_upload WHERE id=$1",[older])).rows[0]).toEqual({status:"cancelled",reservation_released:false});
+    const occupied=await app.handleUploads(request("/uploads",metadata()));
+    expect(occupied.status).toBe(409); expect((await occupied.json()).error.code).toBe("OPERATION_BUSY");
+    await app.handleUpload(request("/upload",undefined,cookie,"DELETE"),own);
+    // Complete the object-free own cancellation; the failed foreign deletion
+    // remains both in the ledger and in the global reservation calculation.
+    await app.cleanupUploads(1,1,actorId);
+    const charged=Number((await pool.query(`SELECT COALESCE(sum(size),0) AS n FROM (
+      SELECT d.size FROM hestia_document d JOIN hestia_upload_object o ON o.object_key=d.object_key WHERE o.deleted_at IS NULL
+      UNION ALL SELECT size FROM hestia_upload WHERE status<>'completed' AND NOT reservation_released) charged`)).rows[0].n);
+    const limited=createApplication(pool,config,{store,limits:{globalBytes:charged+image.length-1}});
+    const denied=await limited.handleUploads(request("/uploads",metadata()));
+    expect(denied.status).toBe(413); expect((await denied.json()).error.code).toBe("QUOTA_EXCEEDED");
+  });
   it("restores synthetic SQL metadata and object bytes with a checked SHA manifest",async()=>{
     const {id,document}=await add();
     const snapshot=(await pool.query("SELECT row_to_json(d) AS data FROM hestia_document d WHERE id=$1",[document.id])).rows[0].data;
@@ -257,5 +292,6 @@ describe("private immutable originals over SQL and real S3", () => {
     console.info(JSON.stringify({test:"20MiB real SQL/S3",durationMs:Math.round(performance.now()-start),rssBefore:memory,rssAfter:process.memoryUsage().rss,limit:MAX_FILE_SIZE}));
   },60000);
 });
+
 
 
