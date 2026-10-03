@@ -29,6 +29,8 @@ Pour relancer seulement la partie applicative après un build : `npm run test:e2
 
 La [CI GitHub](https://github.com/JeanZay/hestia/actions) configure la qualification complète sous Linux. Windows contrôle le harnais, le lint, les types, les tests métier et le build ; ce job ne revendique pas les tests SQL/navigateur. Un job distinct construit l'image Docker sans la publier. Les résultats distants doivent être consultés sur chaque exécution ; une preuve locale ne vaut pas PASS distant.
 
+Le contrôle `dependency-policy` conserve l'audit complet et refuse les alertes élevées/critiques inconnues ou présentes dans les dépendances livrées. Une [proposition de dérogation temporaire limitée à l'outil de lint](docs/adr/0003-development-audit-exception.md) reste soumise au GO d'intégration : son admissibilité technique n'est ni un audit sans vulnérabilité, ni une acceptation humaine.
+
 ## Configuration de l'application
 
 Le lancement persistant via `npm run dev` ou `npm run build` puis `npm start` requiert une base migrée et les variables serveur décrites dans [.env.example](.env.example) et [ADR-0002](docs/adr/0002-persistent-document-foundation.md). Les valeurs privées restent hors Git. `NODE_ENV=production` désigne un build optimisé et n'accorde aucune autorisation pour l'environnement Production.

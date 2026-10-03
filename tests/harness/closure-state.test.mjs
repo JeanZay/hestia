@@ -81,6 +81,22 @@ function fixture(run) {
   }
 }
 const has = (result, code) => assert.ok(result.diagnostics.some((item) => item.code === code), JSON.stringify(result.diagnostics));
+
+test('ready evidence accepts literal dynamic routes and still detects changed source', () => fixture((f) => {
+  const entry = f.add();
+  const checkout = f.paths.get(entry.branch);
+  const route = 'src/app/api/folders/[id]/route.ts';
+  put(checkout, route, 'export const runtime = "nodejs";\n');
+  git(checkout, 'add', '.');
+  git(checkout, 'commit', '-qm', 'Synthetic Next dynamic route');
+  f.ready(entry);
+  const result = f.check('finish', { branch: entry.branch });
+  assert.equal(result.valid, true, JSON.stringify(result.diagnostics));
+  put(checkout, route, 'export const runtime = "edge";\n');
+  const changed = f.check('finish', { branch: entry.branch });
+  assert.equal(changed.valid, false);
+  has(changed, 'candidate-source-drift');
+}));
 function changeReport(f, entry, change) {
   const wrapper = JSON.parse(readFileSync(path.join(f.primary, entry.proofs.validation.path)));
   const report = JSON.parse(readFileSync(path.join(f.primary, wrapper.evidence.path)));

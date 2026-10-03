@@ -29,8 +29,6 @@ jobs:
       - name: Fetch pinned disposable PostgreSQL image
         run: docker pull postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
       - run: npm run verify
-      - name: Dependency audit (high and critical)
-        run: npm audit --audit-level=high
       - name: Verification summary
         if: always()
         run: node scripts/ci-summary.mjs

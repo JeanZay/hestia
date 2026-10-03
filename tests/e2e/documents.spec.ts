@@ -61,10 +61,10 @@ test("un dossier privé persiste après renommage, rechargement et reconnexion",
 test("refus anonyme, inscription fermée et aucune donnée dans le stockage navigateur", async ({ page, request }) => {
   expect((await request.get("/api/hestia/folders")).status()).toBe(401);
   expect((await request.post("/api/auth/sign-up/email", { data: {} })).status()).toBe(404);
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
   const external: string[] = [];
   page.on("request", req => { if (new URL(req.url()).hostname !== "127.0.0.1") external.push(req.url()); });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
   await login(page);
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length, cookies: document.cookie })))
     .toEqual({ local: 0, session: 0, cookies: "" });
