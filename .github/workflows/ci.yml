@@ -31,6 +31,7 @@ jobs:
       - name: Fetch pinned disposable S3 test image
         run: docker pull rustfs/rustfs@sha256:7465b31993156ca5cc0eb4b3c59a01ff69651961be62bcfeb6ce569f22034a56
       - run: npm run verify
+      - run: npm run check:format-bundle
       - name: Verification summary
         if: always()
         run: node scripts/ci-summary.mjs
@@ -52,6 +53,7 @@ jobs:
       - run: npm test
       - run: npm run test:harness
       - run: npm run build
+      - run: npm run check:format-bundle
 
   docker-build:
     name: docker
