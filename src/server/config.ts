@@ -14,6 +14,9 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   if (!env.DATABASE_URL || !env.AUTH_BASE_URL) throw new Error("DATABASE_URL and AUTH_BASE_URL are required");
   const origin = new URL(env.AUTH_BASE_URL);
   const database = new URL(env.DATABASE_URL);
+  // Upload/cleanup exclusion holds a PostgreSQL session advisory lock across I/O.
+  // Neon transaction pooling cannot preserve it: require its direct endpoint.
+  if (database.hostname.includes("-pooler")) throw new Error("Document storage requires a direct PostgreSQL endpoint, without -pooler");
   if (!['postgres:', 'postgresql:'].includes(database.protocol)) throw new Error("PostgreSQL connection required");
   if (origin.origin !== env.AUTH_BASE_URL || origin.username || origin.password) throw new Error("AUTH_BASE_URL must be an exact origin");
   const localHost = (host: string) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
@@ -23,3 +26,4 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   } else if (origin.protocol !== "https:") throw new Error("Hosted mode requires HTTPS");
   return { environment, origin: origin.origin, secret: env.AUTH_SECRET, databaseUrl: env.DATABASE_URL };
 }
+

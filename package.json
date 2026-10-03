@@ -26,11 +26,15 @@
     "evidence:snapshot": "node scripts/evidence.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1146.0",
     "better-auth": "1.7.6",
+    "libheif-js": "1.23.2",
     "next": "16.3.8",
+    "pdfjs-dist": "6.4.299",
     "pg": "8.16.3",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

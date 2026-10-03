@@ -4,6 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const blockedDirectory = /(?:^|\/)(?:private|originals|uploads|backups|family-data)(?:\/|$)/i;
+// These exact Next.js route sources implement the upload API. They are code,
+// not the private data directory; their contents still receive the full scan.
+const uploadRouteSource = /^src\/app\/api\/hestia\/uploads\/(?:route\.ts|\[id\]\/(?:route\.ts|complete\/route\.ts|chunks\/\[index\]\/route\.ts))$/;
 const blockedFile = /(?:^|\/)(?:\.env(?:\..+)?|id_(?:rsa|ed25519)|credentials(?:\.[^/]*)?)$|\.(?:pem|key|p12|pfx|sqlite|sqlite3|db)$/i;
 const tokenPatterns = [
   ['private-key', /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
@@ -18,7 +21,7 @@ export function inspectFile(filePath, content) {
   const normalizedPath = filePath.replaceAll('\\', '/');
   const findings = [];
   const environmentExample = /(?:^|\/)\.env\.example$/i.test(normalizedPath);
-  if (blockedDirectory.test(normalizedPath) || (blockedFile.test(normalizedPath) && !environmentExample)) {
+  if ((blockedDirectory.test(normalizedPath) && !uploadRouteSource.test(normalizedPath)) || (blockedFile.test(normalizedPath) && !environmentExample)) {
     findings.push({ path: normalizedPath, category: 'private-path' });
   }
 

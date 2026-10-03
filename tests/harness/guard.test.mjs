@@ -50,6 +50,18 @@ test('safe examples, source and integrity hashes are allowed but examples are st
   assert.equal(inspectFile('.env.example', `ghp_${'x'.repeat(36)}`).findings[0].category, 'github-token');
 });
 
+test('only exact upload route source paths are allowed and their content remains scanned', () => {
+  for (const suffix of ['route.ts', '[id]/route.ts', '[id]/complete/route.ts', '[id]/chunks/[index]/route.ts']) {
+    const route = `src/app/api/hestia/uploads/${suffix}`;
+    assert.deepEqual(inspectFile(route, 'export const runtime = "nodejs";').findings, []);
+    assert.equal(inspectFile(route, `ghp_${'x'.repeat(36)}`).findings[0].category, 'github-token');
+  }
+  for (const name of ['uploads/route.ts', 'src/uploads/route.ts', 'src/app/api/hestia/uploads/photo.jpg',
+    'src/app/api/hestia/uploads/[id]/credentials.json', 'src/app/api/hestia/uploads/other/route.ts']) {
+    assert.equal(inspectFile(name, '').findings[0].category, 'private-path');
+  }
+});
+
 test('binary content is explicitly uninspected and its private path is still refused', () => {
   const result = inspectFile('originals/photo.png', Buffer.from([0, 1, 2, 3]));
   assert.equal(result.binary, true);

@@ -8,13 +8,18 @@ if (process.env.HESTIA_ENVIRONMENT !== 'local' || !process.env.HESTIA_TEST_RUN_I
   || new URL(process.env.DATABASE_URL).hostname !== '127.0.0.1') {
   throw new Error('Only the owned ephemeral test database is accepted.');
 }
+if (process.env.HESTIA_STORAGE_MODE !== 'local' || process.env.HESTIA_S3_BUCKET_ACCESS !== 'private'
+  || new URL(process.env.AWS_ENDPOINT_URL_S3).hostname !== '127.0.0.1'
+  || process.env.HESTIA_S3_BUCKET !== `hestia-test-${process.env.HESTIA_TEST_RUN_ID.slice('hestia-app-'.length)}`) {
+  throw new Error('Only the owned ephemeral private object store is accepted.');
+}
 const temp = resolve('artifacts/playwright-temp');
 mkdirSync(temp, { recursive: true });
 const env = { ...process.env, TEMP: temp, TMP: temp, TMPDIR: temp,
   NEXT_TELEMETRY_DISABLED: '1', BETTER_AUTH_TELEMETRY: 'false' };
-function start(entry, args, overrides = {}) {
+function start(entry, args, overrides = {}, cwd = process.cwd()) {
   const processChild = spawn(process.execPath, [resolve(entry), ...args], {
-    stdio: 'inherit', env: { ...env, ...overrides },
+    cwd, stdio: 'inherit', env: { ...env, ...overrides },
   });
   const completion = new Promise(done => {
     processChild.once('error', () => done(1));
@@ -40,7 +45,9 @@ try {
     cpSync('public', '.next/standalone/public', { recursive: true });
     cpSync('.next/static', '.next/standalone/.next/static', { recursive: true });
     await assertPortAvailable('127.0.0.1', 3210);
-    server = start(entry, [], { HOSTNAME: '127.0.0.1', PORT: '3210', NODE_ENV: 'production' });
+    // Exercise the packaged application, including traced decoder/worker assets,
+    // without accidentally loading those files from the source checkout's cwd.
+    server = start(entry, [], { HOSTNAME: '127.0.0.1', PORT: '3210', NODE_ENV: 'production' }, resolve('.next/standalone'));
     let ended = false;
     server.completion.then(() => { ended = true; });
     let ready = false;

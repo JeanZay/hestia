@@ -8,18 +8,21 @@ Hestia est un projet open source francophone sous [licence Apache-2.0](LICENSE),
 
 ## État du développement
 
-**Connexion et dossiers persistants — tranche #17, 3 octobre 2026.** Un membre déjà admis peut se connecter, créer un dossier privé, le retrouver et le renommer. Les autorisations sont relues côté serveur ; le rôle d'administrateur global ne donne pas accès aux dossiers d'autrui. Le design reprend le hand-off Claude Design validé.
+**Dossiers, factures et photos — tranches #17/#18, 3 octobre 2026.** Un membre déjà admis peut se connecter, créer un dossier privé, le retrouver et le renommer. Les autorisations sont relues côté serveur ; le rôle d'administrateur global ne donne pas accès aux dossiers d'autrui. Le design reprend le hand-off Claude Design validé.
 
-Le dépôt de documents/photos, le partage et la corbeille sont les tranches suivantes. Le composant de démonstration historique est conservé dans le code, mais n'est plus la page d'accueil. Cette étape est qualifiée sur des données synthétiques locales ; la publication du code ne déploie aucun service Dev ou Production.
+La tranche #18 ajoute les factures et photos : import séquentiel, contrôle du format et de l'intégrité, recherche par titre/nom, aperçu et téléchargement sous droits courants. Sur mobile, la prise de photo propose une confirmation avant enregistrement. Les fichiers acceptés sont PDF, JPEG, PNG, WebP et HEIC/HEIF, jusqu'à 20 Mio ; HEIC/HEIF sont conservés et téléchargeables mais sans aperçu intégré.
+
+Le partage et la corbeille restent la tranche suivante. Le composant de démonstration historique est conservé dans le code, mais n'est plus la page d'accueil. Les contrôles utilisent des données synthétiques locales ; la publication du code ne déploie aucun service Dev ou Production. La caméra native nécessite encore une recette sur téléphone réel en Dev.
 
 ## Vérifier en local
 
-Prérequis : Node.js 24, npm 11, Docker avec moteur Linux et image PostgreSQL figée. Le pilote crée une base temporaire propre à chaque exécution ; il ne réutilise pas une connexion Dev présente dans l'environnement.
+Prérequis : Node.js 24, npm 11, Docker avec moteur Linux amd64 et images PostgreSQL/RustFS figées. Le pilote crée une base et un stockage S3 privés temporaires propres à chaque exécution ; il ne réutilise aucune configuration SQL/S3 ambiante.
 
 ```sh
 npm ci --ignore-scripts
 npx playwright install chromium
 docker pull postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+docker pull rustfs/rustfs@sha256:7465b31993156ca5cc0eb4b3c59a01ff69651961be62bcfeb6ce569f22034a56
 npm run verify
 ```
 
@@ -33,7 +36,7 @@ Le contrôle `dependency-policy` conserve l'audit complet et refuse les alertes 
 
 ## Configuration de l'application
 
-Le lancement persistant via `npm run dev` ou `npm run build` puis `npm start` requiert une base migrée et les variables serveur décrites dans [.env.example](.env.example) et [ADR-0002](docs/adr/0002-persistent-document-foundation.md). Les valeurs privées restent hors Git. `NODE_ENV=production` désigne un build optimisé et n'accorde aucune autorisation pour l'environnement Production.
+Le lancement persistant via `npm run dev` ou `npm run build` puis `npm start` requiert une base migrée, un bucket S3 privé et les variables serveur décrites dans [.env.example](.env.example), [ADR-0002](docs/adr/0002-persistent-document-foundation.md) et [ADR-0004](docs/adr/0004-private-document-files.md). Les valeurs privées restent hors Git. `NODE_ENV=production` désigne un build optimisé et n'accorde aucune autorisation pour l'environnement Production.
 
 Le fichier Compose fournit uniquement un PostgreSQL local jetable, au port loopback 5435, avec mot de passe éphémère obligatoire. Le pilote automatisé n'utilise pas ce service : il réserve ses propres ports, conteneur et réseau. L'image Docker applicative reste construisible ; son déploiement et son raccordement à une base hébergée sont qualifiés séparément.
 

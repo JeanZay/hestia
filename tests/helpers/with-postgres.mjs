@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { POSTGRES_IMAGE, resolvePostgresImage, assertPostgresContainerImage } from './postgres-image.mjs';
+import { startS3Bench, stopS3Bench } from './s3-bench.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const runner = path.join(root, 'tests/helpers/run-application.mjs');
@@ -16,11 +17,13 @@ const user = 'hestia_test';
 const password = randomBytes(32).toString('hex');
 const authSecret = randomBytes(48).toString('hex');
 const testPassword = randomBytes(32).toString('hex');
-const secrets = [password, authSecret, testPassword];
+const accessKey = randomBytes(16).toString('hex');
+const secretKey = randomBytes(32).toString('hex');
+const secrets = [password, authSecret, testPassword, accessKey, secretKey];
 const redact = value => secrets.reduce((text, secret) => text.replaceAll(secret, '[EPHEMERAL_REDACTED]'), value);
 const systemKeys = new Set(['systemroot', 'windir', 'temp', 'tmp', 'tmpdir', 'path', 'pathext', 'comspec', 'home', 'userprofile', 'localappdata', 'appdata', 'programfiles', 'programfiles(x86)', 'programdata']);
 const systemEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => systemKeys.has(key.toLowerCase())));
-const dockerEnv = { ...systemEnv, POSTGRES_PASSWORD: password };
+const dockerEnv = { ...systemEnv, POSTGRES_PASSWORD: password, RUSTFS_ACCESS_KEY: accessKey, RUSTFS_SECRET_KEY: secretKey };
 const receipt = { runId, at: new Date().toISOString(), image, scope: 'ephemeral-local-only', repairPerformed: false };
 let network, container, child, interrupted = false, exitCode = 1;
 
@@ -141,8 +144,10 @@ try {
   Object.assign(receipt, { hostBinding: '127.0.0.1', port, database, storage: 'tmpfs-only' });
   console.log(JSON.stringify({ runId, database, host: '127.0.0.1', port, storage: receipt.storage }));
   if (interrupted) throw Error('RUN_INTERRUPTED');
+  const s3 = await startS3Bench({ docker, runId, network, accessKey, secretKey, interrupted: () => interrupted });
+  receipt.s3 = s3.receipt;
   exitCode = await runApplication({
-    ...systemEnv, DATABASE_URL: databaseUrl, AUTH_SECRET: authSecret, AUTH_BASE_URL: 'http://127.0.0.1:3210',
+    ...systemEnv, ...s3.env, DATABASE_URL: databaseUrl, AUTH_SECRET: authSecret, AUTH_BASE_URL: 'http://127.0.0.1:3210',
     HESTIA_ENVIRONMENT: 'local', HESTIA_TEST_PASSWORD: testPassword, HESTIA_TEST_RUN_ID: runId,
     NODE_ENV: 'test', BETTER_AUTH_TELEMETRY: 'false', NEXT_TELEMETRY_DISABLED: '1',
   });
@@ -153,6 +158,7 @@ try {
 } finally {
   stopChild();
   try {
+    receipt.s3Removed = stopS3Bench(docker, runId);
     // Recover exact owned IDs if a Docker command completed after its client timed out.
     const matches = docker(['ps', '-a', '--no-trunc', '--filter', `name=^/${runId}$`, '--format', '{{.ID}}']).split('\n').filter(Boolean);
     if (matches.length > 1) throw Error('OWNERSHIP_MISMATCH');
@@ -183,7 +189,7 @@ try {
       return after && after.state !== before.state ? [{ id: before.id, name: before.name, before: before.state, after: after.state }] : [];
     });
     receipt.preservationScope = 'Same container IDs, names and images; observed runtime state transitions do not establish causality.';
-    if (!receipt.preexistingPreserved || !receipt.containerRemoved || !receipt.networkRemoved) exitCode = 1;
+    if (!receipt.preexistingPreserved || !receipt.containerRemoved || !receipt.s3Removed || !receipt.networkRemoved) exitCode = 1;
   } catch {
     receipt.cleanup = 'FAILED_REQUIRES_RECONCILIATION';
     exitCode = 1;

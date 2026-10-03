@@ -17,7 +17,7 @@ Thumbs.db
 .data/
 private/
 backups/
-uploads/
+/uploads/
 *.pem
 *.key
 .claude/settings.local.json
