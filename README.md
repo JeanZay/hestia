@@ -6,53 +6,34 @@
 
 Hestia est un projet open source francophone sous [licence Apache-2.0](LICENSE), avec une instance privée et indépendante par foyer comme cible. Il vise une inbox simple, des originaux conservés intacts, une recherche avec provenance et une validation légère des informations incertaines.
 
-## État de cette fondation
+## État du développement
 
-**Démo locale synthétique uniquement — 12 septembre 2026.** La recherche, les filtres, les liens vers cinq originaux d'exemple, la validation ou le refus d'une date ambiguë et les connecteurs simulés fonctionnent en mémoire. Recharger la page réinitialise les choix. Aucun compte, document réel, OCR, IA externe, base de données ou stockage d'objets n'est connecté.
+**Connexion et dossiers persistants — tranche #17, 3 octobre 2026.** Un membre déjà admis peut se connecter, créer un dossier privé, le retrouver et le renommer. Les autorisations sont relues côté serveur ; le rôle d'administrateur global ne donne pas accès aux dossiers d'autrui. Le design reprend le hand-off Claude Design validé.
 
-Le [code source](https://github.com/JeanZay/hestia) et ses outils de contribution sont ouverts ; la démonstration n'est pas un coffre utilisable pour des données personnelles et ne doit pas être exposée sur Internet. La publication du code ne déploie aucun service Dev ou Production.
+Le dépôt de documents/photos, le partage et la corbeille sont les tranches suivantes. Le composant de démonstration historique est conservé dans le code, mais n'est plus la page d'accueil. Cette étape est qualifiée sur des données synthétiques locales ; la publication du code ne déploie aucun service Dev ou Production.
 
-## Essayer en local
+## Vérifier en local
 
-Prérequis : Node.js 24 LTS (version de référence dans `.node-version`) et npm 11.
+Prérequis : Node.js 24, npm 11, Docker avec moteur Linux et image PostgreSQL figée. Le pilote crée une base temporaire propre à chaque exécution ; il ne réutilise pas une connexion Dev présente dans l'environnement.
 
 ```sh
 npm ci --ignore-scripts
-npm run dev
-```
-
-Ouvrir [la démo locale](http://127.0.0.1:3000). Aucun fichier `.env` ni mot de passe n'est nécessaire. Le serveur écoute seulement l'ordinateur local. Le mode `demo` et l'environnement `dev` sont les seuls acceptés. `NODE_ENV=production` signifie un build optimisé de la démo, pas une autorisation d'utiliser l'environnement familial Production.
-
-Pour essayer l'artefact compilé :
-
-```sh
-npm run build
-npm start
-```
-
-Le démarrage prépare les ressources statiques de l'artefact autonome. Arrêter avec `Ctrl+C`.
-
-## Vérifier le lot
-
-```sh
 npx playwright install chromium
+docker pull postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
 npm run verify
 ```
 
-Sous Linux, `npx playwright install --with-deps chromium` installe aussi les dépendances système si nécessaires. Le navigateur est un outil de test local gratuit. `verify` enchaîne le guard, les tests du harnais, le lint, les types, les tests métier et d'intégrité des originaux, le build, puis les parcours navigateur desktop et mobile. Il s'arrête au premier échec. Les résultats et le manifeste SHA-256 sont conservés dans `artifacts/`, ignoré par Git.
+Sous Linux, utiliser `npx playwright install --with-deps chromium` si les bibliothèques système manquent. `verify` exécute les contrôles du harnais, le lint, les types, les tests métier, le build, l'intégration PostgreSQL puis les parcours navigateur desktop/mobile. Il s'arrête au premier échec. Le banc est supprimé après usage ; les preuves minimisées restent sous `artifacts/`, ignoré par Git.
 
-`npm audit --audit-level=high` consulte séparément les alertes du registre public ; cette étape nécessite le réseau. La [CI GitHub](https://github.com/JeanZay/hestia/actions) est configurée pour les contrôles Windows/Linux et la démo Docker, sur les runners standards du dépôt public. Elle ne déploie rien et ne publie ni image Docker ni paquet. Consulter chaque exécution pour son résultat réel ; les preuves locales ne valent pas réussite de la CI distante.
+Pour relancer seulement la partie applicative après un build : `npm run test:e2e`. Les comptes synthétiques et leurs secrets temporaires sont provisionnés automatiquement, sans fichier de configuration privé. Aucun document familial ne doit être ajouté aux fixtures.
 
-## Voie Docker locale
+La [CI GitHub](https://github.com/JeanZay/hestia/actions) configure la qualification complète sous Linux. Windows contrôle le harnais, le lint, les types, les tests métier et le build ; ce job ne revendique pas les tests SQL/navigateur. Un job distinct construit l'image Docker sans la publier. Les résultats distants doivent être consultés sur chaque exécution ; une preuve locale ne vaut pas PASS distant.
 
-```sh
-docker compose up --build --detach --wait app
-docker compose down
-```
+## Configuration de l'application
 
-Le port 3000 reste limité à `127.0.0.1`. Le conteneur applicatif est sans privilèges et sans écriture persistante. Son réseau bridge permet l'accès depuis l'hôte ; il n'est pas présenté comme un pare-feu de sortie. La démo ne contient aucun appel à un service externe. Ne pas la faire tourner simultanément avec la démo Node sur le même port.
+Le lancement persistant via `npm run dev` ou `npm run build` puis `npm start` requiert une base migrée et les variables serveur décrites dans [.env.example](.env.example) et [ADR-0002](docs/adr/0002-persistent-document-foundation.md). Les valeurs privées restent hors Git. `NODE_ENV=production` désigne un build optimisé et n'accorde aucune autorisation pour l'environnement Production.
 
-Un profil `data-sandbox` prépare un PostgreSQL 17 jetable pour les futurs tests SQL. Il n'a ni port hôte ni volume durable, et l'application ne l'utilise pas. Son authentification `trust` est réservée à ce réseau local isolé et aux données fictives ; ce n'est pas une configuration de service familial. Le stockage compatible S3 fait partie de l'architecture cible, sans serveur ou fournisseur choisi dans ce lot.
+Le fichier Compose fournit uniquement un PostgreSQL local jetable, au port loopback 5435, avec mot de passe éphémère obligatoire. Le pilote automatisé n'utilise pas ce service : il réserve ses propres ports, conteneur et réseau. L'image Docker applicative reste construisible ; son déploiement et son raccordement à une base hébergée sont qualifiés séparément.
 
 ## Repères
 

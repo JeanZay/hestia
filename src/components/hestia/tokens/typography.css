@@ -1,0 +1,14 @@
+/* Clé de voûte 1.0 — typographie. Titres : Bricolage Grotesque 700. Tout le reste : Atkinson Hyperlegible. Pas d'italique. */
+:root {
+  --cdv-font-title: 'Bricolage Grotesque', system-ui, sans-serif;
+  --cdv-font-text: 'Atkinson Hyperlegible', system-ui, sans-serif;
+  --cdv-h1-size: 44px; --cdv-h1-line: 1.05; --cdv-h1-tracking: -0.02em;
+  --cdv-h2-size: 30px; --cdv-h2-line: 1.1;  --cdv-h2-tracking: -0.02em;
+  --cdv-h3-size: 22px; --cdv-h3-line: 1.15; --cdv-h3-tracking: -0.01em;
+  --cdv-lead-size: 18px; --cdv-lead-line: 1.5;
+  --cdv-body-size: 16px; --cdv-body-line: 1.5;
+  --cdv-label-size: 16px; --cdv-label-weight: 700;
+  --cdv-small-size: 14px; --cdv-small-line: 1.45;   /* minimum absolu */
+  --cdv-overline-size: 13px; --cdv-overline-tracking: 0.08em;
+  --cdv-weight-regular: 400; --cdv-weight-bold: 700;
+}

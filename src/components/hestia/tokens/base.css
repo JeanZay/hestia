@@ -1,0 +1,19 @@
+/* Clé de voûte 1.0 — règles globales minimales. */
+.cdv-root {
+  font-family: var(--cdv-font-text);
+  font-size: var(--cdv-body-size);
+  line-height: var(--cdv-body-line);
+  color: var(--cdv-ink);
+  background: var(--cdv-bg);
+  -webkit-font-smoothing: antialiased;
+}
+.cdv-root a { color: var(--cdv-text-link); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
+.cdv-root a:hover { color: var(--cdv-action-hover); }
+/* Focus : anneau action 3 px séparé de 2 px — identique sur tous les composants. */
+.cdv-focus:focus-visible { outline: var(--cdv-focus-w) solid var(--cdv-focus); outline-offset: var(--cdv-focus-offset); }
+.cdv-focus:focus:not(:focus-visible) { outline: none; }
+@keyframes cdv-spin { to { transform: rotate(360deg); } }
+@keyframes cdv-indeterminate { 0% { left: -30%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .cdv-root *, .cdv-root *::before, .cdv-root *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

@@ -4,16 +4,13 @@ import { resolve } from 'node:path';
 
 const [command, ...args] = process.argv.slice(2);
 if (!['dev', 'build', 'start'].includes(command)) throw new Error('Commande Next inconnue.');
-if ((process.env.HESTIA_MODE ?? 'demo') !== 'demo' || (process.env.HESTIA_ENV ?? 'dev') !== 'dev') {
-  throw new Error('Fondation locale uniquement : mode demo, environnement dev requis.');
-}
-const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1', HESTIA_MODE: 'demo', HESTIA_ENV: 'dev' };
+const env = { ...process.env, NEXT_TELEMETRY_DISABLED: '1' };
 let entry = resolve('node_modules/next/dist/bin/next');
 let parameters = [command, ...args];
 if (command === 'dev') parameters.push('--hostname', '127.0.0.1');
 if (command === 'start') {
   entry = resolve('.next/standalone/server.js');
-  if (!existsSync(entry)) throw new Error('Construire la démo avec npm run build avant de la démarrer.');
+  if (!existsSync(entry)) throw new Error('Construire Hestia avec npm run build avant de démarrer.');
   cpSync('public', '.next/standalone/public', { recursive: true });
   cpSync('.next/static', '.next/standalone/.next/static', { recursive: true });
   const portIndex = args.indexOf('--port');

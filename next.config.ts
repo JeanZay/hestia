@@ -1,9 +1,5 @@
 import type { NextConfig } from "next";
 
-if ((process.env.HESTIA_MODE ?? "demo") !== "demo" || (process.env.HESTIA_ENV ?? "dev") !== "dev") {
-  throw new Error("Cette fondation accepte uniquement HESTIA_MODE=demo et HESTIA_ENV=dev.");
-}
-
 const config: NextConfig = {
   output: "standalone",
   poweredByHeader: false,

@@ -1,5 +1,5 @@
-import { DemoApp } from "../components/demo-app";
+import { DocumentsApp } from "@/components/hestia/documents-app";
 
 export default function Home() {
-  return <DemoApp />;
+  return <DocumentsApp />;
 }

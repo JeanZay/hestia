@@ -5,9 +5,11 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  workers: 2,
+  workers: 1,
+  timeout: 90_000,
   reporter: [["list"], ["html", { open: "never" }]],
-  use: { baseURL: "http://127.0.0.1:3210", trace: "retain-on-failure" },
+  // Authenticated traces can contain cookies and passwords, even in synthetic QA.
+  use: { baseURL: "http://127.0.0.1:3210", trace: "off" },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
     { name: "mobile", use: { ...devices["iPhone 13"], defaultBrowserType: "chromium" } }
