@@ -42,10 +42,14 @@ const panel = (page: Page) => page.getByRole("complementary", { name: "Ajout de 
 const fileList = async (page: Page, id: string) => (await (await page.request.get(`/api/hestia/documents?folderId=${id}`)).json()).documents;
 
 test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async ({ page, isMobile }) => {
+  const suffix = randomUUID().slice(0, 8);
+  const label = `Étiquette synthétique ${suffix}`;
+  const invoice = `Facture synthétique ${suffix}`;
+  const renamed = `Étiquette corrigée ${suffix}`;
   const id = await folder(page);
   await selectFiles(page, "tests/fixtures/documents/synthetic.png", isMobile);
   const fields = panel(page).getByLabel("Titre du document");
-  await fields.nth(0).fill("Étiquette synthétique");
+  await fields.nth(0).fill(label);
   const more = page.waitForEvent("filechooser");
   await panel(page).getByRole("button", {name:"Ajouter d’autres fichiers",exact:true}).click();
   const morePicker = await more;
@@ -55,8 +59,8 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
     await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
   }
   await morePicker.setFiles("tests/fixtures/documents/synthetic.pdf");
-  await expect(fields.nth(0)).toHaveValue("Étiquette synthétique");
-  await fields.nth(1).fill("Facture synthétique");
+  await expect(fields.nth(0)).toHaveValue(label);
+  await fields.nth(1).fill(invoice);
   const cancelled = page.waitForEvent("filechooser");
   await panel(page).getByRole("button", {name:"Ajouter d’autres fichiers",exact:true}).click();
   const cancelledPicker = await cancelled;
@@ -69,16 +73,16 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
   await cancelledPicker.element().dispatchEvent("cancel");
   await cancelCheck;
   await expect(fields).toHaveCount(2);
-  await expect(fields.nth(0)).toHaveValue("Étiquette synthétique");
-  await expect(fields.nth(1)).toHaveValue("Facture synthétique");
+  await expect(fields.nth(0)).toHaveValue(label);
+  await expect(fields.nth(1)).toHaveValue(invoice);
   await panel(page).getByRole("button", { name: "Enregistrer", exact: true }).click();
   await expect(panel(page).getByText("Document enregistré.", { exact: true })).toHaveCount(2, { timeout: 30_000 });
   await panel(page).getByRole("button", { name: "Terminé", exact: true }).click();
   const documents = await fileList(page, id);
   expect(documents).toHaveLength(2);
-  await page.getByRole("main").getByRole("button", { name: /Étiquette synthétique/ }).click();
+  await page.getByRole("main").getByRole("button", { name: new RegExp(label) }).click();
   const detail = page.getByRole("complementary", { name: "Document", exact: true });
-  await expect(detail.getByRole("img", { name: "Aperçu de Étiquette synthétique" })).toBeVisible();
+  await expect(detail.getByRole("img", { name: `Aperçu de ${label}` })).toBeVisible();
   await expect(detail.getByText("synthetic.png", { exact: true })).toBeVisible();
   const downloaded = page.waitForEvent("download");
   await detail.getByRole("button", { name: "Télécharger", exact: true }).click();
@@ -86,19 +90,19 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
   const path = await download.path();
   expect(createHash("sha256").update(await readFile(path!)).digest("hex")).toBe(documents.find((d: {mediaType: string}) => d.mediaType === "image/png").sha256);
   await detail.getByRole("button", { name: "Renommer", exact: true }).click();
-  await detail.getByLabel("Titre du document").fill("Étiquette corrigée");
+  await detail.getByLabel("Titre du document").fill(renamed);
   await detail.getByRole("button", { name: "Enregistrer le titre", exact: true }).click();
-  await expect(detail.getByRole("heading", { name: "Étiquette corrigée", exact: true })).toBeVisible();
+  await expect(detail.getByRole("heading", { name: renamed, exact: true })).toBeVisible();
   await detail.getByRole("button", { name: "Fermer", exact: true }).click();
-  await page.getByRole("main").getByRole("button", { name: /Facture synthétique/ }).click();
-  await expect(detail.getByRole("img", { name: /Aperçu de Facture synthétique, page 1/ })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("main").getByRole("button", { name: new RegExp(invoice) }).click();
+  await expect(detail.getByRole("img", { name: new RegExp(`Aperçu de ${invoice}, page 1`) })).toBeVisible({ timeout: 30_000 });
   await expect(detail.locator("canvas[data-rendered=true]")).toBeVisible();
   expect(await page.locator("iframe").count()).toBe(0);
   await page.screenshot({ path: test.info().outputPath("file-pdf.png"), fullPage: true });
   await detail.getByRole("button", { name: "Fermer", exact: true }).click();
-  if (isMobile) { await page.getByRole("button", {name: "Rechercher", exact: true}).click(); await page.getByLabel("Rechercher", {exact: true}).fill("etiquette corrigee"); }
-  else await page.getByLabel("Rechercher un document ou un dossier", { exact: true }).fill("etiquette corrigee");
-  await expect(page.getByRole("main").getByRole("button", { name: /Étiquette corrigée/ })).toBeVisible();
+  if (isMobile) { await page.getByRole("button", {name: "Rechercher", exact: true}).click(); await page.getByLabel("Rechercher", {exact: true}).fill(`etiquette corrigee ${suffix}`); }
+  else await page.getByLabel("Rechercher un document ou un dossier", { exact: true }).fill(`etiquette corrigee ${suffix}`);
+  await expect(page.getByRole("main").getByRole("button", { name: new RegExp(renamed) })).toBeVisible();
   await page.getByLabel("Rechercher", {exact: true}).fill("aucun-resultat-" + randomUUID());
   await expect(page.getByRole("heading", {name: "Aucun résultat", exact: true})).toBeVisible();
   await page.route("**/api/hestia/documents?**", route => route.fulfill({status: 503, json: {error: {message: "Service indisponible."}}}));
