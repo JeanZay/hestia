@@ -25,6 +25,7 @@ const steps = [
   ['lint', ['node_modules/eslint/bin/eslint.js', '.', '--max-warnings=0']],
   ['types', ['node_modules/typescript/bin/tsc', '--noEmit']],
   ['unit', ['node_modules/vitest/vitest.mjs', 'run']],
+  ['dependency-policy', ['scripts/dependency-audit.mjs']],
   ['build', ['scripts/run-next.mjs', 'build']],
   ['browser', ['scripts/e2e.mjs']]
 ].map(([name, args]) => ({ name, args, ...(name === 'lifecycle-active' && !checkpoint ? { required: false, skipReason: 'no-checkpoint-provided' } : {}) }));

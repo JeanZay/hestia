@@ -1,0 +1,1 @@
+These browser scenarios describe the preserved historical synthetic demonstration, replaced at / by the approved Documents application. They are retained as historical source and are not executed against the application. The original domain unit tests still run. Current browser qualification is tests/e2e/documents.spec.ts with a fresh PostgreSQL database.

@@ -34,7 +34,8 @@ function noLinks(absolute) {
   return path.resolve(absolute);
 }
 function relative(value) {
-  if (typeof value !== 'string' || !value || /[\\:\0*?\[\]]/.test(value) || path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || value.split('/').some((part) => !part || part === '.' || part === '..' || /[. ]$/.test(part))) fail('path-outside-primary');
+  // Literal paths, never glob-expanded: Next dynamic routes legitimately use [].
+  if (typeof value !== 'string' || !value || /[\\:\0*?]/.test(value) || path.posix.isAbsolute(value) || path.win32.isAbsolute(value) || value.split('/').some((part) => !part || part === '.' || part === '..' || /[. ]$/.test(part))) fail('path-outside-primary');
   return value;
 }
 function git(root, args, accepted = [0]) {

@@ -28,7 +28,9 @@ export function computeCoverageDigest(coverage) { return hash(JSON.stringify(can
 
 /** Relative paths only, with one unambiguous spelling on Windows and POSIX. */
 function relativePath(value) {
-  if (typeof value !== 'string' || !value || value.includes('\\') || /[:\0*?\[\]]/.test(value) || path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) throw failure('path-outside-root');
+  // Brackets are literal filesystem characters (including Next dynamic routes).
+  // These paths are never expanded as glob patterns or passed through a shell.
+  if (typeof value !== 'string' || !value || value.includes('\\') || /[:\0*?]/.test(value) || path.posix.isAbsolute(value) || path.win32.isAbsolute(value)) throw failure('path-outside-root');
   const parts = value.split('/');
   if (parts.some((part) => !part || part === '.' || part === '..' || /[. ]$/.test(part))) throw failure('path-outside-root');
   return value;

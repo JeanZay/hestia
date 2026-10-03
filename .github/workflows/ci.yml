@@ -1,4 +1,4 @@
-name: Foundation checks
+name: Hestia checks
 on:
   push:
     branches: [develop, main]
@@ -14,15 +14,11 @@ concurrency:
 
 jobs:
   verify:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: verify (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      HESTIA_MODE: demo
-      HESTIA_ENV: dev
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,20 +26,36 @@ jobs:
           node-version-file: .node-version
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
+      - name: Fetch pinned disposable PostgreSQL image
+        run: docker pull postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
       - run: npm run verify
-      - name: Dependency audit (high and critical)
-        run: npm audit --audit-level=high
       - name: Verification summary
         if: always()
         run: node scripts/ci-summary.mjs
 
-  docker:
+  windows:
+    name: verify (windows-latest)
+    # Hosted Windows runners have no Linux Docker engine. SQL + browser run
+    # above on Linux; Windows runs these declared checks without claiming E2E.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:harness
+      - run: npm run build
+
+  docker-build:
+    name: docker
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose up --build --detach --wait app
-      - name: Check synthetic container
-        run: curl --fail http://127.0.0.1:3000/api/health
-      - if: always()
-        run: docker compose down
+      - name: Build portable image (no deployment or runtime qualification)
+        run: docker build --tag hestia-ci .

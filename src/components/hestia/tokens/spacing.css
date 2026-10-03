@@ -1,0 +1,20 @@
+/* Clé de voûte 1.0 — espacement (base 4), rayons, traits, tailles, mouvement, mise en page. */
+:root {
+  --cdv-space-1: 4px; --cdv-space-2: 8px; --cdv-space-3: 12px; --cdv-space-4: 16px;
+  --cdv-space-5: 24px; --cdv-space-6: 32px; --cdv-space-7: 48px; --cdv-space-8: 64px;
+  --cdv-radius-s: 4px;   /* badges, vignettes */
+  --cdv-radius-m: 6px;   /* boutons, champs */
+  --cdv-radius-l: 8px;   /* cartes, panneaux */
+  --cdv-border-w: 1.5px;
+  --cdv-border-w-error: 2px;
+  --cdv-focus-w: 3px; --cdv-focus-offset: 2px;
+  --cdv-target: 44px;          /* cible tactile minimale */
+  --cdv-control-h: 48px;       /* bouton */
+  --cdv-control-h-compact: 40px;
+  --cdv-field-h: 52px;         /* champ */
+  --cdv-row-h: 56px;           /* ligne de liste / tableau */
+  --cdv-icon: 20px; --cdv-icon-s: 16px; --cdv-icon-stroke: 2;
+  --cdv-duration: 150ms; --cdv-ease: ease-out;
+  --cdv-nav-w: 232px; --cdv-rail-w: 72px; --cdv-detail-w: 380px; --cdv-text-max: 960px;
+  --cdv-bp-tablet: 600px; --cdv-bp-desktop: 1024px;
+}

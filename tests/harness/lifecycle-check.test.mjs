@@ -102,6 +102,22 @@ function withFixture(run) {
 function check(fixture, action = 'execute') { return validateLifecycle(fixture.checkpoint, { root: fixture.directory, now, action }); }
 function has(result, code) { assert.ok(result.diagnostics.some((item) => item.code === code), JSON.stringify(result.diagnostics)); }
 
+test('literal Next route brackets remain in the exact candidate and changed bytes are detected', () => withFixture((fixture) => {
+  const route = put(fixture.directory, 'src/app/api/folders/[id]/route.ts', 'export const runtime = "nodejs";\n');
+  const manifestPath = fixture.checkpoint.candidate.manifest.path;
+  const manifest = JSON.parse(readFileSync(path.join(fixture.directory, manifestPath), 'utf8'));
+  manifest.files.push(route);
+  manifest.files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  manifest.sourceDigest = sha(JSON.stringify(manifest.files));
+  fixture.checkpoint.candidate.manifest = put(fixture.directory, manifestPath, manifest);
+  fixture.checkpoint.candidate.sourceDigest = manifest.sourceDigest;
+  assert.equal(check(fixture).executionReadiness, true);
+  put(fixture.directory, route.path, 'export const runtime = "edge";\n');
+  const changed = check(fixture, 'resume');
+  assert.equal(changed.resumable, false);
+  has(changed, 'candidate-file-changed');
+}));
+
 test('synthetic template resumes but cannot plan or execute, with no implicit consent', () => {
   const result = inspectCheckpoint('harness/templates/lifecycle.template.json', { root, now });
   assert.equal(result.valid, true, JSON.stringify(result.diagnostics));

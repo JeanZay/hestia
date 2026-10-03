@@ -26,13 +26,16 @@
     "evidence:snapshot": "node scripts/evidence.mjs"
   },
   "dependencies": {
+    "better-auth": "1.7.6",
     "next": "16.3.8",
+    "pg": "8.16.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "^24.0.0",
+    "@types/pg": "8.15.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "eslint": "9.39.5",

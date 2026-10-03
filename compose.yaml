@@ -1,45 +1,18 @@
-name: hestia-foundation
+name: hestia-local
 services:
-  app:
-    build: .
-    ports:
-      - "127.0.0.1:3000:3000"
-    environment:
-      HESTIA_MODE: demo
-      HESTIA_ENV: dev
-      NEXT_TELEMETRY_DISABLED: "1"
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(async r=>{const b=await r.json();process.exit(r.ok&&b.mode==='demo'&&b.synthetic===true?0:1)}).catch(()=>process.exit(1))"]
-      interval: 15s
-      timeout: 5s
-      retries: 4
-      start_period: 15s
-    networks: [demo]
-
-  # Bac à sable jetable pour les futurs tests SQL, sans donnée privée.
-  # Aucun port hôte, aucun volume durable, aucun secret, aucune connexion applicative.
+  # Optional disposable local database. Automated QA uses its own labelled driver.
   postgres:
-    image: postgres:17.11-bookworm
-    profiles: [data-sandbox]
+    image: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     environment:
-      POSTGRES_DB: hestia_synthetic
-      POSTGRES_USER: hestia_synthetic
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: hestia_test_local
+      POSTGRES_USER: hestia_test
+      POSTGRES_PASSWORD: ${HESTIA_LOCAL_DB_PASSWORD:?Provide an ephemeral local password}
+    ports:
+      - "127.0.0.1:5435:5432"
     tmpfs:
       - /var/lib/postgresql/data
-    networks: [data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hestia_synthetic -d hestia_synthetic"]
-      interval: 10s
+      test: ["CMD", "pg_isready", "--host", "127.0.0.1", "-U", "hestia_test", "-d", "hestia_test_local"]
+      interval: 5s
       timeout: 5s
       retries: 5
-
-networks:
-  demo: {}
-  data:
-    internal: true
