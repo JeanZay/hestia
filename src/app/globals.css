@@ -135,8 +135,9 @@ button { cursor: pointer; }
 .h-file-metadata dt { font-size:14px;color:var(--cdv-ink-3); }
 .h-file-metadata dd { margin:0;overflow-wrap:anywhere; }
 .h-file-panel-host { display:contents; }
-.h-top-search { flex:1;max-width:400px;min-width:120px;height:36px;border:1.5px solid var(--cdv-inverse-ink-2);border-radius:var(--cdv-radius-m);padding:0 12px;background:transparent;color:var(--cdv-inverse-ink);font-size:14px; }
-.h-top-search::placeholder { color:var(--cdv-inverse-ink-2); }
+.h-top-search { display:flex;align-items:center;gap:10px;height:36px;width:320px;min-width:120px;margin-left:auto;padding:0 12px;border-radius:var(--cdv-radius-m);background:#FFFFFF;color:#4B5865;font-size:15px;box-sizing:border-box; }
+.h-top-search input { border:0;outline:none;background:transparent;font:inherit;color:#111C26;flex:1;min-width:0; }
+
 @media (max-width:1023px) { .h-workspace:has(.h-files-panel) > .h-main { display:none; } }
 @media (max-width:599px) { .h-top-search { display:none; } }
 .h-pdf-page { width:100%;flex:none;position:relative;background:white; }

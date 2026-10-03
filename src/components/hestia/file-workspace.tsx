@@ -3,14 +3,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { requestNativeCapture, type CaptureResult } from "./native-capture";
+import { requestNativeCapture, requestNativeImport, type CaptureResult } from "./native-capture";
 import { Banner, Button, EmptyState, Icon, PageHeader, Skeleton, TextField } from "./design-system";
 
 export type FileDocument = { id: string; folderId: string; title: string; fileName: string; mediaType: string; size: number; sha256: string; createdAt: string; uploadedByName: string; source: "import" | "camera"; version: number; previewSupported: boolean; capabilities: string[] };
 type Folder = { id: string; name: string; capabilities: string[] };
 type Draft = { id: string; file: File; title: string; source: "import" | "camera"; status: "ready" | "sending" | "done" | "failed" | "duplicate" | "rejected"; progress: number; operation?: string; hash?: string; keepDuplicate: boolean; error?: string };
 const MAX = 20 * 1024 * 1024;
-const ACCEPT = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif";
 class FileError extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 async function api<T>(path: string, signal: AbortSignal, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch(`/api/hestia${path}`, { method, signal, credentials: "same-origin", cache: "no-store", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -30,6 +29,13 @@ function mobileCamera() {
 }
 function Thumb({ type }: { type: string }) { return <span className={`h-file-thumb ${type === "application/pdf" ? "h-file-pdf" : "h-file-image"}`} aria-hidden="true">{type === "application/pdf" ? "PDF" : "IMG"}</span>; }
 
+function prepareDrafts(files: File[], source: "import" | "camera"): Draft[] {
+  return files.map(file => {
+      const error = file.size > MAX ? "Ce fichier dépasse 20 Mio." : file.size === 0 ? "Ce fichier est vide." : !/\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(file.name) ? "Format refusé. Choisissez un PDF ou une photo JPEG, PNG, WebP, HEIC ou HEIF." : undefined;
+      return { id: crypto.randomUUID(), file, title: source === "camera" ? `Photo du ${new Date().toLocaleDateString("fr-FR")}` : file.name.replace(/\.[^.]+$/, "").slice(0, 200), source, status: error ? "rejected" : "ready", error, progress: 0, keepDuplicate: false };
+    });
+}
+
 export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, query, onQuery, onFolder, initialCapture }: { initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
   const [documents, setDocuments] = useState<FileDocument[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +54,6 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
   const [busy, setBusy] = useState(false);
   const [panelError, setPanelError] = useState<string>();
   const [over, setOver] = useState(false);
-  const input = useRef<HTMLInputElement>(null), imageInput = useRef<HTMLInputElement>(null);
   const controller = useRef(new AbortController());
   const previewController = useRef<AbortController | null>(null);
   const urls = useRef(new Set<string>());
@@ -74,13 +79,14 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
     controller.current = new AbortController();
     const liveUrls = urls.current;
     Promise.resolve().then(() => { if (!controller.current.signal.aborted) setCamera(mobileCamera()); });
-    return () => { controller.current.abort(); previewController.current?.abort(); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
+    return () => { controller.current.abort(); previewController.current?.abort(); for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
   }, []);
   useEffect(() => { const timer = setTimeout(() => void reload(), query === undefined ? 0 : 180); return () => clearTimeout(timer); }, [reload, query]);
 
   useEffect(() => {
     if (!initialCapture) return;
     const timer = setTimeout(() => {
+      if (initialCapture.files) { draftsRef.current = prepareDrafts(initialCapture.files, "import"); setDrafts(draftsRef.current); setPanel("deposit"); return; }
       setPanel("capture");
       if (initialCapture.file && initialCapture.file.size <= MAX) { const url = URL.createObjectURL(initialCapture.file); urls.current.add(url); setCapture({file: initialCapture.file, url}); }
       else { setCaptureStatus("cancelled"); if (initialCapture.file) setPanelError("Ce fichier dépasse 20 Mio."); }
@@ -98,10 +104,7 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
   function addFiles(files: File[], source: "import" | "camera" = "import") {
     if (!folder || running.current) return;
     revoke(capture?.url); setCapture(null); setPanel("deposit"); setPanelError(undefined);
-    const added: Draft[] = files.map(file => {
-      const error = file.size > MAX ? "Ce fichier dépasse 20 Mio." : file.size === 0 ? "Ce fichier est vide." : !/\.(pdf|jpe?g|png|webp|heic|heif)$/i.test(file.name) ? "Format refusé. Choisissez un PDF ou une photo JPEG, PNG, WebP, HEIC ou HEIF." : undefined;
-      return { id: crypto.randomUUID(), file, title: source === "camera" ? `Photo du ${new Date().toLocaleDateString("fr-FR")}` : file.name.replace(/\.[^.]+$/, "").slice(0, 200), source, status: error ? "rejected" : "ready", error, progress: 0, keepDuplicate: false };
-    });
+    const added = prepareDrafts(files, source);
     draftsRef.current = [...draftsRef.current, ...added]; setDrafts(draftsRef.current);
   }
   async function remove(draft: Draft) {
@@ -126,7 +129,7 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
           const sha256 = draft.hash || await digest(await draft.file.arrayBuffer());
           if (signal.aborted) break;
           updateDraft(draft.id, { hash: sha256 });
-          const { operation } = await api<{ operation: { id: string; chunkSize: number; status: string } }>("/uploads", signal, "POST", { folderId: folder.id, idempotencyKey: draft.id, fileName: draft.file.name, title: draft.title.trim(), size: draft.file.size, mediaType: draft.file.type || ({ heic: "image/heic", heif: "image/heif" }[draft.file.name.split(".").pop()!.toLowerCase()] || "application/octet-stream"), sha256, source: draft.source });
+          const { operation } = await api<{ operation: { id: string; chunkSize: number; status: string } }>("/uploads", signal, "POST", { folderId: folder.id, idempotencyKey: draft.id, fileName: draft.file.name, title: draft.title.trim(), size: draft.file.size, mediaType: draft.file.type || ({ pdf:"application/pdf", jpg:"image/jpeg", jpeg:"image/jpeg", png:"image/png", webp:"image/webp", heic: "image/heic", heif: "image/heif" }[draft.file.name.split(".").pop()!.toLowerCase()] || "application/octet-stream"), sha256, source: draft.source });
           updateDraft(draft.id, { operation: operation.id });
           if (operation.status === "uploading") {
             const chunk = Math.min(operation.chunkSize, 2 * 1024 * 1024);
@@ -169,6 +172,7 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
     return bytes;
   }
   async function openDocument(doc: FileDocument) {
+    if (running.current) return;
     closePanel(); setPanel("document"); setActive(doc); setPreviewState("loading");
     const current = new AbortController(); previewController.current = current;
     try {
@@ -213,19 +217,17 @@ export function FileWorkspace({ folder, folders, host, onAccessLost, onUpdated, 
       {drafts.map(d => <div key={d.id} className={`h-upload-item h-upload-${d.status}`}>
         {d.status === "ready" ? <><div className="h-upload-heading"><Thumb type={d.file.type}/><span>{d.file.name} · {sizeLabel(d.file.size)}</span><Button variant="tertiary" compact onClick={() => void remove(d)}>Retirer</Button></div><TextField label="Titre du document" value={d.title} maxLength={200} error={d.error} hint="Prérempli depuis le nom du fichier. Le fichier lui-même ne change pas." onChange={e => updateDraft(d.id, { title: e.target.value })}/></> : <><strong>{d.title || d.file.name}</strong>{d.status === "sending" && <><div role="progressbar" aria-label={`Envoi de ${d.title}`} aria-valuenow={d.progress} aria-valuemin={0} aria-valuemax={100} className="h-file-progress"><span style={{ width: `${d.progress}%` }}/></div><span>Envoi en cours… {d.progress} %</span></>}{d.status === "done" && <span role="status"><Icon name="check"/> Document enregistré.</span>}{d.status === "duplicate" && <><Banner title="Déjà présent.">Un document identique est déjà consultable dans ce dossier.</Banner><div className="h-actions"><Button variant="secondary" compact disabled={busy} onClick={() => void remove(d)}>Ne pas l’ajouter</Button><Button variant="tertiary" compact disabled={busy} onClick={() => { updateDraft(d.id, { keepDuplicate: true }); void save([d.id]); }}>L’ajouter quand même</Button></div></>}{d.status === "rejected" && <><Banner tone="danger" title="Fichier refusé.">{d.error}</Banner><Button variant="tertiary" compact disabled={busy} onClick={() => void remove(d)}>Retirer</Button></>}{d.status === "failed" && <><Banner tone="danger" title="Sans confirmation.">{d.error} Le document a peut-être été enregistré ; réessayer ne créera pas de deuxième exemplaire.</Banner><Button variant="secondary" disabled={busy} onClick={() => void save([d.id])}>Vérifier et réessayer</Button><Button variant="tertiary" disabled={busy} onClick={() => void remove(d)}>Annuler</Button></>}</>}
       </div>)}
-      {!drafts.length && <div className={`h-dropzone ${over ? "h-dropzone-over" : ""}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={e => { e.preventDefault(); setOver(false); addFiles(Array.from(e.dataTransfer.files)); }}><Icon name="upload" size={36}/><strong>{over ? "Relâchez pour déposer les fichiers" : "Glissez vos fichiers ici"}</strong><span>ou</span><Button variant="secondary" onClick={() => input.current?.click()}>Choisir des fichiers</Button><span className="h-hint">PDF ou photos · 20 Mio par fichier</span></div>}
-      <div className="h-actions">{drafts.some(d => d.status === "ready") && <Button icon="check" loading={busy} onClick={() => void save()}>Enregistrer</Button>}{drafts.length > 0 && drafts.every(d => d.status === "done") && <Button icon="check" onClick={closePanel}>Terminé</Button>}<Button variant="secondary" icon="plus" disabled={busy || drafts.some(d => ["failed", "duplicate"].includes(d.status))} onClick={() => input.current?.click()}>Ajouter d’autres fichiers</Button><Button variant="tertiary" disabled={busy} onClick={closePanel}>Annuler</Button></div>
+      {!drafts.length && <div className={`h-dropzone ${over ? "h-dropzone-over" : ""}`} onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={e => { e.preventDefault(); setOver(false); addFiles(Array.from(e.dataTransfer.files)); }}><Icon name="upload" size={36}/><strong>{over ? "Relâchez pour déposer les fichiers" : "Glissez vos fichiers ici"}</strong><span>ou</span><Button variant="secondary" onClick={() => folder && requestNativeImport(folder.id)}>Choisir des fichiers</Button><span className="h-hint">PDF ou photos · 20 Mio par fichier</span></div>}
+      <div className="h-actions">{drafts.some(d => d.status === "ready") && <Button icon="check" loading={busy} onClick={() => void save()}>Enregistrer</Button>}{drafts.length > 0 && drafts.every(d => d.status === "done") && <Button icon="check" onClick={closePanel}>Terminé</Button>}<Button variant="secondary" icon="plus" disabled={busy || drafts.some(d => ["failed", "duplicate"].includes(d.status))} onClick={() => folder && requestNativeImport(folder.id)}>Ajouter d’autres fichiers</Button><Button variant="tertiary" disabled={busy} onClick={closePanel}>Annuler</Button></div>
     </div>}
-    {panel === "capture" && <div className="h-file-stack"><h2>Prendre une photo</h2>{capture ? <><div className="h-preview h-preview-image">{captureFailed ? <p>Aperçu indisponible</p> : <img src={capture.url} alt="Aperçu de la photo prise" onError={() => setCaptureFailed(true)}/>}</div><p>Vérifiez que la photo est nette et lisible avant de l’ajouter.</p><div className="h-actions"><Button icon="check" onClick={() => addFiles([capture.file], "camera")}>Utiliser cette photo</Button><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre</Button><Button variant="tertiary" onClick={() => { revoke(capture.url); setCapture(null); setCaptureStatus("cancelled"); }}>Annuler</Button></div></> : <><Banner title={captureStatus === "waiting" ? "L’appareil photo de votre téléphone s’ouvre." : captureStatus === "cancelled" ? "Prise de photo annulée." : "Appareil photo indisponible."}>{captureStatus === "waiting" ? "Revenez ici après la prise de vue." : "Rien n’a été ajouté au dossier."}</Banner><div className="h-actions"><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre une photo</Button><Button variant="secondary" onClick={() => imageInput.current?.click()}>Choisir une image existante</Button><Button variant="tertiary" onClick={closePanel}>Annuler</Button></div></>}</div>}
+    {panel === "capture" && <div className="h-file-stack"><h2>Prendre une photo</h2>{capture ? <><div className="h-preview h-preview-image">{captureFailed ? <p>Aperçu indisponible</p> : <img src={capture.url} alt="Aperçu de la photo prise" onError={() => setCaptureFailed(true)}/>}</div><p>Vérifiez que la photo est nette et lisible avant de l’ajouter.</p><div className="h-actions"><Button icon="check" onClick={() => addFiles([capture.file], "camera")}>Utiliser cette photo</Button><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre</Button><Button variant="tertiary" onClick={() => { revoke(capture.url); setCapture(null); setCaptureStatus("cancelled"); }}>Annuler</Button></div></> : <><Banner title={captureStatus === "waiting" ? "L’appareil photo de votre téléphone s’ouvre." : captureStatus === "cancelled" ? "Prise de photo annulée." : "Appareil photo indisponible."}>{captureStatus === "waiting" ? "Revenez ici après la prise de vue." : "Rien n’a été ajouté au dossier."}</Banner><div className="h-actions"><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre une photo</Button><Button variant="secondary" onClick={() => folder && requestNativeImport(folder.id, true)}>Choisir une image existante</Button><Button variant="tertiary" onClick={closePanel}>Annuler</Button></div></>}</div>}
     {panel === "document" && active && <div className="h-file-stack"><div className="h-upload-heading"><Thumb type={active.mediaType}/><h2>{active.title}</h2></div>{title !== null && <form onSubmit={e => { e.preventDefault(); void rename(); }} className="h-file-stack"><TextField label="Titre du document" hint="Le fichier d’origine ne sera pas modifié." value={title} maxLength={200} onChange={e => setTitle(e.target.value)}/><div className="h-actions"><Button type="submit" variant="secondary" loading={busy}>Enregistrer le titre</Button><Button variant="tertiary" onClick={() => setTitle(null)}>Annuler</Button></div></form>}
       <FilePreview source={preview} doc={active} state={previewState} onFailure={() => { revoke(preview); setPreview(undefined); setPreviewState("unavailable"); }}/>
       <div className="h-actions">{active.capabilities.includes("consulter") && active.capabilities.includes("exporter") && <Button variant="secondary" icon="download" loading={busy} onClick={() => void download()}>Télécharger</Button>}{active.capabilities.includes("modifier") && title === null && <Button variant="secondary" icon="pencil" onClick={() => setTitle(active.title)}>Renommer</Button>}</div><dl className="h-file-metadata"><div><dt>Fichier d’origine</dt><dd>{active.fileName}</dd></div><div><dt>Ajouté</dt><dd>{dateLabel(active.createdAt)} par {active.uploadedByName} · {active.source === "camera" ? "Photo" : "Import"}</dd></div><div><dt>Taille</dt><dd>{sizeLabel(active.size)}</dd></div></dl>{active.capabilities.includes("supprimer") && <Button variant="secondary" disabled title="Disponible dans la prochaine étape">Mettre à la corbeille</Button>}</div>}
   </aside>, host);
   return <>
-    <input ref={input} type="file" accept={ACCEPT} multiple hidden aria-label="Fichiers à ajouter" onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}/>
-    <input ref={imageInput} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden aria-label="Image existante" onChange={e => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }}/>
     {query !== undefined && <><PageHeader title="Recherche" summary={query.trim() ? `${documents.length} document${documents.length > 1 ? "s" : ""}` : ""}/><TextField label="Rechercher" type="search" hint="Titre ou nom d’origine d’un document, nom d’un dossier" value={query} onChange={e => onQuery?.(e.target.value)}/></>}
-    {canDeposit && <div className="h-actions"><Button icon="upload" onClick={() => { closePanel(); setPanel("deposit"); input.current?.click(); }}>Ajouter un document</Button><Button variant="secondary" icon="camera" disabled={!camera} title={camera ? undefined : "La prise de photo est disponible sur téléphone et tablette."} onClick={startCapture}>Prendre une photo</Button></div>}
+    {canDeposit && <div className="h-actions"><Button icon="upload" onClick={() => { closePanel(); setPanel("deposit"); if (folder) requestNativeImport(folder.id); }}>Ajouter un document</Button><Button variant="secondary" icon="camera" disabled={!camera} title={camera ? undefined : "La prise de photo est disponible sur téléphone et tablette."} onClick={startCapture}>Prendre une photo</Button></div>}
     {loading ? <Skeleton/> : failure ? <Banner tone="danger" title="Chargement impossible.">{failure}</Banner> : query !== undefined && !query.trim() ? <EmptyState title="Que recherchez-vous ?">Saisissez un titre de document ou un nom de dossier.</EmptyState> : <>{matchingFolders.length > 0 && <><div className="h-overline">Dossiers · {matchingFolders.length}</div><ul className="h-document-list">{matchingFolders.map(f => <li key={f.id}><button className="h-document-row cdv-focus" onClick={() => onFolder?.(f.id)}><Icon name="folder"/><span className="h-row-text"><strong>{f.name}</strong></span></button></li>)}</ul></>}{documents.length > 0 ? <><div className="h-overline">Documents · {documents.length}</div><ul className="h-document-list">{documents.map(d => <li key={d.id}><button className="h-document-row cdv-focus" onClick={() => void openDocument(d)}><Thumb type={d.mediaType}/><span className="h-row-text"><strong>{d.title}</strong><span>{d.fileName} · {dateLabel(d.createdAt)}</span></span></button></li>)}</ul></> : matchingFolders.length === 0 && <EmptyState title={query !== undefined ? "Aucun résultat" : "Ce dossier est vide"}>{query !== undefined ? "La recherche porte sur les documents et dossiers auxquels vous avez accès. Les documents à la corbeille n’apparaissent pas." : "Aucun document n’a encore été ajouté."}</EmptyState>}</>}
     {panelContent}
   </>;
@@ -266,7 +268,7 @@ function PdfPreview({ source, title, onFailure }: { source: string; title: strin
           void document.getPage(info.index).then(page => {
             if (stopped || !canvas.isConnected) return;
             const task = page.render({canvas, viewport: page.getViewport({scale: info.scale})}); tasks.set(frame,task);
-            return task.promise.catch(error => { if (error?.name !== "RenderingCancelledException") throw error; });
+            return task.promise.then(() => { canvas.dataset.rendered = "true"; }).catch(error => { if (error?.name !== "RenderingCancelledException") throw error; });
           }).catch(() => { if (!stopped) failureRef.current(); });
         }
       }, { root: container, rootMargin: "100px" });

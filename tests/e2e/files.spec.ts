@@ -62,6 +62,7 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
   await detail.getByRole("button", { name: "Fermer", exact: true }).click();
   await page.getByRole("main").getByRole("button", { name: /Facture synthétique/ }).click();
   await expect(detail.getByRole("img", { name: /Aperçu de Facture synthétique, page 1/ })).toBeVisible({ timeout: 30_000 });
+  await expect(detail.locator("canvas[data-rendered=true]")).toBeVisible();
   expect(await page.locator("iframe").count()).toBe(0);
   await page.screenshot({ path: test.info().outputPath("file-pdf.png"), fullPage: true });
   await detail.getByRole("button", { name: "Fermer", exact: true }).click();
@@ -101,6 +102,7 @@ test("doublon explicite, réponse perdue idempotente et fichier corrompu refusé
 });
 
 test("capture mobile après arrière-plan, annulation, puis confirmation ; PC inactif", async ({page,isMobile}) => {
+  if (!isMobile) await page.addInitScript(() => Object.defineProperty(navigator, "maxTouchPoints", {get:()=>5}));
   const id = await folder(page);
   const camera = page.getByRole("button", {name:"Prendre une photo", exact:true});
   if (!isMobile) { await expect(camera).toBeDisabled(); return; }
