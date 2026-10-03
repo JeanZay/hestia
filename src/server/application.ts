@@ -3,26 +3,27 @@ import type { Pool, PoolClient } from "pg";
 import { createAuth } from "./auth/options";
 import type { ServerConfig } from "./config";
 import { CAPABILITIES } from "./permissions/capabilities";
+import { createSharing, getFolderAccess } from "./permissions/service";
 
 import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, type Actor } from "./access";
 import { createDocuments, type DocumentDependencies } from "./documents/service";
 const folderName = (value: unknown) => textField(value, 120);
-type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number };
+type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number; canShare:boolean; canAdminister:boolean };
 
 export function createApplication(pool: Pool, config: ServerConfig, dependencies?: DocumentDependencies) {
   const auth = createAuth(pool, config);
   const access = createAccess(pool, config, auth);
   const { origin, transaction, withActor } = access;
   async function foldersFor(client: PoolClient, actor: Actor, id?: string): Promise<Folder[]> {
-    const found = await client.query(`SELECT f.id,f.name,f.version,(SELECT count(*) FROM hestia_document d WHERE d.folder_id=f.id AND d.trashed_at IS NULL AND d.purged_at IS NULL) AS document_count,
-      array_agg(DISTINCT g.capability ORDER BY g.capability) AS capabilities
-      FROM hestia_folder f JOIN hestia_grant g ON g.folder_id=f.id
-      WHERE g.user_id=$1 AND g.revoked_at IS NULL
-        AND (g.expires_at IS NULL OR g.expires_at>clock_timestamp())
-        AND ($2::uuid IS NULL OR f.id=$2::uuid)
-      GROUP BY f.id HAVING bool_or(g.capability='consulter')
-      ORDER BY f.created_at,f.id`, [actor.id,id ?? null]);
-    return found.rows.map(row => ({ id: row.id, name: row.name, version: row.version, capabilities: row.capabilities, documentCount: Number(row.document_count) }));
+    const found = await client.query(`SELECT f.id,f.name,f.version,(SELECT count(*) FROM hestia_document d WHERE d.folder_id=f.id AND d.trashed_at IS NULL AND d.purged_at IS NULL) AS document_count
+      FROM hestia_folder f WHERE ($1::uuid IS NULL OR f.id=$1::uuid) ORDER BY f.created_at,f.id`, [id ?? null]);
+    const folders:Folder[]=[];
+    for (const row of found.rows) {
+      const rights=await getFolderAccess(client,actor.id,row.id);
+      if (!rights.capabilities.includes('consulter')) continue;
+      folders.push({id:row.id,name:row.name,version:row.version,capabilities:rights.capabilities,documentCount:Number(row.document_count),canShare:rights.canShare,canAdminister:rights.canAdminister});
+    }
+    return folders;
   }
   function handleAuth(request: Request) {
     return guarded(async () => {
@@ -75,8 +76,10 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
         const id = randomUUID();
         await client.query("INSERT INTO hestia_folder(id,name,created_by) VALUES($1,$2,$3)", [id,name,actor.id]);
         for (const capability of CAPABILITIES) {
-          await client.query("INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind) VALUES($1,$2,$3,$4,$5)",
-            [randomUUID(),id,actor.id,capability,capability === "administrer" ? "reference" : "direct"]);
+          await client.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,transmit,author_id,subject_epoch,batch_id)
+            VALUES($1,$2,$3,$4,$5,$6,$3,(SELECT departure_epoch FROM hestia_member WHERE user_id=$3),$2)`,
+            [randomUUID(),id,actor.id,capability,capability === "administrer" ? "reference" : "direct",
+              capability==='administrer' ? [...CAPABILITIES] : capability==='partager' ? CAPABILITIES.filter(c=>c!=='administrer') : []]);
         }
         return (await foldersFor(client, actor, id))[0];
       });
@@ -101,7 +104,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       return response({ folder });
     });
   }
-  return { handleAuth, handleSession, handleFolders, handleFolder, ...createDocuments(pool, access, dependencies) };
+  return { handleAuth, handleSession, handleFolders, handleFolder, ...createSharing(access), ...createDocuments(pool, access, dependencies) };
 }
 
 

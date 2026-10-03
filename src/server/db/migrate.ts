@@ -13,7 +13,7 @@ export async function migrateDatabase(pool: Pool, config: ServerConfig) {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(480517001)");
     await client.query("CREATE TABLE IF NOT EXISTS hestia_migration (id text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())");
-    for (const id of ["001-folders", "002-documents"]) {
+    for (const id of ["001-folders", "002-documents", "003-access", "004-trash"]) {
       const sql = await readFile(new URL(`./migrations/${id}.sql`, import.meta.url), "utf8");
       const checksum = createHash("sha256").update(sql).digest("hex");
       const existing = await client.query("SELECT checksum FROM hestia_migration WHERE id=$1", [id]);

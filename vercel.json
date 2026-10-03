@@ -1,0 +1,3 @@
+{
+  "crons": [{ "path": "/api/hestia/maintenance", "schedule": "0 3 * * *" }]
+}
