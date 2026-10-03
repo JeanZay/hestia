@@ -50,7 +50,9 @@ test("un dossier privé persiste après renommage, rechargement et reconnexion",
   if (!await page.getByRole("button", { name: "Se déconnecter", exact: true }).isVisible()) {
     await page.getByRole("button", { name: "Moi", exact: true }).click();
   }
+  const signedOut = page.waitForResponse(res => res.request().method() === "POST" && res.url().endsWith("/api/auth/sign-out"));
   await page.getByRole("button", { name: "Se déconnecter", exact: true }).click();
+  expect((await signedOut).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
   expect((await page.request.get("/api/hestia/folders")).status()).toBe(401);
   await login(page);
