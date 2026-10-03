@@ -201,3 +201,54 @@ test("JPEG, WebP et HEIC : originaux acceptés, HEIC exporté sans conversion", 
   expect(bytes.equals(await readFile("tests/fixtures/documents/synthetic.heic"))).toBe(true);
   expect(createHash("sha256").update(bytes).digest("hex")).toBe(documents.find((d:{mediaType:string})=>d.mediaType==="image/heic").sha256);
 });
+
+test("les actions restent désactivées jusqu’au rechargement après enregistrement", async ({page}) => {
+  await folder(page);
+  await expect(page.getByRole("heading", {name:"Ce dossier est vide",exact:true})).toBeVisible();
+  let completions = 0;
+  let releaseFirst!: () => void;
+  let releaseSecond!: () => void;
+  let firstReached!: () => void;
+  let secondReached!: () => void;
+  const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
+  const firstResponse = new Promise<void>(resolve => { firstReached = resolve; });
+  const secondResponse = new Promise<void>(resolve => { secondReached = resolve; });
+  await page.route("**/api/hestia/uploads/*/complete", async route => {
+    const response = await route.fetch();
+    if (response.ok()) completions++;
+    await route.fulfill({response});
+  });
+  await page.route("**/api/hestia/documents?**", async route => {
+    const phase = completions;
+    const response = await route.fetch();
+    // Block every reload in the phase, including refreshes caused by folder counts.
+    if (phase === 1) { firstReached(); await firstGate; }
+    else if (phase === 2) { secondReached(); await secondGate; }
+    await route.fulfill({response});
+  });
+  try {
+    await selectFiles(page,["tests/fixtures/documents/synthetic.png","tests/fixtures/documents/synthetic.pdf"]);
+    const titles = panel(page).getByLabel("Titre du document");
+    await titles.nth(0).fill("Premier fichier");
+    await titles.nth(1).fill("Deuxième fichier");
+    await panel(page).getByRole("button",{name:"Enregistrer",exact:true}).click();
+    await firstResponse;
+    await expect(panel(page).getByText("Document enregistré.",{exact:true})).toHaveCount(1);
+    await expect(panel(page).getByLabel("Titre du document")).toHaveValue("Deuxième fichier");
+    await expect(panel(page).getByLabel("Titre du document")).toBeDisabled();
+    await expect(panel(page).getByRole("button",{name:"Retirer",exact:true})).toBeDisabled();
+    await expect(panel(page).getByRole("button",{name:"Fermer",exact:true})).toBeDisabled();
+    releaseFirst();
+    await secondResponse;
+    await expect(panel(page).getByText("Document enregistré.",{exact:true})).toHaveCount(2);
+    const done = panel(page).getByRole("button",{name:"Terminé",exact:true});
+    await expect(done).toBeDisabled();
+    releaseSecond();
+    await expect(done).toBeEnabled();
+    await done.click();
+    await expect(panel(page)).toHaveCount(0);
+    await expect(page.getByRole("main").getByRole("button",{name:/Premier fichier/})).toBeVisible();
+    await expect(page.getByRole("main").getByRole("button",{name:/Deuxième fichier/})).toBeVisible();
+  } finally { releaseFirst(); releaseSecond(); }
+});
