@@ -48,6 +48,7 @@ Le [workflow produit](docs/product-workflow.md) décrit les besoins larges, le r
 | --- | --- |
 | [Spécification produit](docs/product-specification.md) | Décisions du cadrage, critères et questions ouvertes, sans données familiales |
 | [Architecture](docs/architecture.md) et [ADR-0001](docs/adr/0001-stack.md) | Next.js/TypeScript, PostgreSQL, objets S3, Markdown et portabilité |
+| [Services et coûts](SERVICES.md) | Prestataires, outils, adresses utiles, offres observées et limites du budget |
 | [Sécurité](docs/security.md) et [signalement](SECURITY.md) | Protection dès la conception et limites actuelles |
 | [Portabilité](docs/portability.md) | Export, sauvegardes indépendantes, intégrité et restauration cible |
 | [Contribution](CONTRIBUTING.md) et [gouvernance](docs/delivery-governance.md) | Contrats, contrôles, revue indépendante et GO humain |
