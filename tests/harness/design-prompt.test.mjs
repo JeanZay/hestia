@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { auditCatalog, checkDossier, extractArticle, hash, inspectDossier, OFFICIAL_SOURCES, refreshSources } from '../../scripts/lib/design-prompt.mjs';
+import { auditCatalog, checkDossier, extractArticle, hash, inspectDossier, OFFICIAL_SOURCES, qualifyDossier, refreshSources } from '../../scripts/lib/design-prompt.mjs';
 import { fakeFetch, now, prepare, put, syntheticHtml } from './fixtures/design-prompt/synthetic.mjs';
 
 const cli = fileURLToPath(new URL('../../scripts/design-prompt.mjs', import.meta.url));
@@ -20,16 +20,20 @@ async function fixture(run) {
 }
 const check = (state, options = {}) => checkDossier({ root: state.root, dossier: state.dossierPath, now, fetcher: fakeFetch(), ...options });
 const inspect = (state) => inspectDossier({ root: state.root, dossier: state.dossierPath, now });
+const qualify = (state, options = {}) => qualifyDossier({ root: state.root, dossier: state.dossierPath, now, ...options });
 const json = (state, name) => JSON.parse(readFileSync(path.join(state.root, name), 'utf8'));
 function replaceReview(state, change) { const review = json(state, state.dossier.review.path); change(review); state.dossier.review = put(state.root, state.dossier.review.path, review); state.save(); }
 function setStage(state, stage) { state.dossier.stage = stage; state.catalog.entries[0].stage = stage; state.dossier.setupMode = null; state.dossier.userObservation = null; state.dossier.userObservedAtUtc = null; state.dossier.claims = [{ claim: 'Hestia test requirement.', basis: 'hestia', sourceIds: [] }]; state.save(); }
 function approved(state, name) { return { status: 'approved', reference: put(state.root, `artifacts/current/${name}.md`, '# Synthetic version 1\n'), validation: put(state.root, `artifacts/current/${name}-validation.md`, '# Synthetic approval of exact version 1\n') }; }
 
-test('native-create without pre-existing assets passes only with exact review and live articles', () => fixture(async (state) => {
+test('native-create allows local handoff with exact review; live articles are separately verified', () => fixture(async (state) => {
   assert.equal(inspect(state).status, 'CANDIDATE');
   assert.equal(inspect(state).handoffAllowed, false);
   const audit = auditCatalog({ root: state.root });
   assert.equal(audit.status, 'AUDIT_PASS'); assert.equal(audit.handoffAllowed, false); assert.equal(audit.remoteStateVerified, false);
+  const local = qualify(state);
+  assert.equal(local.status, 'LOCAL_PASS'); assert.equal(local.handoffAllowed, true); assert.equal(local.remoteStateVerified, false);
+  assert.equal(local.documentation.status, 'NOT_CHECKED'); assert.equal(local.documentation.captureFresh, true);
   const urls = [];
   const report = await check(state, { fetcher: async (url, options) => { urls.push(url); assert.equal(options.method, 'GET'); assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'manual'); assert.deepEqual(Object.keys(options.headers).sort(), ['Accept', 'Cache-Control']); return fakeFetch()(url); } });
   assert.equal(report.status, 'PASS'); assert.equal(report.handoffAllowed, true); assert.equal(report.checkedAtUtc, now); assert.deepEqual(report.prompt, state.dossier.prompt); assert.equal(urls.length, 3);
@@ -72,12 +76,70 @@ test('missing, modified, blocked, self or incomplete review never passes', () =>
   await assert.rejects(check(state), /review-date-invalid/);
 }));
 
-test('capture freshness and future timestamps are mandatory', () => fixture(async (state) => {
+test('capture freshness is diagnostic-only while future timestamps remain invalid', () => fixture(async (state) => {
+  const local = qualify(state, { now: '2026-09-16T12:00:00.001Z' });
+  assert.equal(local.status, 'LOCAL_PASS'); assert.equal(local.remoteStateVerified, false); assert.equal(local.documentation.captureFresh, false);
   await assert.rejects(check(state, { now: '2026-09-16T12:00:00.001Z' }), /sources-stale-or-future/);
   await assert.rejects(check(state, { now: '2026-09-15T11:59:59.999Z' }), /invalid-user-observation-date|sources-stale-or-future/);
   const bundle = json(state, state.dossier.sources.path); bundle.capturedAtUtc = '2026-09-17T00:00:00Z';
   state.dossier.sources = put(state.root, state.dossier.sources.path, bundle); state.save();
   await assert.rejects(check(state), /sources-stale-or-future/);
+  assert.throws(() => qualify(state), /sources-stale-or-future/);
+}));
+
+test('explicitly absent captures permit reviewed local handoff without inventing official claims', () => fixture(async (state) => {
+  state.dossier.sources = null;
+  state.dossier.claims = [{ claim: 'Synthetic export capability still needs manual confirmation.', basis: 'unverified', sourceIds: [] }];
+  state.review();
+  const report = qualify(state);
+  assert.equal(report.status, 'LOCAL_PASS'); assert.equal(report.remoteStateVerified, false);
+  assert.deepEqual(report.documentation, { status: 'NOT_CHECKED', capturedAtUtc: null, captureFresh: false });
+  assert.deepEqual(report.unverifiedClaims, [state.dossier.claims[0].claim]);
+  await assert.rejects(check(state), /official-capture-required-for-live-check/);
+  state.dossier.claims[0].basis = 'official'; state.save();
+  assert.throws(() => qualify(state), /official-claim-without-source/);
+  state.dossier.claims[0].sourceIds = ['get-started']; state.save();
+  assert.throws(() => qualify(state), /invalid-claim/);
+  delete state.dossier.sources; state.save();
+  assert.throws(() => qualify(state), /invalid-dossier-fields/);
+}));
+
+test('changed documentation headings do not confiscate a locally qualified prompt', () => fixture(async (state) => {
+  const changedHeading = fakeFetch((html) => html.replace('Before you start', 'New external heading'));
+  await assert.rejects(check(state, { fetcher: changedHeading }), /official-article-content-missing/);
+  assert.equal(qualify(state).status, 'LOCAL_PASS');
+  const bundle = json(state, state.dossier.sources.path);
+  const source = bundle.sources.find((item) => item.id === 'design-system');
+  source.html = put(state.root, source.html.path, syntheticHtml(OFFICIAL_SOURCES[1]).replace('Before you start', 'Prerequisites'));
+  bundle.extractionVersion = 'historical-extractor';
+  state.dossier.sources = put(state.root, state.dossier.sources.path, bundle); state.save();
+  assert.throws(() => qualify(state), /review-not-passed-or-candidate-mismatch/);
+  state.review();
+  assert.equal(qualify(state).status, 'LOCAL_PASS');
+  await assert.rejects(check(state), /invalid-source-bundle/);
+}));
+
+test('local handoff still refuses malformed input, guard findings, changed bytes, missing decisions, review and DS', () => fixture(async (state) => {
+  const initialReview = state.dossier.review;
+  state.dossier.review = null; state.save(); assert.throws(() => qualify(state), /invalid-file-reference/);
+  state.dossier.review = initialReview; state.save();
+  replaceReview(state, (review) => { review.reviewer.identity = state.dossier.author; });
+  assert.throws(() => qualify(state), /review-not-independent/);
+  state.review(); replaceReview(state, (review) => { review.checks.requestFeasibility = false; });
+  assert.throws(() => qualify(state), /review-check-not-passed/);
+  state.review();
+  state.dossier.context[0] = put(state.root, state.dossier.context[0].path, '# Changed context\n'); state.save();
+  assert.throws(() => qualify(state), /review-not-passed-or-candidate-mismatch/);
+  state.review(); put(state.root, state.dossier.context[0].path, '# Tampered context\n');
+  assert.throws(() => qualify(state), /reference-hash-mismatch/);
+  state.dossier.context[0] = put(state.root, state.dossier.context[0].path, `# Synthetic prohibited token\nghp_${'x'.repeat(36)}\n`); state.save();
+  assert.throws(() => qualify(state), /guard-rejected-input/);
+  state.dossier.context[0] = put(state.root, state.dossier.context[0].path, '# Restored context\n');
+  state.dossier.decisions = []; state.save(); assert.throws(() => qualify(state), /context-or-decisions-missing/);
+  state.dossier.decisions = [put(state.root, 'artifacts/current/decision.md', '# Synthetic manual scope authorization\n')];
+  state.dossier.extra = true; state.save(); assert.throws(() => qualify(state), /invalid-dossier-fields/); delete state.dossier.extra;
+  setStage(state, 'screen'); assert.throws(() => qualify(state), /approved-design-system-required/);
+  setStage(state, 'iteration'); assert.throws(() => qualify(state), /approved-design-system-required/);
 }));
 
 test('real article text, links and attributes changes each require refresh and review', () => fixture(async (state) => {
@@ -108,7 +170,10 @@ test('HTTP login page, error, redirect, oversize, type, failure and timeout are 
     [async () => { throw new Error('offline'); }, /official-fetch-failed/],
     [() => new Promise(() => {}), /official-fetch-timeout/],
   ];
-  for (const [fetcher, pattern] of cases) await assert.rejects(check(state, { fetcher, timeoutMs: 20 }), pattern);
+  for (const [fetcher, pattern] of cases) {
+    await assert.rejects(check(state, { fetcher, timeoutMs: 20 }), pattern);
+    const local = qualify(state); assert.equal(local.status, 'LOCAL_PASS'); assert.equal(local.remoteStateVerified, false);
+  }
 }));
 
 test('native-create requires user observation; asset import requires approved assets', () => fixture(async (state) => {
@@ -201,6 +266,8 @@ test('extractor refuses absent sections and retains content changes', () => {
   const source = OFFICIAL_SOURCES[0];
   assert.throws(() => extractArticle(syntheticHtml(source).replace(source.section, 'Other title'), source), /official-article-content-missing/);
   assert.throws(() => extractArticle(`${syntheticHtml(source)}<article>second</article>`, source), /official-article-title-or-structure/);
+  assert.equal(OFFICIAL_SOURCES[1].section, 'Before you start');
+  assert.throws(() => extractArticle(syntheticHtml(OFFICIAL_SOURCES[1]).replace('Before you start', 'Prerequisites'), OFFICIAL_SOURCES[1]), /official-article-content-missing/);
 });
 
 test('only observed Intercom image signatures are volatile; content and URL identity remain bound', () => {
@@ -250,4 +317,15 @@ test('CLI audit is offline JSON and unknown/network override options fail', () =
   assert.equal(unknown.status, 1); assert.equal(JSON.parse(unknown.stdout).status, 'BLOCKED');
   const imported = execFileSync(process.execPath, ['--input-type=module', '-e', `globalThis.fetch=()=>{throw new Error('network forbidden during import')};await import(${JSON.stringify(new URL('../../scripts/lib/design-prompt.mjs', import.meta.url).href)});console.log('imported')`], { encoding: 'utf8', timeout: 5000 });
   assert.equal(imported.trim(), 'imported');
+}));
+
+test('CLI qualify has no network dependency and failed live diagnostics are clearly separate', () => fixture(async (state) => {
+  const invoke = (action) => spawnSync(process.execPath, ['--input-type=module', '-e', `globalThis.fetch=()=>{throw new Error('offline')};const {main}=await import(${JSON.stringify(new URL('../../scripts/design-prompt.mjs', import.meta.url).href)});process.exitCode=await main(${JSON.stringify([action, '--root', state.root, '--dossier', state.dossierPath])});`], { encoding: 'utf8', timeout: 5000 });
+  const local = invoke('qualify'); assert.equal(local.status, 0);
+  const report = JSON.parse(local.stdout); assert.equal(report.status, 'LOCAL_PASS'); assert.equal(report.remoteStateVerified, false);
+  const diagnostic = invoke('check'); assert.equal(diagnostic.status, 1);
+  const blocked = JSON.parse(diagnostic.stdout); assert.equal(blocked.status, 'BLOCKED'); assert.equal(blocked.remoteStateVerified, false);
+  assert.equal(blocked.scope, 'live-documentation-diagnostic'); assert.equal(blocked.localQualification, 'NOT_REPLACED');
+  const missing = spawnSync(process.execPath, [cli, 'qualify', '--root', state.root], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(missing.status, 1); assert.deepEqual(JSON.parse(missing.stdout).errors, ['required-option-missing']);
 }));

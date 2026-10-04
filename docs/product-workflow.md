@@ -35,7 +35,9 @@ Séparer produit, UX, sécurité et architecture. Une absence d'impact dans un d
 
 Avant de transmettre à delivery, faire examiner indépendamment la couverture, les scénarios contradictoires, les hypothèses et les dépendances par un agent distinct. Lui donner les sources et la version exacte, sans verdict à confirmer. La revue et les contrôles de structure ne garantissent pas l'absence de tout oubli : consigner leurs limites et reprendre le cadrage dès qu'une nouvelle contradiction matérielle apparaît.
 
-Les comportements UX se cadrent ici ; les choix visuels viennent exclusivement de [Claude Design](design-governance.md). Un Design System disponible ne remplace ni le cadrage du comportement, ni un hand-off suffisant pour les écrans concernés.
+Les comportements attendus se cadrent ici ; la conception UI/UX vient exclusivement de [Claude Design](design-governance.md). Décision précisée le 4 octobre 2026 : ce passage fait partie intégrante du cycle normal Hestia. L'agent prépare et remet le prompt à partir du besoin cadré, Amaury fait concevoir et valide les écrans dans Claude Design, puis l'agent inspecte le hand-off, intègre fidèlement, teste et prépare la recette Dev. Les compléments de prompt suivent la même boucle. Leur préparation/remise dans le périmètre demandé n'exige pas un GO technique supplémentaire ; seules une nouvelle décision produit, une extension de périmètre ou une autorisation externe manquante appellent un arbitrage.
+
+Un Design System disponible ne remplace ni le cadrage du comportement, ni un hand-off suffisant. La recherche documentaire aide l'agent à formuler des demandes réalistes ; une indisponibilité ou dérive de documentation ne doit pas confisquer un prompt relu. Distinguer la revue locale du contenu et le diagnostic documentaire, avec leurs limites selon le [protocole de design](design/claude-design-workflow.md).
 
 ## Tenir GitHub sans demander une administration manuelle
 
