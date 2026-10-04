@@ -23,8 +23,27 @@ async function collect(email: string, field: "url" | "otp") {
   throw new Error("Synthetic mail was not available in the local collector.");
 }
 async function clickVisible(page: Page, name: string) { await page.getByRole("button", { name, exact: true }).filter({ visible: true }).first().click(); }
-async function login(page: Page, email: string, secret = password!) {
+async function login(page: Page, email: string, secret = password!, delayInitialStatus = false) {
+  let releaseStatus = () => {}, receivedStatus: number | undefined;
+  const heldStatus = new Promise<void>(resolve => { releaseStatus = resolve; });
+  if (delayInitialStatus) await page.route("**/api/hestia/identity/status", async route => {
+    // Preserve the real completed flow response and control only its delivery.
+    const response = await route.fetch(); receivedStatus = response.status();
+    await heldStatus; await route.fulfill({ response });
+  }, { times: 1 });
   await page.goto("/");
+  if (delayInitialStatus) {
+    try {
+      await expect.poll(() => receivedStatus).toBe(200);
+      // Initial restoration can insert a banner and move the submit button.
+      // The product must prevent editing/submission until that state is settled.
+      await expect(page.getByLabel("Adresse e-mail", { exact: true })).toBeDisabled();
+      await expect(page.getByLabel("Mot de passe", { exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Se connecter", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "J’ai perdu mon accès", exact: true })).toBeDisabled();
+    } finally { releaseStatus(); }
+    await expect(page.getByLabel("Adresse e-mail", { exact: true })).toBeEnabled();
+  }
   for (let attempt = 0; attempt < 4; attempt++) {
     await page.getByLabel("Adresse e-mail", { exact: true }).fill(email);
     await page.getByLabel("Mot de passe", { exact: true }).fill(secret);
@@ -67,7 +86,7 @@ test("inviter, activer, récupérer puis renouveler depuis Moi", async ({ page, 
   try {
     const member = await recipient.newPage();
     await activate(member, await collect(email, "url"), email, secret);
-    await login(member, email, secret);
+    await login(member, email, secret, true);
     await expect(member.getByRole("button", { name: "Foyer", exact: true })).toHaveCount(0);
     await clickVisible(member, "Moi");
     await expect(member.getByText("8 codes de secours disponibles", { exact: true })).toBeVisible();
@@ -165,7 +184,7 @@ test("retirer puis réadmettre un membre sans restaurer ses droits", async ({ pa
     });
     await test.step("Activation du retour avec l’ancienne session", async () => { await activate(member, await collect(email, "url"), email, secret); });
     await test.step("Connexion après retour et absence de droits restaurés", async () => {
-    await login(member, email, secret);
+    await login(member, email, secret, true);
     const listing = await (await member.request.get("/api/hestia/folders")).json();
     expect(listing.folders).toHaveLength(0);
     await member.screenshot({ path: test.info().outputPath("family-return-empty.png"), fullPage: true });
