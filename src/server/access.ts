@@ -66,7 +66,13 @@ export function createAccess(pool: Pool, config: ServerConfig, auth: ReturnType<
   async function transaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
     const bound = connection.getStore();
     const client = bound ?? await pool.connect();
-    try { await client.query("BEGIN"); const result = await action(client); await client.query("COMMIT"); return result; }
+    try {
+      await client.query("BEGIN");
+      // Shared with statement triggers in 003-access. Acquire before members,
+      // sessions, budgets and folders so ancestry checks cannot deadlock.
+      await client.query("SELECT pg_advisory_xact_lock(480519001)");
+      const result = await action(client); await client.query("COMMIT"); return result;
+    }
     catch (error) { await client.query("ROLLBACK"); throw error; } finally { if (!bound) client.release(); }
   }
   async function withActor<T>(request: Request, action: (client: PoolClient, actor: Actor) => Promise<T>, touch = true) {

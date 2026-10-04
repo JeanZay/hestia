@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { isNativePickerOpen, requestNativeCapture, requestNativeImport, type CaptureResult, type NativeDraft } from "./native-capture";
-import { Banner, Button, EmptyState, Icon, PageHeader, Skeleton, TextField } from "./design-system";
+import { Banner, Button, Dialog, EmptyState, Icon, PageHeader, Skeleton, TextField, Toast } from "./design-system";
 
 export type FileDocument = { id: string; folderId: string; title: string; fileName: string; mediaType: string; size: number; sha256: string; createdAt: string; uploadedByName: string; source: "import" | "camera"; version: number; previewSupported: boolean; capabilities: string[] };
 type Folder = { id: string; name: string; capabilities: string[] };
@@ -36,7 +36,7 @@ function prepareDrafts(files: File[], source: "import" | "camera"): Draft[] {
     });
 }
 
-export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onUpdated, query, onQuery, onFolder, initialCapture, onCaptureConsumed }: { userId: string; onCaptureConsumed?: () => void; initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
+export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onUpdated, query, onQuery, onFolder, initialCapture, onCaptureConsumed, suppressPanel = false, onOpenPanel }: { suppressPanel?: boolean; onOpenPanel?: () => void; userId: string; onCaptureConsumed?: () => void; initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
   const [documents, setDocuments] = useState<FileDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string>();
@@ -54,6 +54,10 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   const [busy, setBusy] = useState(false);
   const [panelError, setPanelError] = useState<string>();
   const [over, setOver] = useState(false);
+  const [trashTarget, setTrashTarget] = useState<FileDocument | null>(null);
+  const [trashed, setTrashed] = useState<{id: string; title: string; version: number; restorableUntil: string} | null>(null);
+  const [restored, setRestored] = useState(false);
+  const [mutationError, setMutationError] = useState<string>();
   const controller = useRef(new AbortController());
   const previewController = useRef<AbortController | null>(null);
   const urls = useRef(new Set<string>());
@@ -83,6 +87,7 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     return () => { controller.current.abort(); previewController.current?.abort(); if (!isNativePickerOpen()) for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
   }, []);
   useEffect(() => { const timer = setTimeout(() => void reload(), query === undefined ? 0 : 180); return () => clearTimeout(timer); }, [reload, query]);
+  useEffect(() => { if (!trashed) return; const timer = setTimeout(() => setTrashed(null), 7000); return () => clearTimeout(timer); }, [trashed]);
 
   useEffect(() => {
     if (!initialCapture) return;
@@ -104,8 +109,32 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void api(`/uploads/${draft.operation}`, controller.current.signal, "DELETE").catch(() => {});
     draftsRef.current = []; setDrafts([]);
   }
+  async function trashDocument() {
+    if (!trashTarget || running.current) return;
+    running.current = true; setBusy(true); setPanelError(undefined); setMutationError(undefined);
+    const signal = controller.current.signal;
+    try {
+      const result = await api<{documentId: string; version: number; restorableUntil: string}>(`/documents/${trashTarget.id}/trash`, signal, "POST", {version:trashTarget.version});
+      if (signal.aborted) return;
+      setTrashed({id:result.documentId,title:trashTarget.title,version:result.version,restorableUntil:result.restorableUntil}); setRestored(false); setTrashTarget(null);
+      running.current = false; closePanel(); await reload(); onUpdated();
+    } catch (error) { if (!signal.aborted) { setTrashTarget(null); setPanelError(message(error)); fail(error); if (error instanceof FileError && error.status === 409) { running.current = false; closePanel(); await reload(); setMutationError("Le document a changé. Ouvrez-le à nouveau avant de réessayer."); } } }
+    finally { running.current = false; if (!signal.aborted) setBusy(false); }
+  }
+  async function undoTrash() {
+    if (!trashed || running.current) return;
+    running.current = true; setBusy(true); setMutationError(undefined);
+    const signal = controller.current.signal;
+    try {
+      await api(`/documents/${trashed.id}/restore`, signal, "POST", {version:trashed.version});
+      if (signal.aborted) return;
+      setTrashed(null); setRestored(true); await reload(); onUpdated();
+    } catch (error) { if (!signal.aborted) { setTrashed(null); setMutationError(message(error)); fail(error); } }
+    finally { running.current = false; if (!signal.aborted) setBusy(false); }
+  }
   function addFiles(files: File[], source: "import" | "camera" = "import") {
     if (!folder || running.current) return;
+    onOpenPanel?.();
     revoke(capture?.url); setCapture(null); setPanel("deposit"); setPanelError(undefined);
     const added = prepareDrafts(files, source);
     draftsRef.current = [...draftsRef.current, ...added]; setDrafts(draftsRef.current);
@@ -176,6 +205,7 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   }
   async function openDocument(doc: FileDocument) {
     if (running.current) return;
+    onOpenPanel?.();
     closePanel(); setPanel("document"); setActive(doc); setPreviewState("loading");
     const current = new AbortController(); previewController.current = current;
     try {
@@ -208,12 +238,13 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   }
   function startCapture() {
     if (!camera || running.current) return;
+    onOpenPanel?.();
     revoke(capture?.url); setCapture(null); setCaptureFailed(false); setPanel("capture"); setCaptureStatus("waiting"); setPanelError(undefined);
     if (folder) requestNativeCapture(folder.id, pickerSnapshot());
   }
   const matchingFolders = query?.trim() ? folders.filter(f => fold(f.name).includes(fold(query.trim()))) : [];
   const canDeposit = folder?.capabilities.includes("déposer");
-  const panelContent = panel && host && createPortal(<aside className="h-panel h-files-panel" aria-label={panel === "document" ? "Document" : panel === "capture" ? "Photo" : "Ajout de documents"}>
+  const panelContent = !suppressPanel && panel && host && createPortal(<aside className="h-panel h-files-panel" aria-label={panel === "document" ? "Document" : panel === "capture" ? "Photo" : "Ajout de documents"}>
     <Button variant="tertiary" compact icon="x" disabled={busy} onClick={closePanel}>Fermer</Button>
     {panelError && <Banner tone="danger" title="Action impossible.">{panelError}</Banner>}
     {panel === "deposit" && <div className="h-file-stack"><h2>Ajouter des documents</h2><p className="h-hint">Dans « {folder?.name} » · PDF, JPEG, PNG, WebP, HEIC ou HEIF · 20 Mio par fichier</p>
@@ -226,13 +257,17 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     {panel === "capture" && <div className="h-file-stack"><h2>Prendre une photo</h2>{capture ? <><div className="h-preview h-preview-image">{captureFailed ? <p>Aperçu indisponible</p> : <img src={capture.url} alt="Aperçu de la photo prise" onError={() => setCaptureFailed(true)}/>}</div><p>Vérifiez que la photo est nette et lisible avant de l’ajouter.</p><div className="h-actions"><Button icon="check" onClick={() => addFiles([capture.file], "camera")}>Utiliser cette photo</Button><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre</Button><Button variant="tertiary" onClick={() => { revoke(capture.url); setCapture(null); setCaptureStatus("cancelled"); }}>Annuler</Button></div></> : <><Banner title={captureStatus === "waiting" ? "L’appareil photo de votre téléphone s’ouvre." : captureStatus === "cancelled" ? "Prise de photo annulée." : "Appareil photo indisponible."}>{captureStatus === "waiting" ? "Revenez ici après la prise de vue." : "Rien n’a été ajouté au dossier."}</Banner><div className="h-actions"><Button variant="secondary" icon="camera" onClick={startCapture}>Reprendre une photo</Button><Button variant="secondary" onClick={() => folder && requestNativeImport(folder.id, pickerSnapshot(), true)}>Choisir une image existante</Button><Button variant="tertiary" onClick={closePanel}>Annuler</Button></div></>}</div>}
     {panel === "document" && active && <div className="h-file-stack"><div className="h-upload-heading"><Thumb type={active.mediaType}/><h2>{active.title}</h2></div>{title !== null && <form onSubmit={e => { e.preventDefault(); void rename(); }} className="h-file-stack"><TextField label="Titre du document" hint="Le fichier d’origine ne sera pas modifié." disabled={busy} value={title} maxLength={200} onChange={e => setTitle(e.target.value)}/><div className="h-actions"><Button type="submit" variant="secondary" loading={busy}>Enregistrer le titre</Button><Button variant="tertiary" disabled={busy} onClick={() => setTitle(null)}>Annuler</Button></div></form>}
       <FilePreview source={preview} doc={active} state={previewState} onFailure={() => { revoke(preview); setPreview(undefined); setPreviewState("unavailable"); }}/>
-      <div className="h-actions">{active.capabilities.includes("consulter") && active.capabilities.includes("exporter") && <Button variant="secondary" icon="download" loading={busy} onClick={() => void download()}>Télécharger</Button>}{active.capabilities.includes("modifier") && title === null && <Button variant="secondary" icon="pencil" disabled={busy} onClick={() => setTitle(active.title)}>Renommer</Button>}</div><dl className="h-file-metadata"><div><dt>Fichier d’origine</dt><dd>{active.fileName}</dd></div><div><dt>Ajouté</dt><dd>{dateLabel(active.createdAt)} par {active.uploadedByName} · {active.source === "camera" ? "Photo" : "Import"}</dd></div><div><dt>Taille</dt><dd>{sizeLabel(active.size)}</dd></div></dl>{active.capabilities.includes("supprimer") && <Button variant="secondary" disabled title="Disponible dans la prochaine étape">Mettre à la corbeille</Button>}</div>}
+      <div className="h-actions">{active.capabilities.includes("consulter") && active.capabilities.includes("exporter") && <Button variant="secondary" icon="download" loading={busy} onClick={() => void download()}>Télécharger</Button>}{active.capabilities.includes("modifier") && title === null && <Button variant="secondary" icon="pencil" disabled={busy} onClick={() => setTitle(active.title)}>Renommer</Button>}</div><dl className="h-file-metadata"><div><dt>Fichier d’origine</dt><dd>{active.fileName}</dd></div><div><dt>Ajouté</dt><dd>{dateLabel(active.createdAt)} par {active.uploadedByName} · {active.source === "camera" ? "Photo" : "Import"}</dd></div><div><dt>Taille</dt><dd>{sizeLabel(active.size)}</dd></div></dl>{active.capabilities.includes("consulter") && active.capabilities.includes("supprimer") && <Button variant="danger" compact icon="trash" disabled={busy} onClick={() => setTrashTarget(active)}>Mettre à la corbeille</Button>}</div>}
   </aside>, host);
   return <>
+    {mutationError && <Banner tone="danger" title="Action non confirmée.">{mutationError}</Banner>}
     {query !== undefined && <><PageHeader title="Recherche" summary={query.trim() ? `${documents.length} document${documents.length > 1 ? "s" : ""}` : ""}/><TextField label="Rechercher" type="search" hint="Titre ou nom d’origine d’un document, nom d’un dossier" value={query} onChange={e => onQuery?.(e.target.value)}/></>}
-    {canDeposit && <div className="h-actions"><Button icon="upload" disabled={busy} onClick={() => { if (running.current) return; closePanel(); setPanel("deposit"); if (folder) requestNativeImport(folder.id, pickerSnapshot()); }}>Ajouter un document</Button><Button variant="secondary" icon="camera" disabled={!camera || busy} title={camera ? undefined : "La prise de photo est disponible sur téléphone et tablette."} onClick={startCapture}>Prendre une photo</Button></div>}
+    {canDeposit && <div className="h-actions"><Button icon="upload" disabled={busy} onClick={() => { if (running.current) return; onOpenPanel?.(); closePanel(); setPanel("deposit"); if (folder) requestNativeImport(folder.id, pickerSnapshot()); }}>Ajouter un document</Button><Button variant="secondary" icon="camera" disabled={!camera || busy} title={camera ? undefined : "La prise de photo est disponible sur téléphone et tablette."} onClick={startCapture}>Prendre une photo</Button></div>}
     {loading ? <Skeleton/> : failure ? <Banner tone="danger" title="Chargement impossible.">{failure}</Banner> : query !== undefined && !query.trim() ? <EmptyState title="Que recherchez-vous ?">Saisissez un titre de document ou un nom de dossier.</EmptyState> : <>{matchingFolders.length > 0 && <><div className="h-overline">Dossiers · {matchingFolders.length}</div><ul className="h-document-list">{matchingFolders.map(f => <li key={f.id}><button className="h-document-row cdv-focus" onClick={() => onFolder?.(f.id)}><Icon name="folder"/><span className="h-row-text"><strong>{f.name}</strong></span></button></li>)}</ul></>}{documents.length > 0 ? <><div className="h-overline">Documents · {documents.length}</div><ul className="h-document-list">{documents.map(d => <li key={d.id}><button className="h-document-row cdv-focus" disabled={busy} onClick={() => void openDocument(d)}><Thumb type={d.mediaType}/><span className="h-row-text"><strong>{d.title}</strong><span>{d.fileName} · {dateLabel(d.createdAt)}</span></span></button></li>)}</ul></> : matchingFolders.length === 0 && <EmptyState title={query !== undefined ? "Aucun résultat" : "Ce dossier est vide"}>{query !== undefined ? "La recherche porte sur les documents et dossiers auxquels vous avez accès. Les documents à la corbeille n’apparaissent pas." : "Aucun document n’a encore été ajouté."}</EmptyState>}</>}
     {panelContent}
+    {trashTarget && <Dialog title={`Mettre « ${trashTarget.title} » à la corbeille ?`} confirmLabel="Mettre à la corbeille" confirmIcon="trash" busy={busy} onCancel={() => setTrashTarget(null)} onConfirm={() => void trashDocument()}>Il disparaîtra pour toutes les personnes qui ont accès au dossier : plus de consultation, de recherche ni de téléchargement. Il restera récupérable pendant 7 jours, puis sera supprimé de Hestia. Les copies déjà téléchargées ne sont pas concernées.</Dialog>}
+    {trashed && <Toast action="Restaurer" onAction={() => void undoTrash()}>« {trashed.title} » est dans la corbeille jusqu’au {new Date(trashed.restorableUntil).toLocaleString("fr-FR")}.</Toast>}
+    {restored && <Banner tone="success" title="Restauré.">Le document est de nouveau visible selon les accès actuels. Les accès retirés ne sont pas rétablis.</Banner>}
   </>;
 }
 

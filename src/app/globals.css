@@ -142,3 +142,49 @@ button { cursor: pointer; }
 @media (max-width:599px) { .h-top-search { display:none; } }
 .h-pdf-page { width:100%;flex:none;position:relative;background:white; }
 .h-pdf-page canvas { position:absolute;inset:0;width:100%;height:100%; }
+/* Share, trash, Tabs, Select, Checkbox, Dialog and Toast: validated Documents hand-off. */
+.h-button-danger { background:var(--cdv-surface);color:var(--cdv-danger);border-color:var(--cdv-danger); }
+.h-button-danger:hover { background:var(--cdv-danger-tint); }
+.h-button-danger:active:not(:disabled) { background:var(--cdv-danger);color:white; }
+.h-tabs { display:flex;gap:4px;border-bottom:1.5px solid var(--cdv-border);font-family:var(--cdv-font-text); }
+.h-tabs button { height:48px;padding:0 16px;border:0;background:transparent;font-weight:700;font-size:16px;font-family:inherit;color:var(--cdv-ink-2);border-radius:6px 6px 0 0; }
+.h-tabs button[aria-selected=true] { color:var(--cdv-action);box-shadow:inset 0 -3px 0 var(--cdv-action); }
+.h-select { position:relative; }
+.h-select select { appearance:none;width:100%;height:var(--cdv-field-h);box-sizing:border-box;border-radius:var(--cdv-radius-m);padding:0 44px 0 14px;font:inherit;font-size:16px;color:var(--cdv-ink);background:var(--cdv-surface);border:1.5px solid var(--cdv-border-strong); }
+.h-select select:focus { border-color:var(--cdv-action); }
+.h-select select:disabled { background:var(--cdv-surface-disabled);color:var(--cdv-ink-3);border-style:dashed; }
+.h-select > svg { position:absolute;right:14px;top:16px;pointer-events:none; }
+.h-checkbox { display:flex;align-items:center;gap:12px;min-height:44px;cursor:pointer;font-size:16px;position:relative; }
+.h-checkbox input { position:absolute;width:24px;height:24px;margin:0;opacity:0;left:0; }
+.h-checkbox-box { pointer-events:none;width:24px;height:24px;flex:none;border-radius:var(--cdv-radius-s);display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;background:var(--cdv-surface);border:2px solid var(--cdv-ink-3); }
+.h-checkbox input:checked + .h-checkbox-box { background:var(--cdv-action);border-color:var(--cdv-action);color:var(--cdv-on-action); }
+.h-checkbox input:focus-visible + .h-checkbox-box { outline:3px solid var(--cdv-action);outline-offset:3px; }
+.h-checkbox input:disabled + .h-checkbox-box { background:var(--cdv-surface-disabled);border:2px dashed var(--cdv-border-strong);color:var(--cdv-ink-3); }
+.h-checkbox:has(input:disabled) { cursor:not-allowed;color:var(--cdv-ink-3); }
+.h-checkbox > span:last-child { display:flex;flex-direction:column; }
+.h-share-fieldset { margin:0;padding:0;border:0;display:flex;flex-direction:column;gap:8px; }
+.h-share-fieldset legend { padding:0;margin-bottom:8px;font-weight:700;font-size:16px; }
+.h-share-consult { display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:44px; }
+.h-access-copy { margin:0;font-size:16px;line-height:1.5;color:var(--cdv-ink-2);max-width:640px; }
+.h-access-row { display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:var(--cdv-row-h);padding:10px 16px;box-sizing:border-box;border-bottom:1.5px solid var(--cdv-border-subtle); }
+.h-access-row:last-child { border-bottom:0; }
+.h-access-row > .h-avatar { width:40px;height:40px; }
+.h-access-text { flex:1;min-width:180px;display:flex;flex-direction:column;gap:6px; }
+.h-access-text > div:first-child { display:flex;flex-direction:column; }
+.h-access-text strong { font-size:16px;overflow-wrap:anywhere; }
+.h-access-text small { font-size:14px;color:var(--cdv-ink-3); }
+.h-access-text .h-capabilities { align-self:flex-start; }
+.h-trash-deadline { display:inline-flex;align-self:flex-start;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--cdv-radius-s);border:1.5px solid var(--cdv-border-strong);font-size:14px;font-weight:700;color:var(--cdv-ink-2); }
+.h-dialog { padding:20px;width:calc(100% - 32px);max-width:480px;box-sizing:border-box;background:var(--cdv-surface);border:1.5px solid var(--cdv-border);border-radius:var(--cdv-radius-l);box-shadow:var(--cdv-shadow-float);font-family:var(--cdv-font-text);color:var(--cdv-ink); }
+.h-dialog::backdrop { background:var(--cdv-backdrop); }
+.h-dialog-content { display:flex;flex-direction:column;gap:14px; }
+.h-dialog h2 { margin:0;font-family:var(--cdv-font-title);font-size:var(--cdv-h3-size);line-height:var(--cdv-h3-line);letter-spacing:var(--cdv-h3-tracking);font-weight:700; }
+.h-dialog-body { font-size:15px;line-height:1.5;color:var(--cdv-ink-2); }
+.h-dialog .h-actions { gap:10px;justify-content:flex-end; }
+.h-dialog-confirm:not(:disabled) { background:var(--cdv-danger);color:#fff; }
+.h-toast-host { position:fixed;bottom:16px;left:0;right:0;display:flex;justify-content:center;z-index:80;padding:0 16px;pointer-events:none; }
+.h-toast { pointer-events:auto;display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:var(--cdv-radius-l);background:var(--cdv-inverse-bg);color:var(--cdv-inverse-ink);box-shadow:var(--cdv-shadow-float);max-width:420px;font-family:var(--cdv-font-text); }
+.h-toast > svg { color:var(--cdv-action-on-dark); }
+.h-toast > div { font-size:15px;line-height:1.4;flex:1; }
+.h-toast button { border:0;background:transparent;padding:4px 2px;color:var(--cdv-action-on-dark);font-weight:700;font-size:15px;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:2px;font-family:inherit; }
+@media(max-width:599px) { .h-toast-host { bottom:80px; } }

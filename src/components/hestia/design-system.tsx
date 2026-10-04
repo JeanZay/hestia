@@ -1,11 +1,17 @@
 import type { CSSProperties, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from "react";
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 
 // Technical React/TypeScript port of the validated Clé de voûte 1.0 hand-off.
 export function Logo({ dark = false }: { dark?: boolean }) {
   return <span className="h-logo"><svg width="32" height="32" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hestia"><path d="M9 44V24a15 15 0 0 1 9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M39 44V24a15 15 0 0 0-9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M20.5 4.5h7l3 9.5h-13z" fill={dark ? "#5FB3C6" : "var(--cdv-action)"}/></svg><span aria-hidden="true">Hestia</span></span>;
 }
 const paths: Record<string, ReactNode> = {
+  trash: <><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
+  "rotate-ccw": <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>,
+  clock: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
+  "chevron-down": <path d="m6 9 6 6 6-6"/>,
+  users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
   user: <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>,
   search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>,
   folder: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>,
@@ -29,7 +35,7 @@ const paths: Record<string, ReactNode> = {
 export function Icon({ name, size = 20, style }: { name: string; size?: number; style?: CSSProperties }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={size <= 16 ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: "none", ...style }}>{paths[name]}</svg>;
 }
-export function Button({ variant = "primary", icon, loading, compact, children, className = "", disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "tertiary"; icon?: string; loading?: boolean; compact?: boolean }) {
+export function Button({ variant = "primary", icon, loading, compact, children, className = "", disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "tertiary" | "danger"; icon?: string; loading?: boolean; compact?: boolean }) {
   return <button {...props} type={props.type || "button"} className={`cdv-focus h-button h-button-${variant} ${compact ? "h-compact" : ""} ${className}`} disabled={disabled || loading} aria-busy={loading || undefined}>{(loading || icon) && <Icon name={loading ? "loader" : icon!} size={18} style={loading ? { animation: "cdv-spin 1s linear infinite" } : undefined}/>}<span>{children}</span></button>;
 }
 export function TextField({ label, hint, error, id, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; error?: string }) {
@@ -39,8 +45,8 @@ export function TextField({ label, hint, error, id, ...props }: InputHTMLAttribu
 export function Banner({ tone = "info", title, children }: { tone?: "info" | "danger" | "success"; title: string; children?: ReactNode }) {
   return <div role={tone === "danger" ? "alert" : "status"} className={`h-banner h-banner-${tone}`}><Icon name={tone === "danger" ? "x" : tone === "success" ? "check" : "info"}/><div><strong>{title} </strong>{children}</div></div>;
 }
-export function EmptyState({ title, children }: { title: string; children: ReactNode }) {
-  return <div className="h-empty"><Icon name="folder" size={40}/><h2>{title}</h2><p>{children}</p></div>;
+export function EmptyState({ title, children, icon = "folder" }: { title: string; children: ReactNode; icon?: string }) {
+  return <div className="h-empty"><Icon name={icon} size={40}/><h2>{title}</h2><p>{children}</p></div>;
 }
 export function ScopeBadge() { return <span className="h-scope"><Icon name="lock" size={14}/>Personnel</span>; }
 export function PageHeader({ title, summary, overline }: { title: string; summary: string; overline?: string }) {
@@ -56,4 +62,34 @@ export function Breadcrumb({ folderName, onFolders }: { folderName: string; onFo
 }
 export function Skeleton({ rows = 5, label = "Chargement en cours" }: { rows?: number; label?: string }) {
   return <div role="status" aria-label={label} aria-busy="true" className="h-skeleton">{Array.from({ length: rows }, (_, i) => <div key={i} aria-hidden="true" className="h-skeleton-row"><span className="h-skeleton-thumb"/><div><span style={{ height: 14, width: (60 - i * 10) + "%" }}/><span style={{ height: 12, width: (40 - i * 5) + "%" }}/></div></div>)}</div>;
+}
+
+// Additional components faithfully ported from the same validated hand-off.
+export function Tabs({ items, active, onChange }: { items: {id: string; label: string}[]; active: string; onChange: (id: string) => void }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const current = Math.max(0, items.findIndex(item => item.id === active));
+  return <div className="h-tabs" role="tablist" aria-label="Sections du dossier" onKeyDown={event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const index = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowRight" ? 1 : -1) + items.length) % items.length;
+    onChange(items[index].id); refs.current[index]?.focus();
+  }}>{items.map((item, index) => <button className="cdv-focus" key={item.id} ref={el => { refs.current[index] = el; }} role="tab" type="button" aria-selected={active === item.id} tabIndex={active === item.id ? 0 : -1} onClick={() => onChange(item.id)}>{item.label}</button>)}</div>;
+}
+export function Select({ label, hint, options, value, disabled, onChange }: { label: string; hint?: string; options: {value: string; label: string}[]; value: string; disabled?: boolean; onChange: (value: string) => void }) {
+  const id = useId();
+  return <div className="h-field"><label htmlFor={id}>{label}</label>{hint && <div className="h-hint" id={`${id}-hint`}>{hint}</div>}<div className="h-select"><select id={id} className="cdv-focus" aria-describedby={hint ? `${id}-hint` : undefined} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><Icon name="chevron-down"/></div></div>;
+}
+export function Checkbox({ label, description, checked, disabled, onChange }: { label: string; description: string; checked: boolean; disabled?: boolean; onChange: (value: boolean) => void }) {
+  const id = useId();
+  return <label className="h-checkbox"><input type="checkbox" aria-label={label} checked={checked} disabled={disabled} aria-describedby={`${id}-description`} onChange={e => onChange(e.target.checked)}/><span className="h-checkbox-box" aria-hidden="true">{checked && <Icon name="check" size={16}/>}</span><span>{label}<span className="h-hint" id={`${id}-description`}>{description}</span></span></label>;
+}
+export function Dialog({ title, children, confirmLabel, confirmIcon, busy, onConfirm, onCancel }: { title: string; children: ReactNode; confirmLabel: string; confirmIcon?: string; busy?: boolean; onConfirm: () => void; onCancel: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null); const id = useId();
+  useEffect(() => { const dialog = ref.current; dialog?.showModal(); dialog?.querySelector<HTMLButtonElement>("button")?.focus(); return () => dialog?.close(); }, []);
+  // Mobile detail panels hide the main ancestor. A body portal keeps the native
+  // modal visible and focusable regardless of which responsive pane is active.
+  return typeof document === "undefined" ? null : createPortal(<dialog ref={ref} className="cdv-root h-dialog" aria-labelledby={id} onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}><div className="h-dialog-content"><h2 id={id}>{title}</h2><div className="h-dialog-body">{children}</div><div className="h-actions"><Button variant="tertiary" disabled={busy} onClick={onCancel}>Annuler</Button><Button className="h-dialog-confirm" icon={confirmIcon} loading={busy} onClick={onConfirm}>{confirmLabel}</Button></div></div></dialog>, document.body);
+}
+export function Toast({ children, action, onAction }: { children: ReactNode; action?: string; onAction?: () => void }) {
+  return <div className="h-toast-host"><div className="h-toast" role="status"><Icon name="check"/><div>{children}</div>{action && <button type="button" className="cdv-focus" onClick={onAction}>{action}</button>}</div></div>;
 }

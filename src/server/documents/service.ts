@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { type Access, type Actor, HttpError, bodyBytes, guarded, invalid, isUuid, json, privateHeaders, response, textField, unavailable } from "../access";
 import type { ObjectStore } from "../storage";
 import { validateOriginal } from "../formats";
+import { getFolderAccess } from "../permissions/service";
 
 export const CHUNK_SIZE = 2 * 1024 * 1024;
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -10,6 +11,8 @@ export type DocumentDependencies = {
   store: ObjectStore;
   validateOriginal?: typeof validateOriginal;
   limits?: { memberBytes?: number; globalBytes?: number; fileBytes?: number };
+  /** Server clock injection for expiry tests; never accepted from an HTTP client. */
+  now?: () => Date;
 };
 type Upload = {
   id: string; actor_id: string; folder_id: string; owner_id: string; identity_sha: string;
@@ -21,7 +24,8 @@ type StoredDocument = {
   id: string; folder_id: string; title: string; file_name: string; media_type: string;
   size: number; sha256: string; source: string; version: number; created_at: Date;
   uploaded_by_name: string; preview_supported: boolean; object_key: string;
-  trashed_at: Date | null; purged_at: Date | null;
+  trashed_at: Date | null; purged_at: Date | null; trashed_by_name: string | null;
+  last_lifecycle_action: string | null; last_lifecycle_version: number | null;
 };
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const conflict = (code: string, message: string) => new HttpError(409, code, message);
@@ -45,17 +49,16 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   if (fileBytes > MAX_FILE_SIZE) throw new Error("File limit exceeds bounded protocol");
   const store = () => { if (!dependencies?.store) throw new Error("Object storage is not configured"); return dependencies.store; };
   const validate = dependencies?.validateOriginal ?? validateOriginal;
+  async function clock(client: PoolClient) {
+    return dependencies?.now?.() ?? (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0].now;
+  }
   async function budget(client: PoolClient) { await client.query("SELECT id FROM hestia_storage_budget WHERE id=1 FOR UPDATE"); }
   // Grant rows are locked through the effect. Revocation/expiry is re-evaluated
   // after every remote I/O, never inferred from the initial browser request.
   async function permissions(client: PoolClient, actor: Actor, folderId: string, required: string[]) {
-    const folder = (await client.query("SELECT created_by FROM hestia_folder WHERE id=$1 FOR UPDATE", [folderId])).rows[0];
-    if (!folder) throw unavailable();
-    const grants = await client.query(`SELECT capability FROM hestia_grant WHERE folder_id=$1 AND user_id=$2
-      AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR SHARE`, [folderId,actor.id]);
-    const capabilities: string[] = [...new Set(grants.rows.map(row => String(row.capability)))];
+    const { capabilities, ownerId } = await getFolderAccess(client, actor.id, folderId);
     if (required.some(right => !capabilities.includes(right))) throw unavailable();
-    return { capabilities, ownerId: String(folder.created_by) };
+    return { capabilities, ownerId };
   }
   async function quota(client: PoolClient, owner: string, additional: number) {
     const result = await client.query(`SELECT COALESCE(sum(size),0)::text AS total,
@@ -271,21 +274,52 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   function handleDocuments(request: Request) {
     return guarded(async () => {
       const url = new URL(request.url), folderId = url.searchParams.get("folderId"), q = url.searchParams.get("q") ?? "";
-      if ((folderId && !isUuid(folderId)) || q.length>200) throw invalid();
-      const documents = await withActor(request,async (client,actor) => {
-        if (folderId) await permissions(client,actor,folderId,["consulter"]);
-        const rows = (await client.query<StoredDocument>(`SELECT d.* FROM hestia_document d WHERE d.trashed_at IS NULL AND d.purged_at IS NULL
+      const trash = url.searchParams.get("trash");
+      if ((folderId && !isUuid(folderId)) || q.length>200 || (trash !== null && trash !== "true") || (trash && !folderId)) throw invalid();
+      const listing = await withActor(request,async (client,actor) => {
+        const required = trash ? ["consulter", "supprimer"] : ["consulter"];
+        if (folderId) await permissions(client,actor,folderId,required);
+        const now = await clock(client);
+        const rows = (await client.query<StoredDocument>(`SELECT d.* FROM hestia_document d WHERE d.purged_at IS NULL
+          AND (CASE WHEN $3::boolean THEN d.trashed_at IS NOT NULL AND d.trashed_at > $4::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
           AND ($1::uuid IS NULL OR d.folder_id=$1) AND EXISTS(SELECT 1 FROM hestia_grant g WHERE g.folder_id=d.folder_id AND g.user_id=$2
-          AND g.capability='consulter' AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>clock_timestamp())) ORDER BY d.folder_id,d.created_at,d.id`, [folderId,actor.id])).rows;
+          AND g.capability='consulter') ORDER BY d.folder_id,d.created_at,d.id`, [folderId,actor.id,Boolean(trash),now])).rows;
         const result = [];
         for (const row of rows) {
+          const rights = await getFolderAccess(client,actor.id,row.folder_id);
+          if (required.some(right => !rights.capabilities.includes(right))) continue;
           if (!fold(row.title + " " + row.file_name).includes(fold(q))) continue;
-          const current = await currentDocument(client,actor,row.id);
-          result.push(dto(current.row,current.capabilities));
+          result.push(trash ? { ...dto(row,rights.capabilities), trashedAt: row.trashed_at!.toISOString(),
+            restorableUntil: new Date(row.trashed_at!.getTime()+7*86400000).toISOString(), trashedByName: row.trashed_by_name }
+            : dto(row,rights.capabilities));
         }
-        return result;
+        return { documents: result, now: now.toISOString() };
       });
-      return response({ documents });
+      return response(listing);
+    });
+  }
+  function handleDocumentLifecycle(request: Request, id: string, action: "trash" | "restore") {
+    return guarded(async () => {
+      origin(request); if (!isUuid(id)) throw unavailable();
+      const input = await json(request,["version"]);
+      if (!Number.isSafeInteger(input.version) || Number(input.version)<1 || Number(input.version)>=2147483647) throw invalid();
+      const result = await withActor(request,async (client,actor) => {
+        const found = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1",[id])).rows[0];
+        if (!found || found.purged_at) throw unavailable();
+        const rights = await permissions(client,actor,found.folder_id,["consulter","supprimer"]);
+        const row = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1 FOR UPDATE",[id])).rows[0];
+        const now = await clock(client);
+        if (!row || row.purged_at || (row.trashed_at && row.trashed_at.getTime()+7*86400000<=now.getTime())) throw unavailable();
+        const repeated = row.last_lifecycle_action===action && row.last_lifecycle_version===input.version && row.version===Number(input.version)+1;
+        if (!repeated && (row.version!==input.version || (action==="trash" ? !!row.trashed_at : !row.trashed_at)))
+          throw conflict("VERSION_CONFLICT","Ce document a changé. Actualisez-le avant de réessayer.");
+        const current = repeated ? row : (await client.query<StoredDocument>(`UPDATE hestia_document SET
+          trashed_at=$2,trashed_by_name=$3,version=version+1,last_lifecycle_action=$4,last_lifecycle_version=$5 WHERE id=$1 RETURNING *`,
+          [id,action==="trash" ? now : null,action==="trash" ? actor.name : null,action,input.version])).rows[0];
+        return action==="restore" ? {document:dto(current,rights.capabilities)} : {success:true,documentId:id,version:current.version,
+          restorableUntil:new Date(current.trashed_at!.getTime()+7*86400000).toISOString()};
+      });
+      return response(result);
     });
   }
   function handleDocument(request: Request, id: string) {
@@ -340,12 +374,20 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     }
     return keys.length;
   }
+  async function discardPurgedObjectReceipts(client: PoolClient, uploadId: string) {
+    // Keep the completed upload/document tombstone for idempotency, but no
+    // fingerprints of deleted bytes once the original purge is confirmed.
+    await client.query(`DELETE FROM hestia_upload_object o USING hestia_upload u,hestia_document d
+      WHERE o.upload_id=u.id AND u.document_id=d.id AND u.id=$1 AND o.deleted_at IS NOT NULL
+      AND d.purged_at IS NOT NULL AND d.object_key IS NULL`,[uploadId]);
+  }
   async function cleanupUploads(limit = 20, maxObjects = 1100, priorityActorId?: string) {
     if (!Number.isInteger(limit) || limit<1 || limit>100 || !Number.isInteger(maxObjects) || maxObjects<1 || maxObjects>1100) throw new Error("Invalid cleanup batch");
     const candidates = await db().query(`SELECT u.id FROM hestia_upload u WHERE
       (u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp()) OR
-      (u.status='cancelled' AND NOT u.reservation_released) OR (u.status IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM hestia_upload_object o WHERE o.upload_id=u.id AND o.deleted_at IS NULL
-        AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)))
+      (u.status='cancelled' AND NOT u.reservation_released) OR (u.status IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM hestia_upload_object o WHERE o.upload_id=u.id
+        AND ((o.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key))
+          OR (o.deleted_at IS NOT NULL AND EXISTS(SELECT 1 FROM hestia_document d WHERE d.id=u.document_id AND d.purged_at IS NOT NULL AND d.object_key IS NULL)))))
       ORDER BY CASE WHEN u.actor_id=$2 AND u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp() THEN 0
         WHEN u.actor_id=$2 THEN 1 ELSE 2 END, u.created_at LIMIT $1`, [limit,priorityActorId ?? null]);
     let cleaned = 0;
@@ -374,12 +416,58 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
         await transaction(async client => {
           await budget(client);
           await client.query("UPDATE hestia_upload SET reservation_released=true WHERE id=$1 AND status='cancelled' AND NOT EXISTS(SELECT 1 FROM hestia_upload_object WHERE upload_id=$1 AND deleted_at IS NULL)", [candidate.id]);
+          await discardPurgedObjectReceipts(client,candidate.id);
         });
       },true);
     }
     return { cleaned };
   }
-  return { handleUploads, handleUploadChunk, handleUploadComplete, handleUpload, handleDocuments, handleDocument, handleDocumentContent, cleanupUploads };
+  async function cleanupTrash(limit = 20) {
+    if (!Number.isInteger(limit) || limit<1 || limit>100) throw new Error("Invalid trash batch");
+    const candidates = await transaction(async client => {
+      const now = await clock(client);
+      return (await client.query(`SELECT d.id,u.id AS upload_id FROM hestia_document d JOIN hestia_upload u ON u.document_id=d.id
+        WHERE d.object_key IS NOT NULL AND (d.purged_at IS NOT NULL OR d.trashed_at <= $1::timestamptz-interval '168 hours')
+        ORDER BY d.trashed_at,d.id LIMIT $2`,[now,limit])).rows;
+    });
+    let purged=0, failed=0;
+    for (const candidate of candidates) {
+      try {
+        await operationLock(candidate.upload_id,async () => {
+          const claimed = await transaction(async client => {
+            await budget(client);
+            const found = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1",[candidate.id])).rows[0];
+            if (!found?.object_key) return null;
+            await client.query("SELECT id FROM hestia_folder WHERE id=$1 FOR UPDATE",[found.folder_id]);
+            const row = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1 FOR UPDATE",[candidate.id])).rows[0];
+            const now = await clock(client);
+            if (!row?.object_key || (!row.purged_at && (!row.trashed_at || row.trashed_at.getTime()+7*86400000>now.getTime()))) return null;
+            // Publish inaccessibility before remote deletion. Retain only the
+            // object ledger/charged size until deletion has actually succeeded.
+            await client.query(`UPDATE hestia_document SET purged_at=COALESCE(purged_at,$2),title=NULL,file_name=NULL,
+              uploaded_by_name=NULL,trashed_by_name=NULL WHERE id=$1`,[row.id,now]);
+            await client.query("UPDATE hestia_upload SET title=NULL,file_name=NULL WHERE id=$1",[candidate.upload_id]);
+            return row;
+          });
+          if (!claimed) return;
+          await store().delete(claimed.object_key);
+          await transaction(async client => {
+            await budget(client);
+            await client.query("UPDATE hestia_upload_object SET deleted_at=clock_timestamp() WHERE object_key=$1",[claimed.object_key]);
+            await client.query(`UPDATE hestia_document SET object_key=NULL,size=NULL,sha256=NULL,media_type=NULL,source=NULL,
+              uploaded_by=NULL,preview_supported=NULL,last_lifecycle_action=NULL,last_lifecycle_version=NULL WHERE id=$1 AND purged_at IS NOT NULL`,[claimed.id]);
+            await client.query("UPDATE hestia_upload SET final_key=NULL,size=NULL,sha256=NULL,media_type=NULL,source=NULL WHERE id=$1 AND status='completed'",[candidate.upload_id]);
+            await discardPurgedObjectReceipts(client,candidate.upload_id);
+          });
+          purged++;
+        },true);
+      } catch { failed++; }
+    }
+    return { purged, failed };
+  }
+  return { handleUploads, handleUploadChunk, handleUploadComplete, handleUpload, handleDocuments, handleDocument, handleDocumentContent,
+    handleDocumentTrash: (request:Request,id:string) => handleDocumentLifecycle(request,id,"trash"),
+    handleDocumentRestore: (request:Request,id:string) => handleDocumentLifecycle(request,id,"restore"), cleanupUploads, cleanupTrash };
 }
 
 

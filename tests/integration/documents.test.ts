@@ -74,8 +74,11 @@ describe("private immutable originals over SQL and real S3", () => {
   beforeEach(async () => { folderId=await folder(); });
   afterEach(async () => {
     putHook=undefined; getHook=undefined; deleteHook=undefined;
-    await pool.query("UPDATE hestia_grant SET revoked_at=NULL,expires_at=NULL WHERE user_id IN ($1,$2)",[actorId,otherId]);
     await pool.query("UPDATE hestia_member SET active=true WHERE user_id IN ($1,$2)",[actorId,otherId]);
+    // Trusted fixture reset explicitly reinstates test grants after departure;
+    // application re-admission must never restore those grants implicitly.
+    await pool.query("UPDATE hestia_grant g SET revoked_at=NULL,expires_at=NULL,subject_epoch=m.departure_epoch FROM hestia_member m WHERE g.user_id=m.user_id AND g.user_id IN ($1,$2)",[actorId,otherId]);
+    cookie=await login(email); otherCookie=await login(otherEmail);
     await pool.query("UPDATE hestia_upload SET status='cancelled' WHERE actor_id IN ($1,$2) AND status IN ('uploading','finalizing')",[actorId,otherId]);
     await app.cleanupUploads(100);
   });
