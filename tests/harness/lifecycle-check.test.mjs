@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { computeCoverageDigest, inspectCheckpoint, ownershipConflicts, referencedFiles, validateLifecycle } from '../../scripts/lifecycle-check.mjs';
+import { computeCoverageDigest, computeLocalHandoffDigest, inspectCheckpoint, ownershipConflicts, referencedFiles, validateLifecycle } from '../../scripts/lifecycle-check.mjs';
 import { computeDigests, validateRefinement } from '../../scripts/refinement-check.mjs';
 import { handoff, ready, refreshMutations, signBrief } from './fixtures/refinement-synthetic.mjs';
 
@@ -101,6 +101,231 @@ function withFixture(run) {
 
 function check(fixture, action = 'execute') { return validateLifecycle(fixture.checkpoint, { root: fixture.directory, now, action }); }
 function has(result, code) { assert.ok(result.diagnostics.some((item) => item.code === code), JSON.stringify(result.diagnostics)); }
+
+// A bounded local lot reuses an observed Issue, without fabricating publication
+// receipts, a published story plan or consent for a remote write.
+function withLocalFixture(run) {
+  return withFixture((fixture) => {
+    const { record, checkpoint, review, directory } = fixture;
+    const contract = structuredClone(record.readiness.handoffs[0].contract);
+    record.stage = 'brief-validated';
+    record.plan.issues = []; record.plan.order = []; record.plan.mutations = [];
+    record.approvals.publication = null; record.publication.receipts = [];
+    record.readiness.dependencyEvidence = []; record.readiness.handoffs = [];
+    checkpoint.refinement = put(directory, checkpoint.refinement.path, record);
+    const localQuote = "ACCORD SYNTHETIQUE : je valide le brief exact, j'engage son périmètre complet et j'autorise son exécution locale. Aucune publication autorisée.";
+    checkpoint.sources[0].file = put(directory, checkpoint.sources[0].file.path, `${localQuote}\n\n${resolution}\n`);
+    checkpoint.agreements[0].quote = localQuote;
+    checkpoint.agreements[0].actions = ['brief', 'engage', 'execute'];
+    contract.githubIssue = checkpoint.need.githubIssue;
+    contract.objective = record.brief.outcome;
+    contract.scope.included = [...record.brief.scope.included];
+    contract.scope.excluded = [...record.brief.scope.excluded];
+    contract.acceptanceCriteria = record.brief.criteria.flatMap((criterion) => [criterion.positive, criterion.negative]);
+    contract.validation = record.brief.criteria.map((criterion) => criterion.evidence);
+    checkpoint.contract = put(directory, checkpoint.contract.path, contract);
+    checkpoint.localHandoff = {
+      briefDigest: computeDigests(record).brief,
+      contractSha256: checkpoint.contract.sha256,
+      criterionIds: record.brief.criteria.map((criterion) => criterion.id),
+      githubObservationId: 'github-read',
+    };
+    function refreshReview() {
+      review.localHandoffDigest = computeLocalHandoffDigest(checkpoint);
+      checkpoint.qualification.review = put(directory, checkpoint.qualification.review.path, review);
+    }
+    function saveContract() {
+      checkpoint.contract = put(directory, checkpoint.contract.path, contract);
+      checkpoint.localHandoff.contractSha256 = checkpoint.contract.sha256;
+      refreshReview();
+    }
+    function changeObservation(id, mutate) {
+      const observation = checkpoint.observations.find((item) => item.id === id);
+      const observed = JSON.parse(readFileSync(path.join(directory, observation.file.path), 'utf8'));
+      mutate(observed);
+      for (const field of ['kind', 'subject', 'observedAtUtc', 'maxAgeSeconds', 'candidateDigest', 'environment', 'status']) observation[field] = observed[field];
+      observation.file = put(directory, observation.file.path, observed);
+    }
+    changeObservation('github-read', (observed) => { observed.issue = { url: checkpoint.need.githubIssue, state: 'OPEN' }; });
+    refreshReview();
+    assert.equal(validateRefinement(record).valid, true, 'Local work must keep a truthful brief-validated dossier.');
+    return run({ ...fixture, contract, refreshReview, saveContract, changeObservation });
+  });
+}
+
+test('an exact reviewed local handoff can execute on an existing Issue without publication permission or a story plan', () => withLocalFixture((fixture) => {
+  const before = json(fixture.record);
+  const result = check(fixture);
+  assert.equal(result.executionReadiness, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.valid, true);
+  assert.equal(result.humanConsentAuthenticated, false);
+  assert.equal(result.remoteStateVerified, false);
+  assert.equal(json(fixture.record), before, 'Checking local readiness cannot invent publication state.');
+  assert.equal(fixture.record.stage, 'brief-validated');
+  assert.deepEqual(fixture.record.plan.issues, []);
+  assert.deepEqual(fixture.record.plan.mutations, []);
+  assert.equal(fixture.record.approvals.publication, null);
+  assert.ok(!fixture.checkpoint.agreements[0].actions.includes('publish'));
+}));
+
+test('local handoff still requires each exact brief engagement and execution agreement', () => {
+  for (const missing of ['brief', 'engage', 'execute']) withLocalFixture((fixture) => {
+    fixture.checkpoint.agreements[0].actions = fixture.checkpoint.agreements[0].actions.filter((action) => action !== missing);
+    assert.equal(check(fixture).executionReadiness, false, `Missing ${missing} must not pass.`);
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.agreements[0].status = 'withdrawn';
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('local handoff rejects narrowed or expanded contracts even after hashes and review are refreshed', () => {
+  const changes = [
+    (contract) => { contract.objective += ' Un autre résultat.'; },
+    (contract) => { contract.scope.included.push('Un parcours non demandé.'); },
+    (contract) => { contract.scope.included = ['Un sous-périmètre arbitraire.']; },
+    (contract) => { contract.scope.excluded = ['Des exclusions différentes.']; },
+    (contract) => { contract.acceptanceCriteria = contract.acceptanceCriteria.slice(0, 1); },
+    (contract) => { contract.acceptanceCriteria.push('Un résultat non approuvé.'); },
+    (contract) => { contract.validation = ['Un autre contrôle sans la preuve du brief.']; },
+    (contract) => { contract.githubIssue = 'https://github.com/example/hestia-fixture/issues/99'; },
+  ];
+  for (const change of changes) withLocalFixture((fixture) => {
+    change(fixture.contract); fixture.saveContract();
+    assert.equal(check(fixture).executionReadiness, false, 'A freshly hashed contract is not a new product agreement.');
+  });
+});
+
+test('local handoff binds the exact brief contract and complete criterion set', () => {
+  for (const change of [
+    (handoff) => { handoff.briefDigest = '0'.repeat(64); },
+    (handoff) => { handoff.contractSha256 = '0'.repeat(64); },
+    (handoff) => { handoff.criterionIds = []; },
+    (handoff) => { handoff.criterionIds = ['C_OTHER']; },
+  ]) withLocalFixture((fixture) => {
+    change(fixture.checkpoint.localHandoff); fixture.refreshReview();
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('local handoff needs its own exact independent review as well as scenario coverage', () => {
+  for (const change of [
+    (review) => { delete review.localHandoffDigest; },
+    (review) => { review.localHandoffDigest = '0'.repeat(64); },
+    (review) => { review.reviewer.identity = review.authors[0]; },
+    (review) => { review.verdict = 'NOT_PERFORMED'; },
+    (review) => { review.openBlockingFindings = 1; },
+  ]) withLocalFixture((fixture) => {
+    change(fixture.review);
+    fixture.checkpoint.qualification.review = put(fixture.directory, fixture.checkpoint.qualification.review.path, fixture.review);
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.qualification.coverage = fixture.checkpoint.qualification.coverage.filter((scenario) => scenario.kind !== 'negative');
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('a local handoff requires an actual matching open Issue observation, not a satisfied label alone', () => {
+  for (const change of [
+    (observed) => { delete observed.issue; },
+    (observed) => { observed.issue.state = 'CLOSED'; },
+    (observed) => { observed.issue.url = 'https://github.com/example/hestia-fixture/issues/99'; },
+    (observed) => { observed.subject = 'https://github.com/example/hestia-fixture/issues/99'; },
+    (observed) => { observed.status = 'pending'; },
+    (observed) => { observed.maxAgeSeconds = 1; },
+    (observed) => { observed.environment = 'local'; },
+    (observed) => { observed.kind = 'dependency'; },
+  ]) withLocalFixture((fixture) => {
+    fixture.changeObservation('github-read', change);
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.localHandoff.githubObservationId = 'missing-observation'; fixture.refreshReview();
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.need.githubIssue = null; fixture.contract.githubIssue = null; fixture.saveContract();
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('local handoff checks all dependencies without relying on publication handoff entries', () => {
+  for (const change of [
+    (observed) => { observed.status = 'pending'; },
+    (observed) => { observed.maxAgeSeconds = 1; },
+    (observed) => { observed.candidateDigest = null; },
+    (observed) => { observed.subject = 'https://github.com/example/hestia-fixture/issues/99'; },
+  ]) withLocalFixture((fixture) => {
+    fixture.changeObservation('dependency-proof', change);
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.dependencyLevels[0].environment = 'Dev'; fixture.refreshReview();
+    assert.equal(check(fixture).executionReadiness, false, 'A local test cannot prove a Dev dependency.');
+    fixture.changeObservation('dependency-proof', (observed) => { observed.environment = 'Dev'; });
+    assert.equal(check(fixture).executionReadiness, true, JSON.stringify(check(fixture).diagnostics));
+  });
+  withLocalFixture((fixture) => {
+    fixture.checkpoint.dependencyLevels.push({ url: 'https://github.com/example/hestia-fixture/issues/99', environment: 'local' });
+    fixture.refreshReview();
+    assert.equal(check(fixture).executionReadiness, false, 'Every declared prerequisite needs evidence.');
+  });
+});
+
+test('changing dependency requirements after review invalidates the local handoff review', () => withLocalFixture((fixture) => {
+  fixture.checkpoint.dependencyLevels = [];
+  assert.equal(check(fixture).executionReadiness, false, 'Removing a dependency cannot reuse its previous review.');
+}));
+
+test('local handoff cannot revive a paused need or authorize an external delivery', () => {
+  for (const status of ['paused', 'cancelled', 'superseded']) withLocalFixture((fixture) => {
+    fixture.checkpoint.status = status;
+    assert.equal(check(fixture).executionReadiness, false);
+    assert.equal(check(fixture).nextAction, null);
+  });
+  for (const target of ['GitHub', 'Dev', 'Production']) withLocalFixture((fixture) => {
+    fixture.contract.deliveryTarget = target; fixture.saveContract();
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('local handoff cannot be mixed with a published story workflow to evade its approval', () => withFixture((fixture) => {
+  fixture.checkpoint.localHandoff = {
+    briefDigest: computeDigests(fixture.record).brief,
+    contractSha256: fixture.checkpoint.contract.sha256,
+    criterionIds: ['C_KEEP'], githubObservationId: 'github-read',
+  };
+  fixture.review.localHandoffDigest = computeLocalHandoffDigest(fixture.checkpoint);
+  fixture.checkpoint.qualification.review = put(fixture.directory, fixture.checkpoint.qualification.review.path, fixture.review);
+  fixture.checkpoint.agreements[0].actions = ['brief', 'engage', 'execute'];
+  assert.equal(check(fixture).executionReadiness, false);
+}));
+
+test('each publication artifact remains incompatible with the bounded local route', () => {
+  const published = ready();
+  for (const change of [
+    (record) => { record.stage = 'ready'; },
+    (record) => { record.plan.issues = published.plan.issues; },
+    (record) => { record.plan.order = published.plan.order; },
+    (record) => { record.plan.mutations = published.plan.mutations; },
+    (record) => { record.approvals.publication = published.approvals.publication; },
+    (record) => { record.publication.receipts = published.publication.receipts; },
+    (record) => { record.readiness.dependencyEvidence = published.readiness.dependencyEvidence; },
+    (record) => { record.readiness.handoffs = published.readiness.handoffs; },
+  ]) withLocalFixture((fixture) => {
+    change(fixture.record);
+    fixture.checkpoint.refinement = put(fixture.directory, fixture.checkpoint.refinement.path, fixture.record);
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('the published-story route still requires publication consent without a local handoff', () => withFixture((fixture) => {
+  fixture.checkpoint.agreements[0].actions = ['brief', 'engage', 'execute'];
+  const result = check(fixture);
+  assert.equal(result.executionReadiness, false);
+  has(result, 'publication-agreement-missing');
+}));
 
 test('literal Next route brackets remain in the exact candidate and changed bytes are detected', () => withFixture((fixture) => {
   const route = put(fixture.directory, 'src/app/api/folders/[id]/route.ts', 'export const runtime = "nodejs";\n');
