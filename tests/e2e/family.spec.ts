@@ -194,7 +194,10 @@ test("retirer puis réadmettre un membre sans restaurer ses droits", async ({ pa
 
 test("connexion clavier et recours exceptionnel sans demande automatique", async ({ page }) => {
   await page.goto("/");
-  await page.getByLabel("Adresse e-mail", { exact: true }).focus();
+  const emailField = page.getByLabel("Adresse e-mail", { exact: true });
+  await expect(emailField).toBeEnabled();
+  await emailField.focus();
+  await expect(emailField).toBeFocused();
   await page.keyboard.press("Tab"); await expect(page.getByLabel("Mot de passe", { exact: true })).toBeFocused();
   await page.getByRole("button", { name: "J’ai perdu mon accès", exact: true }).click();
   await page.getByRole("radio", { name: "Ni l’un ni l’autre", exact: true }).check();
