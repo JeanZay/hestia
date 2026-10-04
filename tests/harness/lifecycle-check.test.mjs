@@ -302,6 +302,31 @@ test('local handoff cannot be mixed with a published story workflow to evade its
   assert.equal(check(fixture).executionReadiness, false);
 }));
 
+test('each publication artifact remains incompatible with the bounded local route', () => {
+  const published = ready();
+  for (const change of [
+    (record) => { record.stage = 'ready'; },
+    (record) => { record.plan.issues = published.plan.issues; },
+    (record) => { record.plan.order = published.plan.order; },
+    (record) => { record.plan.mutations = published.plan.mutations; },
+    (record) => { record.approvals.publication = published.approvals.publication; },
+    (record) => { record.publication.receipts = published.publication.receipts; },
+    (record) => { record.readiness.dependencyEvidence = published.readiness.dependencyEvidence; },
+    (record) => { record.readiness.handoffs = published.readiness.handoffs; },
+  ]) withLocalFixture((fixture) => {
+    change(fixture.record);
+    fixture.checkpoint.refinement = put(fixture.directory, fixture.checkpoint.refinement.path, fixture.record);
+    assert.equal(check(fixture).executionReadiness, false);
+  });
+});
+
+test('the published-story route still requires publication consent without a local handoff', () => withFixture((fixture) => {
+  fixture.checkpoint.agreements[0].actions = ['brief', 'engage', 'execute'];
+  const result = check(fixture);
+  assert.equal(result.executionReadiness, false);
+  has(result, 'publication-agreement-missing');
+}));
+
 test('literal Next route brackets remain in the exact candidate and changed bytes are detected', () => withFixture((fixture) => {
   const route = put(fixture.directory, 'src/app/api/folders/[id]/route.ts', 'export const runtime = "nodejs";\n');
   const manifestPath = fixture.checkpoint.candidate.manifest.path;
