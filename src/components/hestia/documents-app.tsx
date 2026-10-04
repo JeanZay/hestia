@@ -1,12 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Avatar, Banner, Breadcrumb, Button, EmptyState, Icon, Logo, PageHeader, Skeleton, TextField } from "./design-system";
+import { Avatar, Banner, Breadcrumb, Button, Dialog, EmptyState, Icon, Logo, PageHeader, Skeleton, TextField } from "./design-system";
 import { FileWorkspace } from "./file-workspace";
 import { FolderWorkspace } from "./access-workspace";
+import { FamilyAuth } from "./family-auth";
+import { FamilyProfile } from "./family-profile";
+import { FamilyHousehold } from "./family-household";
 import { CAPTURE_EVENT, clearNativePicker, releaseNativePicker, isNativePickerOpen, type CaptureResult } from "./native-capture";
 
-type User = { id: string; name: string; email: string };
+type User = { id: string; name: string; email: string; role?: string };
 type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number; canShare?: boolean; canAdminister?: boolean };
 type Notice = { tone: "info" | "danger" | "success"; title: string; text?: string };
 class RequestError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -22,6 +25,8 @@ export function DocumentsApp() {
   const [user, setUser] = useState<User | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [me, setMe] = useState(false);
+  const [household, setHousehold] = useState(false);
+  const [activationLink, setActivationLink] = useState(false);
   const [pendingCapture, setPendingCapture] = useState<CaptureResult | null>(null);
   const [search, setSearch] = useState<string | null>(null);
   const [fileHost, setFileHost] = useState<HTMLDivElement | null>(null);
@@ -30,16 +35,18 @@ export function DocumentsApp() {
   const [slowLoading, setSlowLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [email, setEmail] = useState(""); const [password, setPassword] = useState("");
   const [panel, setPanel] = useState(false); const [newName, setNewName] = useState("");
   const [edit, setEdit] = useState<{ name: string; version: number } | null>(null);
   const [fieldError, setFieldError] = useState<string>();
   const generation = useRef(0);
   const captureValidation = useRef(false);
+  const admitted = useRef(false);
   const selected = folders.find(folder => folder.id === selectedId);
+  useEffect(() => { void Promise.resolve().then(() => setActivationLink(new URLSearchParams(window.location.search).has("flowId") && window.location.hash.includes("capability="))); }, []);
   const clearPrivate = useCallback((preservePicker = false) => {
+    admitted.current = false;
     if (!preservePicker) clearNativePicker();
-    setNotice(null); setPendingCapture(null); setSearch(null); setUser(null); setMe(false); setFolders([]); setSelectedId(null); setPanel(false); setEdit(null); setNewName(""); setPassword(""); setFieldError(undefined);
+    setNotice(null); setPendingCapture(null); setSearch(null); setUser(null); setMe(false); setHousehold(false); setActivationLink(false); setFolders([]); setSelectedId(null); setPanel(false); setEdit(null); setNewName(""); setFieldError(undefined);
   }, []);
   const refresh = useCallback(async (signal?: AbortSignal, requestedId?: string, background = false) => {
     const epoch = ++generation.current;
@@ -48,7 +55,7 @@ export function DocumentsApp() {
       const session = await request<{ user: User }>("/api/hestia/session", "GET", undefined, signal);
       const result = await request<{ folders: Folder[] }>("/api/hestia/folders", "GET", undefined, signal);
       if (epoch !== generation.current) return;
-      setUser(session.user); setFolders(result.folders);
+      admitted.current = true; setUser(session.user); setFolders(result.folders);
       setSelectedId(id => { const candidate = requestedId ?? id; return result.folders.some(f => f.id === candidate) ? candidate : null; });
       if (requestedId && !result.folders.some(f => f.id === requestedId)) setNotice({ tone: "danger", title: "Dossier indisponible.", text: "Ce dossier n’est plus accessible. La liste a été actualisée." });
     } catch (error) {
@@ -61,7 +68,7 @@ export function DocumentsApp() {
     const controller = new AbortController();
     void Promise.resolve().then(() => { if (!controller.signal.aborted) return refresh(controller.signal); });
     const onFocus = () => { if (!document.hidden && !captureValidation.current) void refresh(controller.signal, undefined, true); };
-    const onVisibility = () => { if (document.hidden) { ++generation.current; clearPrivate(isNativePickerOpen()); setChecking(true); } else onFocus(); };
+    const onVisibility = () => { if (document.hidden) { ++generation.current; if (admitted.current) { clearPrivate(isNativePickerOpen()); setChecking(true); } } else onFocus(); };
     window.addEventListener("focus", onFocus); window.addEventListener("pageshow", onFocus); document.addEventListener("visibilitychange", onVisibility);
     return () => { controller.abort(); window.removeEventListener("focus", onFocus); window.removeEventListener("pageshow", onFocus); document.removeEventListener("visibilitychange", onVisibility); };
   }, [refresh, clearPrivate]);
@@ -76,7 +83,7 @@ export function DocumentsApp() {
         if (session.user.id !== result.userId) { clearPrivate(); return; }
         const folder = listing.folders.find(f => f.id === result.folderId && f.capabilities.includes("déposer"));
         if (!folder) { clearPrivate(); return; }
-        setUser(session.user); setFolders(listing.folders); setSelectedId(folder.id); setMe(false); setSearch(null); setPendingCapture(result);
+        admitted.current = true; setUser(session.user); setFolders(listing.folders); setSelectedId(folder.id); setMe(false); setSearch(null); setPendingCapture(result);
       }).catch(() => { if (epoch === generation.current) clearPrivate(); }).finally(() => { captureValidation.current = false; if (epoch === generation.current) setChecking(false); });
     };
     window.addEventListener(CAPTURE_EVENT, received);
@@ -100,10 +107,10 @@ export function DocumentsApp() {
     }, 30000);
     return () => { clearInterval(timer); controller.abort(); };
   }, [user, clearPrivate]);
-  async function login(event: FormEvent) {
-    event.preventDefault(); if (busy) return;
+  async function login(email: string, password: string) {
+    if (busy) return;
     setBusy(true); setNotice(null);
-    try { await request("/api/auth/sign-in/email", "POST", { email, password }); setPassword(""); await refresh(); }
+    try { await request("/api/auth/sign-in/email", "POST", { email, password }); await refresh(); }
     catch (error) { clearPrivate(); setNotice({ tone: "danger", title: "Connexion impossible.", text: error instanceof RequestError && error.status === 429 ? error.message : "Vérifiez votre adresse e-mail et votre mot de passe, puis réessayez." }); }
     finally { setBusy(false); }
   }
@@ -133,22 +140,23 @@ export function DocumentsApp() {
       else setNotice({ tone: "danger", title: "Enregistrement impossible.", text: errorMessage(error) });
     } finally { setBusy(false); }
   }
-  function showFolders() { setPendingCapture(null); setSearch(null); setMe(false); setSelectedId(null); setPanel(false); setEdit(null); setFieldError(undefined); }
-  function openFolder(id: string) { setPendingCapture(null); setSearch(null); setMe(false); setSelectedId(null); setFolders([]); setPanel(false); setEdit(null); setFieldError(undefined); setNotice(null); void refresh(undefined, id); }
+  function showFolders() { setPendingCapture(null); setSearch(null); setMe(false); setHousehold(false); setSelectedId(null); setPanel(false); setEdit(null); setFieldError(undefined); }
+  function openFolder(id: string) { setPendingCapture(null); setSearch(null); setMe(false); setHousehold(false); setSelectedId(null); setFolders([]); setPanel(false); setEdit(null); setFieldError(undefined); setNotice(null); void refresh(undefined, id); }
   const consumeCapture = useCallback(() => { releaseNativePicker(); setPendingCapture(null); }, []);
   const filesAccessLost = useCallback(() => { ++generation.current; clearPrivate(); }, [clearPrivate]);
   const filesUpdated = useCallback(() => { setNotice(null); const epoch = generation.current; void request<{folders: Folder[]}>("/api/hestia/folders").then(result => { if (epoch === generation.current) setFolders(result.folders); }).catch(() => {}); }, []);
   const message = notice && <Banner tone={notice.tone} title={notice.title}>{notice.text}</Banner>;
   if (checking) return <div className="cdv-root h-root"><main className="h-main" aria-label="Contenu principal"><div className="h-content">{slowLoading ? <Banner title="Le chargement prend plus de temps que prévu.">Hestia attend une réponse du serveur.</Banner> : <Skeleton/>}</div></main></div>;
-  if (!user) return <div className="cdv-root h-root"><div className="h-login"><form className="h-login-card" onSubmit={login} aria-labelledby="login-title"><Logo/><div><h1 id="login-title">Connexion</h1><p className="h-hint">Instance familiale privée</p></div>{message}<TextField label="Adresse e-mail" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required disabled={busy}/><TextField label="Mot de passe" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required disabled={busy}/><Button type="submit" loading={busy}>{busy ? "Connexion en cours…" : "Se connecter"}</Button></form></div></div>;
+  if (!user) return <FamilyAuth onLogin={login} busy={busy} notice={message}/>;
   return <div className="cdv-root h-root">
-    <header className="h-topbar"><Logo dark/><span className="h-household">Instance familiale privée</span><label className="h-top-search"><Icon name="search" size={18}/><input className="cdv-focus" type="search" aria-label="Rechercher un document ou un dossier" placeholder="Rechercher un document ou un dossier" value={search ?? ""} onChange={e => { setPanel(false); setMe(false); setSearch(e.target.value); }}/></label><div className="h-topbar-actions"><Button variant="secondary" compact icon="log-out" className="h-desktop-logout" onClick={() => void logout()} loading={busy}>Se déconnecter</Button><Avatar name={user.name || user.email}/></div></header>
+    {activationLink && <Dialog title="Ce lien est destiné à une autre personne" confirmLabel="Me déconnecter et continuer" cancelLabel="Rester connecté·e" busy={busy} onConfirm={() => void logout()} onCancel={() => { setActivationLink(false); window.history.replaceState(null, "", window.location.pathname); }}><p>Vous êtes connecté·e en tant que {user.name} sur cet appareil. Le lien doit être ouvert par sa destinataire, avec son propre compte. Déconnectez-vous d’abord.</p></Dialog>}
+    <header className="h-topbar"><Logo dark/><span className="h-household">Instance familiale privée</span><label className="h-top-search"><Icon name="search" size={18}/><input className="cdv-focus" type="search" aria-label="Rechercher un document ou un dossier" placeholder="Rechercher un document ou un dossier" value={search ?? ""} onChange={e => { setPanel(false); setMe(false); setHousehold(false); setSearch(e.target.value); }}/></label><div className="h-topbar-actions"><Button variant="secondary" compact icon="log-out" className="h-desktop-logout" onClick={() => void logout()} loading={busy}>Se déconnecter</Button><Avatar name={user.name || user.email}/></div></header>
     <div className={`h-workspace ${panel ? "h-panel-open" : ""}`}>
-      <nav className="h-sidenav" aria-label="Navigation principale"><button className="cdv-focus h-navitem" aria-current={!selected && !me ? "page" : undefined} onClick={showFolders}><Icon name="home"/><span className="h-wide-label">Tous les dossiers</span><span className="h-rail-label">Dossiers</span></button><button className="cdv-focus h-navitem h-rail-me" aria-current={me ? "page" : undefined} onClick={() => { showFolders(); setMe(true); }}><Icon name="user"/><span>Moi</span></button><div className="h-separator"/>{folders.map(f => <button key={f.id} className="cdv-focus h-navitem h-folder-nav" aria-current={f.id === selectedId ? "page" : undefined} onClick={() => openFolder(f.id)} title={f.name}><Icon name="folder"/><span>{f.name}</span></button>)}<p className="h-navfooter">Vous ne voyez que les dossiers auxquels vous avez accès.</p></nav>
-      <main className="h-main" aria-label="Contenu principal"><div className="h-content">{!panel && message}{me ? <div className="h-me"><PageHeader title="Moi" summary=""/><div className="h-member-card"><Avatar name={user.name || user.email}/><div><strong>{user.name}</strong><span>{user.email}</span></div></div><div><Button variant="secondary" icon="log-out" onClick={() => void logout()} loading={busy}>Se déconnecter</Button></div></div> : search !== null ? <FileWorkspace userId={user.id} key="search" folders={folders} host={fileHost} query={search} onQuery={setSearch} onFolder={openFolder} onAccessLost={filesAccessLost} onUpdated={filesUpdated}/> : !selected ? <><div className="h-heading-actions"><PageHeader title="Dossiers" summary={`${folders.length} dossier${folders.length > 1 ? "s" : ""} accessible${folders.length > 1 ? "s" : ""}`}/><Button icon="plus" onClick={() => { setPanel(true); setNewName(""); setFieldError(undefined); }}>Nouveau dossier</Button></div>{folders.length ? <ul className="h-document-list">{folders.map(f => <li key={f.id}><button className="cdv-focus h-document-row" onClick={() => openFolder(f.id)}><span className="h-file-count" aria-hidden="true">{f.documentCount}</span><span className="h-row-text"><strong>{f.name}</strong><span>{f.documentCount ? `${f.documentCount} document${f.documentCount > 1 ? "s" : ""}` : "Aucun document"}</span></span></button></li>)}</ul> : <EmptyState title="Aucun dossier accessible pour le moment">Créez un dossier, ou attendez qu’une personne du foyer vous en donne l’accès.</EmptyState>}</> : <><Breadcrumb folderName={selected.name} onFolders={showFolders}/><div className="h-mobile-back"><Button variant="tertiary" compact icon="chevron-left" onClick={showFolders}>Dossiers</Button></div>{edit ? <form className="h-rename" onSubmit={e => void saveFolder(e, true)}><TextField label="Nom du dossier" value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} hint="Les documents et les accès ne changent pas." error={fieldError} maxLength={120} disabled={busy}/><div className="h-actions"><Button type="submit" variant="secondary" icon="check" loading={busy}>Enregistrer le nom</Button><Button variant="tertiary" disabled={busy} onClick={() => { setEdit(null); setFieldError(undefined); }}>Annuler</Button></div></form> : <PageHeader overline="Dossier" title={selected.name} summary={selected.documentCount ? `${selected.documentCount} document${selected.documentCount > 1 ? "s" : ""}` : "Aucun document"}/>}<div><span className="h-capabilities">Vous pouvez : {selected.capabilities.map(c => c.toLocaleLowerCase("fr")).join(", ")}</span></div><FolderWorkspace actions={selected.capabilities.includes("modifier") && !edit && <Button variant="secondary" icon="pencil" onClick={() => { setEdit({ name: selected.name, version: selected.version }); setFieldError(undefined); }}>Renommer</Button>} userId={user.id} key={selected.id} initialCapture={pendingCapture} onCaptureConsumed={consumeCapture} folder={selected} folders={folders} host={fileHost} onAccessLost={filesAccessLost} onUpdated={filesUpdated}/></>}</div></main>
+      <nav className="h-sidenav" aria-label="Navigation principale"><button className="cdv-focus h-navitem" aria-current={!selected && !me && !household ? "page" : undefined} onClick={showFolders}><Icon name="home"/><span className="h-wide-label">Tous les dossiers</span><span className="h-rail-label">Dossiers</span></button><button className="cdv-focus h-navitem h-rail-me" aria-current={me ? "page" : undefined} onClick={() => { showFolders(); setMe(true); }}><Icon name="user"/><span>Moi</span></button>{(user.role === "owner" || user.role === "admin") && <button className="cdv-focus h-navitem" aria-current={household ? "page" : undefined} onClick={() => { showFolders(); setHousehold(true); }}><Icon name="users"/><span>Foyer</span></button>}<div className="h-separator"/>{folders.map(f => <button key={f.id} className="cdv-focus h-navitem h-folder-nav" aria-current={f.id === selectedId ? "page" : undefined} onClick={() => openFolder(f.id)} title={f.name}><Icon name="folder"/><span>{f.name}</span></button>)}<p className="h-navfooter">Vous ne voyez que les dossiers auxquels vous avez accès.</p></nav>
+      <main className="h-main" aria-label="Contenu principal"><div className="h-content">{!panel && message}{household && (user.role === "owner" || user.role === "admin") ? <FamilyHousehold onAccessLost={filesAccessLost}/> : me ? <FamilyProfile user={user} onLogout={() => void logout()} onAccessLost={filesAccessLost}/> : search !== null ? <FileWorkspace userId={user.id} key="search" folders={folders} host={fileHost} query={search} onQuery={setSearch} onFolder={openFolder} onAccessLost={filesAccessLost} onUpdated={filesUpdated}/> : !selected ? <><div className="h-heading-actions"><PageHeader title="Dossiers" summary={`${folders.length} dossier${folders.length > 1 ? "s" : ""} accessible${folders.length > 1 ? "s" : ""}`}/><Button icon="plus" onClick={() => { setPanel(true); setNewName(""); setFieldError(undefined); }}>Nouveau dossier</Button></div>{folders.length ? <ul className="h-document-list">{folders.map(f => <li key={f.id}><button className="cdv-focus h-document-row" onClick={() => openFolder(f.id)}><span className="h-file-count" aria-hidden="true">{f.documentCount}</span><span className="h-row-text"><strong>{f.name}</strong><span>{f.documentCount ? `${f.documentCount} document${f.documentCount > 1 ? "s" : ""}` : "Aucun document"}</span></span></button></li>)}</ul> : <EmptyState title="Aucun dossier accessible pour le moment">Créez un dossier, ou attendez qu’une personne du foyer vous en donne l’accès.</EmptyState>}</> : <><Breadcrumb folderName={selected.name} onFolders={showFolders}/><div className="h-mobile-back"><Button variant="tertiary" compact icon="chevron-left" onClick={showFolders}>Dossiers</Button></div>{edit ? <form className="h-rename" onSubmit={e => void saveFolder(e, true)}><TextField label="Nom du dossier" value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} hint="Les documents et les accès ne changent pas." error={fieldError} maxLength={120} disabled={busy}/><div className="h-actions"><Button type="submit" variant="secondary" icon="check" loading={busy}>Enregistrer le nom</Button><Button variant="tertiary" disabled={busy} onClick={() => { setEdit(null); setFieldError(undefined); }}>Annuler</Button></div></form> : <PageHeader overline="Dossier" title={selected.name} summary={selected.documentCount ? `${selected.documentCount} document${selected.documentCount > 1 ? "s" : ""}` : "Aucun document"}/>}<div><span className="h-capabilities">Vous pouvez : {selected.capabilities.map(c => c.toLocaleLowerCase("fr")).join(", ")}</span></div><FolderWorkspace actions={selected.capabilities.includes("modifier") && !edit && <Button variant="secondary" icon="pencil" onClick={() => { setEdit({ name: selected.name, version: selected.version }); setFieldError(undefined); }}>Renommer</Button>} userId={user.id} key={selected.id} initialCapture={pendingCapture} onCaptureConsumed={consumeCapture} folder={selected} folders={folders} host={fileHost} onAccessLost={filesAccessLost} onUpdated={filesUpdated}/></>}</div></main>
       <div ref={setFileHost} className="h-file-panel-host"/>
       {panel && <aside className="h-panel" aria-label="Nouveau dossier">{message}<Button variant="tertiary" compact icon="x" disabled={busy} onClick={() => setPanel(false)}>Fermer</Button><form onSubmit={e => void saveFolder(e)} className="h-new-folder"><h2>Nouveau dossier</h2><TextField label="Nom du dossier" placeholder="Ex. : Lave-linge" value={newName} onChange={e => setNewName(e.target.value)} error={fieldError} maxLength={120} disabled={busy}/><div className="h-private-note"><span>Personne d’autre que vous n’y aura accès tant que vous ne l’aurez pas accordé.</span></div><div className="h-actions"><Button type="submit" icon="plus" loading={busy}>Créer le dossier</Button><Button variant="tertiary" disabled={busy} onClick={() => setPanel(false)}>Annuler</Button></div></form></aside>}
     </div>
-    <nav className="h-bottomnav" aria-label="Navigation principale mobile"><button className="cdv-focus" aria-current={!me && search === null ? "page" : undefined} onClick={showFolders}><Icon name="folder" size={22}/>Dossiers</button><button className="cdv-focus" aria-current={search !== null ? "page" : undefined} onClick={() => { setPanel(false); setMe(false); setSearch(""); }}><Icon name="search" size={22}/>Rechercher</button><button className="cdv-focus" aria-current={me ? "page" : undefined} onClick={() => { showFolders(); setMe(true); }}><Icon name="user" size={22}/>Moi</button></nav>
+    <nav className="h-bottomnav" aria-label="Navigation principale mobile"><button className="cdv-focus" aria-current={!me && !household && search === null ? "page" : undefined} onClick={showFolders}><Icon name="folder" size={22}/>Dossiers</button><button className="cdv-focus" aria-current={search !== null ? "page" : undefined} onClick={() => { setPanel(false); setMe(false); setHousehold(false); setSearch(""); }}><Icon name="search" size={22}/>Rechercher</button><button className="cdv-focus" aria-current={me ? "page" : undefined} onClick={() => { showFolders(); setMe(true); }}><Icon name="user" size={22}/>Moi</button>{(user.role === "owner" || user.role === "admin") && <button className="cdv-focus" aria-current={household ? "page" : undefined} onClick={() => { showFolders(); setHousehold(true); }}><Icon name="users" size={22}/>Foyer</button>}</nav>
   </div>;
 }

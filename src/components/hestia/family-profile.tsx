@@ -1,0 +1,35 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { Avatar, Banner, Button, Checkbox, Dialog, PageHeader, TextField } from "./design-system";
+import { familyError, familyRequest, familyUncertain, FamilyPanel, FamilyRequestError, RecoveryCodes, roleLabel, StatusPill } from "./family-ui";
+
+export type FamilyUser = { id: string; name: string; email: string; role?: string };
+export function FamilyProfile({ user, onLogout, onAccessLost }: { user: FamilyUser; onLogout: () => void; onAccessLost: () => void }) {
+  const [count, setCount] = useState<number | null>(null), [confirm, setConfirm] = useState(false), [password, setPassword] = useState("");
+  const [prepared, setPrepared] = useState<{ codes: string[]; preparationId: string } | null>(null), [kept, setKept] = useState(false), [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; text?: string; tone: "info" | "danger" | "success" } | null>(null), [uncertain, setUncertain] = useState(false);
+  const operation = useRef<string | null>(null); const alive = useRef(true);
+  useEffect(() => { alive.current = true; familyRequest<{ count: number }>("/api/hestia/me/recovery-codes").then(result => { if (alive.current) setCount(result.count); }).catch(error => { if (!alive.current) return; if (error instanceof FamilyRequestError && error.status === 401) onAccessLost(); else setNotice({ tone: "danger", title: "Codes indisponibles.", text: familyError(error) }); }); return () => { alive.current = false; }; }, [onAccessLost]);
+  async function prepare() {
+    if (busy || uncertain) return; setBusy(true); setNotice(null);
+    try { const result = await familyRequest<{ codes: string[]; preparationId: string }>("/api/hestia/me/recovery-codes/prepare", "POST", { password }); if (!alive.current) return; setPrepared(result); setConfirm(false); setKept(false); setUncertain(false); operation.current = null; }
+    catch (e) { if (alive.current) setNotice({ tone: "danger", title: "Renouvellement non confirmé.", text: familyError(e) }); } finally { if (alive.current) { setBusy(false); setPassword(""); } }
+  }
+  async function finish() {
+    if (!kept || !prepared || busy || uncertain) { if (!kept) setNotice({ tone: "danger", title: "Conservez vos codes avant de continuer." }); return; }
+    setBusy(true); setNotice(null); operation.current ??= crypto.randomUUID();
+    try { const result = await familyRequest<{ count: number }>("/api/hestia/me/recovery-codes/confirm", "POST", { requestId: operation.current, preparationId: prepared.preparationId, acknowledged: true }); if (!alive.current) return; setCount(result.count); setPrepared(null); setNotice({ tone: "success", title: "Codes renouvelés.", text: "Gardez-les hors de Hestia. Vos anciens codes ne fonctionnent plus." }); }
+    catch (e) { if (!alive.current) return; setUncertain(familyUncertain(e)); setNotice({ tone: "danger", title: "Renouvellement non confirmé.", text: familyUncertain(e) ? "Résultat incertain. Vérifiez le résultat avant de recommencer." : familyError(e) }); } finally { if (alive.current) setBusy(false); }
+  }
+  async function check() {
+    if (!operation.current || busy) return;
+    setBusy(true);
+    try { const result = await familyRequest<{ count: number; preparationId?: string; confirmedRequestId?: string }>(`/api/hestia/me/recovery-codes?requestId=${encodeURIComponent(operation.current || "")}`); if (!alive.current) return; setCount(result.count); if (result.confirmedRequestId === operation.current) { setPrepared(null); setUncertain(false); setNotice({ tone: "success", title: "Codes renouvelés." }); } else { setUncertain(false); setNotice({ tone: "info", title: "Le renouvellement n’est pas confirmé.", text: "Relisez les codes et confirmez leur conservation avant de recommencer." }); } }
+    catch (e) { if (alive.current) setNotice({ tone: "danger", title: "Vérification impossible.", text: familyError(e) }); } finally { if (alive.current) setBusy(false); }
+  }
+  const message = notice && <Banner tone={notice.tone} title={notice.title}>{notice.text}</Banner>;
+  return <div className="hf-layout"><div className="hf-stack hf-main" style={{ maxWidth: 640 }}><PageHeader title="Moi" summary=""/>{!confirm && !prepared && message}<div className="h-member-card"><Avatar name={user.name || user.email}/><div><strong>{user.name}</strong><span>{user.email}</span><span>{roleLabel(user.role || "member")}</span></div></div><section className="hf-card"><h2>Codes de secours</h2><p>Ils vous permettent de retrouver votre compte si vous perdez l’accès à votre adresse e-mail. Vous seul·e les voyez ; gardez-les hors de Hestia, par exemple sur papier.</p>{count !== null && <div><StatusPill dashed={count <= 2}>{count} code{count > 1 ? "s" : ""} de secours disponible{count > 1 ? "s" : ""}</StatusPill></div>}{count === 0 && <Banner title="Attention.">Vous n’avez plus de code de secours. Renouvelez-les pour pouvoir retrouver votre accès si vous perdez votre boîte e-mail.</Banner>}{count !== null && count > 0 && count <= 2 && <Banner title="Attention.">Il vous reste peu de codes. Pensez à les renouveler.</Banner>}<div><Button variant="secondary" disabled={uncertain || busy || !!prepared} onClick={() => { setConfirm(true); setNotice(null); }}>Renouveler mes codes</Button></div></section><div><Button variant="secondary" icon="log-out" onClick={onLogout}>Se déconnecter</Button></div></div>
+    {confirm && <Dialog title="Renouveler vos codes de secours ?" confirmLabel="Renouveler" busy={busy} onConfirm={() => void prepare()} onCancel={() => { setConfirm(false); setPassword(""); setNotice(null); }}>{message}<p>Tous vos codes actuels, utilisés ou non, cesseront de fonctionner.</p><p>Un nouveau lot s’affichera une seule fois. Gardez-le hors de Hestia.</p><TextField label="Votre mot de passe actuel" hint="Pour vérifier que c’est bien vous." type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy}/></Dialog>}
+    {prepared && <FamilyPanel title="Vos nouveaux codes de secours" busy={busy || uncertain} onClose={() => { setPrepared(null); setKept(false); setUncertain(false); operation.current = null; setNotice(null); }}><h2>Vos nouveaux codes de secours</h2>{message}<p>Ils ne seront plus affichés après cette page. Notez-les sur papier ou dans un gestionnaire de mots de passe personnel, pas dans un document de Hestia. Chaque code ne sert qu’une fois.</p><RecoveryCodes codes={prepared.codes}/><Button variant="secondary" compact onClick={() => { void navigator.clipboard.writeText(prepared.codes.join("\n")).then(() => setNotice({ tone: "info", title: "Codes copiés." })).catch(() => setNotice({ tone: "danger", title: "La copie n’a pas abouti." })); }}>Copier les codes</Button><Checkbox label="J’ai conservé ces codes hors de Hestia" description="" checked={kept} onChange={setKept}/><Button onClick={() => void finish()} loading={busy} disabled={uncertain}>Terminé</Button>{uncertain && <Button variant="secondary" onClick={() => void check()} loading={busy}>Vérifier le résultat</Button>}</FamilyPanel>}
+  </div>;
+}

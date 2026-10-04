@@ -7,6 +7,8 @@ import { createSharing, getFolderAccess } from "./permissions/service";
 
 import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, type Actor } from "./access";
 import { createDocuments, type DocumentDependencies } from "./documents/service";
+import { createIdentity, revokeIdentityArtifacts } from "./identity";
+import { createMembership } from "./membership/service";
 const folderName = (value: unknown) => textField(value, 120);
 type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number; canShare:boolean; canAdminister:boolean };
 
@@ -36,8 +38,9 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       if (login && (typeof input.email !== "string" || typeof input.password !== "string"
         || input.email.length > 254 || input.password.length > 128)) throw invalid();
       const email = login ? (input.email as string).trim().toLowerCase() : "";
-      const before = login ? (await pool.query(`SELECT m.user_id,m.active,m.epoch FROM hestia_member m
+      const before = login ? (await pool.query(`SELECT m.user_id,m.active,m.epoch,m.recovering FROM hestia_member m
         JOIN "user" u ON u.id=m.user_id WHERE u.email=$1`, [email])).rows[0] : null;
+      if (login && before?.recovering) throw new HttpError(401, "INVALID_CREDENTIALS", "Adresse ou mot de passe incorrect.");
       const next = new Request(request.url, { method: "POST", headers: request.headers,
         body: JSON.stringify(login ? { email, password: input.password, rememberMe: false } : {}) });
       const result = await auth.handler(next);
@@ -50,8 +53,8 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       const session = await auth.api.getSession({ headers: new Headers({ cookie }), query: { disableCookieCache: true } });
       if (!session) throw unauthenticated();
       const admitted = await transaction(async client => {
-        const current = (await client.query("SELECT active,epoch FROM hestia_member WHERE user_id=$1 FOR UPDATE", [session.user.id])).rows[0];
-        if (!before?.active || before.user_id !== session.user.id || !current?.active || before.epoch !== current.epoch) {
+        const current = (await client.query("SELECT active,epoch,recovering FROM hestia_member WHERE user_id=$1 FOR UPDATE", [session.user.id])).rows[0];
+        if (!before?.active || before.recovering || before.user_id !== session.user.id || !current?.active || current.recovering || before.epoch !== current.epoch) {
           await client.query("DELETE FROM session WHERE id=$1", [session.session.id]);
           return false;
         }
@@ -64,7 +67,10 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
   }
   function handleSession(request: Request) {
     // Background admission polling must not keep an idle browser signed in.
-    return guarded(async () => response({ user: await withActor(request, async (_client, actor) => actor, false) }));
+    return guarded(async () => response({ user: await withActor(request, async (client, actor) => {
+      const member = (await client.query("SELECT role FROM hestia_member WHERE user_id=$1", [actor.id])).rows[0];
+      return { ...actor, role: member.role as "owner" | "admin" | "member" };
+    }, false) }));
   }
   function handleFolders(request: Request) {
     return guarded(async () => {
@@ -81,6 +87,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
             [randomUUID(),id,actor.id,capability,capability === "administrer" ? "reference" : "direct",
               capability==='administrer' ? [...CAPABILITIES] : capability==='partager' ? CAPABILITIES.filter(c=>c!=='administrer') : []]);
         }
+        await client.query("UPDATE hestia_folder SET reference_grant_id=(SELECT id FROM hestia_grant WHERE folder_id=$1 AND kind='reference' AND revoked_at IS NULL) WHERE id=$1", [id]);
         return (await foldersFor(client, actor, id))[0];
       });
       return response({ folder }, 201);
@@ -104,7 +111,9 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       return response({ folder });
     });
   }
-  return { handleAuth, handleSession, handleFolders, handleFolder, ...createSharing(access), ...createDocuments(pool, access, dependencies) };
+  return { handleAuth, handleSession, handleFolders, handleFolder, ...createSharing(access),
+    ...createDocuments(pool, access, dependencies), ...createIdentity(pool, config, access),
+    ...createMembership(access, { revokeIdentityArtifacts }) };
 }
 
 

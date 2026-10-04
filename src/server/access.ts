@@ -83,8 +83,8 @@ export function createAccess(pool: Pool, config: ServerConfig, auth: ReturnType<
     const signed = await signature;
     if (!signed) throw unauthenticated();
     return transaction(async client => {
-      const member = await client.query("SELECT active,epoch FROM hestia_member WHERE user_id=$1 FOR UPDATE", [signed.user.id]);
-      if (!member.rows[0]?.active) throw unauthenticated();
+      const member = await client.query("SELECT active,epoch,recovering FROM hestia_member WHERE user_id=$1 FOR UPDATE", [signed.user.id]);
+      if (!member.rows[0]?.active || member.rows[0].recovering) throw unauthenticated();
       const session = await client.query(`SELECT s.id FROM session s JOIN hestia_session_policy p ON p.session_id=s.id
         WHERE s.id=$1 AND s."userId"=$2 AND s."expiresAt">clock_timestamp()
           AND p.member_epoch=$3 AND p.started_at > clock_timestamp()-interval '12 hours'
