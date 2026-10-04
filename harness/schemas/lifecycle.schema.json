@@ -16,6 +16,15 @@
     },
     "refinement": { "$ref": "#/$defs/file" },
     "contract": { "$ref": "#/$defs/file" },
+    "localHandoff": {
+      "description": "Démarrage strictement local du brief entier sur une Issue existante relue, sans mutation GitHub. Portée et dépendances liées à la revue indépendante.",
+      "type": "object", "additionalProperties": false,
+      "required": ["briefDigest", "contractSha256", "criterionIds", "githubObservationId"],
+      "properties": {
+        "briefDigest": { "$ref": "#/$defs/digest" }, "contractSha256": { "$ref": "#/$defs/digest" },
+        "criterionIds": { "$ref": "#/$defs/keys" }, "githubObservationId": { "$ref": "#/$defs/key" }
+      }
+    },
     "sources": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/source" } },
     "agreements": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/agreement" } },
     "engagement": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/engagement" }] },
@@ -75,6 +84,7 @@
       "required": ["kind", "briefDigest", "coverageDigest", "criterionIds", "reviewedAtUtc", "authors", "reviewer", "providedContext", "verdict", "openBlockingFindings"],
       "properties": {
         "kind": { "const": "brief-review" }, "briefDigest": { "$ref": "#/$defs/digest" }, "coverageDigest": { "$ref": "#/$defs/digest" }, "criterionIds": { "$ref": "#/$defs/keys" }, "reviewedAtUtc": { "$ref": "#/$defs/date" },
+        "localHandoffDigest": { "$ref": "#/$defs/digest" },
         "authors": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "$ref": "#/$defs/key" } },
         "reviewer": {
           "type": "object", "additionalProperties": false, "required": ["identity", "effectiveModel", "cleanContext"],

@@ -26,6 +26,11 @@ function canonical(value) { return Array.isArray(value) ? value.map(canonical) :
 /** Bind the independent brief review to the exact scenarios examined as well. */
 export function computeCoverageDigest(coverage) { return hash(JSON.stringify(canonical(coverage))); }
 
+/** Bind local scope and declared dependencies to the independent review. */
+export function computeLocalHandoffDigest(checkpoint) {
+  return hash(JSON.stringify(canonical({ localHandoff: checkpoint.localHandoff, dependencyLevels: checkpoint.dependencyLevels })));
+}
+
 /** Relative paths only, with one unambiguous spelling on Windows and POSIX. */
 function relativePath(value) {
   // Brackets are literal filesystem characters (including Next dynamic routes).
@@ -237,10 +242,28 @@ export function validateLifecycle(checkpoint, { root = process.cwd(), action = '
     if (engagement.agreementIds.some((id) => !checkpoint.agreements.some((agreement) => agreement.id === id && applicable(agreement, 'engage'))) || !fullyCovered(coveredBy('engage', engagement.agreementIds))) add('plan', 'engagement-agreement-missing', '$/engagement');
   }
   if (record.plan.issues.length && !checkpoint.engagement) add('plan', 'stories-before-engagement', '$/refinement/plan');
-  if (record.stage !== 'ready') add('execute', 'refinement-not-ready', '$/refinement/stage');
   if (!fullyCovered(coveredBy('execute'))) add('execute', 'execution-agreement-missing', '$/agreements');
-  if (!fullyCovered(coveredBy('publish'))) add('execute', 'publication-agreement-missing', '$/agreements');
-  if (!record.readiness.handoffs.some((handoff) => JSON.stringify(canonical(handoff.contract)) === JSON.stringify(canonical(contract)))) add('execute', 'handoff-contract-mismatch', '$/contract');
+  const localHandoff = checkpoint.localHandoff;
+  if (localHandoff) {
+    // This is a whole, bounded brief attached to an existing Issue. It is not
+    // another publication state and cannot skip a planned mutation/dependency.
+    if (record.stage !== 'brief-validated' || record.plan.issues.length || record.plan.order.length
+      || record.plan.mutations.length || record.publication.receipts.length || record.approvals.publication
+      || record.readiness.handoffs.length || record.readiness.dependencyEvidence.length) add('execute', 'local-handoff-mixed-with-publication', '$/localHandoff');
+    if (localHandoff.briefDigest !== briefDigest || localHandoff.contractSha256 !== checkpoint.contract.sha256
+      || !sameSet(localHandoff.criterionIds, criteria)) add('execute', 'local-handoff-scope-mismatch', '$/localHandoff');
+    const same = (a, b) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+    if (checkpoint.need.githubIssue === null || contract.githubIssue !== checkpoint.need.githubIssue
+      || contract.objective !== record.brief.outcome
+      || !same(contract.scope.included, record.brief.scope.included)
+      || !same(contract.scope.excluded, record.brief.scope.excluded)
+      || !same(contract.acceptanceCriteria, record.brief.criteria.flatMap(item => [item.positive, item.negative]))
+      || !record.brief.criteria.every(item => contract.validation.includes(item.evidence))) add('execute', 'local-handoff-contract-mismatch', '$/contract');
+  } else {
+    if (record.stage !== 'ready') add('execute', 'refinement-not-ready', '$/refinement/stage');
+    if (!fullyCovered(coveredBy('publish'))) add('execute', 'publication-agreement-missing', '$/agreements');
+    if (!record.readiness.handoffs.some((handoff) => JSON.stringify(canonical(handoff.contract)) === JSON.stringify(canonical(contract)))) add('execute', 'handoff-contract-mismatch', '$/contract');
+  }
   if (contract.deliveryTarget !== 'local') add('execute', 'external-delivery-requires-separate-gate', '$/contract/deliveryTarget');
 
   const qualification = checkpoint.qualification;
@@ -279,6 +302,7 @@ export function validateLifecycle(checkpoint, { root = process.cwd(), action = '
       else {
         checkTime(review.reviewedAtUtc, '$/qualification/review');
         if (review.briefDigest !== briefDigest || review.coverageDigest !== computeCoverageDigest(qualification.coverage) || !sameSet(review.criterionIds, criteria)) add('execute', 'brief-review-stale-or-partial', '$/qualification/review');
+        if (localHandoff && review.localHandoffDigest !== computeLocalHandoffDigest(checkpoint)) add('execute', 'local-handoff-review-mismatch', '$/qualification/review');
         if (review.authors.some((author) => author.toLowerCase() === review.reviewer.identity.toLowerCase()) || review.verdict !== 'PASS' || review.openBlockingFindings !== 0) add('execute', 'brief-review-not-passed-independently', '$/qualification/review');
       }
     }
@@ -326,7 +350,19 @@ export function validateLifecycle(checkpoint, { root = process.cwd(), action = '
     if (observation.kind === 'github' && (observation.environment !== 'GitHub' || observation.candidateDigest !== null)) add('resume', 'github-observation-shape', '$/observations');
   }
   if (checkpoint.need.githubIssue !== null && !checkpoint.observations.some((observation) => observation.kind === 'github' && observation.subject === checkpoint.need.githubIssue && fresh.has(observation.id))) add('execute', 'github-refresh-required', '$/observations');
+  if (localHandoff) {
+    const observation = checkpoint.observations.find(item => item.id === localHandoff.githubObservationId);
+    const observed = observation && readReferencedJson(observation.file, '$/localHandoff/githubObservationId');
+    if (!observation || observation.kind !== 'github' || observation.subject !== checkpoint.need.githubIssue
+      || !fresh.has(observation.id) || observed?.issue?.url !== checkpoint.need.githubIssue
+      || observed?.issue?.state !== 'OPEN') add('execute', 'local-handoff-issue-not-confirmed', '$/localHandoff/githubObservationId');
+  }
   const levels = { local: 0, Dev: 1, Production: 2 };
+  if (localHandoff) for (const requirement of checkpoint.dependencyLevels) {
+    if (!checkpoint.observations.some(observation => observation.kind === 'dependency' && observation.subject === requirement.url
+      && fresh.has(observation.id) && observation.candidateDigest !== null
+      && levels[observation.environment] >= levels[requirement.environment])) add('execute', 'dependency-evidence-insufficient', '$/dependencyLevels');
+  }
   const selected = new Set(record.readiness.handoffs.map((handoff) => handoff.issueKey));
   for (const proof of record.readiness.dependencyEvidence.filter((proof) => selected.has(proof.issueKey))) {
     const requirement = checkpoint.dependencyLevels.find((item) => item.url === proof.url);
