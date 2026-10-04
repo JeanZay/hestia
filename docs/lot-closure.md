@@ -8,6 +8,8 @@ Un lot développé doit aboutir à une intégration vérifiée, à une demande d
 
 Avant de lancer un autre lot, traiter les intégrations en attente ou leur disposition explicite. Ne pas contourner cette priorité en renommant le lot ni en déclarant tous les travaux « en cours ». Le parallélisme au sein d'un lot autorisé reste possible avec des réservations de chemins disjointes ; il ne dispense pas de son intégration commune.
 
+La propreté Git fait partie de la livraison : distinguer une PR à fusionner, un lot déjà intégré dont le worktree conserve des preuves, et des modifications locales hors lot. Ne pas refusionner une branche historique sur la seule base de `git branch --merged` : après squash, vérifier le reçu de PR, le commit résultant et le contenu intégré. Une fois les contrôles et l'accord applicables réunis, exécuter le merge et synchroniser le checkout principal sans attendre une relance. Les branches conservées ont une raison explicite ; leur nettoyage suit la préservation ci-dessous. Ne jamais obtenir un arbre artificiellement propre par ajout global, reset ou suppression de fichiers inconnus, configurations locales ou secrets.
+
 ## Contrôleur partagé au clone
 
 Le contrôleur `scripts/closure.mjs` lit les branches et worktrees réels depuis Git et retrouve la racine primaire par le répertoire Git commun. Le registre fixe `artifacts/closure/registry.json` de cette racine est partagé par les worktrees, y compris quand le point de reprise produit est ailleurs. Il ne doit pas être dupliqué par worktree. Il décrit seulement les branches techniques présentes, leur lot, cible, candidat, preuves, accords et disposition. Ce n'est ni un catalogue de besoins ni une copie des statuts du Project : GitHub reste le seul backlog.

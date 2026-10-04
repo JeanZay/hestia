@@ -16,6 +16,7 @@ Claude Design fait partie intégrante du développement Hestia : besoin cadré �
 
 - Inspecter l'état Git avant de modifier ; conserver tout travail existant. Pour cette seule fondation initiale, le travail dans ce dossier local est explicitement autorisé. Chaque lot ultérieur utilise une branche et un worktree isolés ; séparer aussi les chemins des auteurs concurrents.
 - Préparer un contrat de tâche borné à partir de `harness/contracts/task-template.json`. Une tâche locale réversible déjà autorisée ne nécessite pas une nouvelle permission.
+- L'accord de développement couvre ses préparatifs locaux, branche/worktree, corrections, tests et revues. Distinguer un refus du contrôleur Hestia d'un rejet externe avant exécution ; suivre la gouvernance de livraison sans contourner les protections ni attribuer un refus inexpliqué à un GO manquant.
 - Séparer conception, implémentation et revue. Déléguer les sous-tâches indépendantes avec des chemins possédés explicitement. Le relecteur indépendant reçoit un contexte propre et le candidat exact ; l'auteur ne s'auto-approuve pas.
 - Exécuter les contrôles pertinents ; conserver les résultats réels, leurs limites et l'identité exacte du candidat. Un contrôle en échec, absent ou non exécuté ne vaut jamais PASS.
 - Données synthétiques uniquement dans le dépôt, les tests et cette fondation. Ne jamais lire, copier ou transmettre des documents familiaux réels pour enrichir des fixtures. Ne jamais conserver de mots de passe, codes PIN ou cryptogrammes de cartes dans le profil familial.
