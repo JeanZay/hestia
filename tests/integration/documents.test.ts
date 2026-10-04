@@ -75,9 +75,8 @@ describe("private immutable originals over SQL and real S3", () => {
   afterEach(async () => {
     putHook=undefined; getHook=undefined; deleteHook=undefined;
     await pool.query("UPDATE hestia_member SET active=true WHERE user_id IN ($1,$2)",[actorId,otherId]);
-    // Trusted fixture reset explicitly reinstates test grants after departure;
-    // application re-admission must never restore those grants implicitly.
-    await pool.query("UPDATE hestia_grant g SET revoked_at=NULL,expires_at=NULL,subject_epoch=m.departure_epoch FROM hestia_member m WHERE g.user_id=m.user_id AND g.user_id IN ($1,$2)",[actorId,otherId]);
+    // Each next case creates a fresh folder and new grants at the current epoch.
+    // Departed identities never regain historical rights during fixture cleanup.
     cookie=await login(email); otherCookie=await login(otherEmail);
     await pool.query("UPDATE hestia_upload SET status='cancelled' WHERE actor_id IN ($1,$2) AND status IN ('uploading','finalizing')",[actorId,otherId]);
     await app.cleanupUploads(100);
@@ -153,7 +152,8 @@ describe("private immutable originals over SQL and real S3", () => {
     expect((await finish(id)).status).toBe(404);
     expect((await pool.query("SELECT id FROM hestia_document WHERE folder_id=$1",[folderId])).rowCount).toBe(0);
     putHook=async key=>{ if(key.startsWith("originals/")) await pool.query("UPDATE hestia_member SET active=false WHERE user_id=$1",[actorId]); };
-    await pool.query("UPDATE hestia_grant SET revoked_at=NULL WHERE folder_id=$1",[folderId]);
+    await pool.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,author_id,subject_epoch)
+      SELECT $1,$2,$3,'déposer','direct',$3,departure_epoch FROM hestia_member WHERE user_id=$3`,[randomUUID(),folderId,actorId]);
     expect((await finish(id)).status).toBe(401);
   });
   it("retains private uncertain puts and SQL failures for cleanup without incomplete visibility",async()=>{

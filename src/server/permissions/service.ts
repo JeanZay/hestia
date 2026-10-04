@@ -4,10 +4,10 @@ import { type Access, guarded, invalid, isUuid, json, response, unavailable, Htt
 import { CAPABILITIES } from "./capabilities";
 
 export const POLICY_LOCK_KEY = 480519001;
-type Grant = { id:string; folder_id:string; user_id:string; capability:string; kind:string; parent_id:string|null;
+export type Grant = { id:string; folder_id:string; user_id:string; capability:string; kind:string; parent_id:string|null;
   transmit:string[]; lineage:string[]; origin:string; author_id:string|null; subject_epoch:number;
-  revoked_at:Date|null; expires_at:Date|null; batch_id:string|null; created_at:Date };
-type Member = { user_id:string; active:boolean; departure_epoch:number; name:string };
+  revoked_at:Date|null; expires_at:Date|null; batch_id:string|null; created_at:Date; replaces_reference_id?:string|null };
+export type Member = { user_id:string; active:boolean; departure_epoch:number; name:string };
 type Limit = { transmit:string[]; end:number };
 const known = (values: string[]) => Array.isArray(values) && new Set(values).size===values.length && values.every(c => (CAPABILITIES as readonly string[]).includes(c));
 const end = (g:Grant) => g.expires_at?.getTime() ?? Infinity;
@@ -20,9 +20,15 @@ export async function getFolderAccess(client:PoolClient, actorId:string, folderI
   if (!folder) throw unavailable();
   const rows = (await client.query<Grant>("SELECT * FROM hestia_grant WHERE folder_id=$1 ORDER BY created_at,id",[folderId])).rows;
   const people = (await client.query<Member>('SELECT m.user_id,m.active,m.departure_epoch,u.name FROM hestia_member m JOIN "user" u ON u.id=m.user_id ORDER BY m.user_id')).rows;
+  const now = Number((await client.query("SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS now")).rows[0].now);
+  return evaluateFolderAccess(actorId,folderId,folder,rows,people,now);
+}
+
+// The same evaluator serves live access and hypothetical revocation previews.
+// A historical author is deliberately not a validity dependency.
+export function evaluateFolderAccess(actorId:string,folderId:string,folder:{created_by:string},rows:Grant[],people:Member[],now:number,revokedRoots:ReadonlySet<string>=new Set()) {
   const members = new Map(people.map(m => [m.user_id,m]));
   const grants = new Map(rows.map(g => [g.id,g]));
-  const now = Number((await client.query("SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS now")).rows[0].now);
   function limits(id:string, seen=new Set<string>()):Limit|null {
     const g=grants.get(id);
     if (!g || seen.has(id) || seen.size>=64 || !known(g.transmit) || !Number.isFinite(end(g)) && end(g)!==Infinity) return null;
@@ -32,7 +38,7 @@ export async function getFolderAccess(client:PoolClient, actorId:string, folderI
   }
   function valid(id:string, seen=new Set<string>()):boolean {
     const g=grants.get(id), member=g && members.get(g.user_id);
-    if (!g || seen.has(id) || seen.size>=64 || g.revoked_at || !member?.active || member.departure_epoch!==g.subject_epoch
+    if (!g || seen.has(id) || seen.size>=64 || g.revoked_at || revokedRoots.has(id) || !member?.active || member.departure_epoch!==g.subject_epoch
       || !(CAPABILITIES as readonly string[]).includes(g.capability) || !known(g.transmit) || now>=end(g)) return false;
     if (g.kind==='reference' && (g.capability!=='administrer' || g.parent_id)) return false;
     if (!['direct','reference','delegated'].includes(g.kind) || (g.kind==='delegated')!==Boolean(g.parent_id)) return false;

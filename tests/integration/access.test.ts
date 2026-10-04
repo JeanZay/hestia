@@ -132,11 +132,11 @@ describe('normalized folder sharing and mandate boundaries',()=>{
     const read=groups.find((g:{memberId:string})=>g.memberId===users[2].id);
     expect((await revoke(read.id,1)).status).toBe(200);expect(await caps(2)).toEqual(['exporter']);
   });
-  it('rejects cycles and cross-folder parent records rather than treating stored rows as authority',async()=>{
+  it('prevents rewriting grant provenance into a cycle',async()=>{
     const first=await grant(1,'partager',['consulter','partager']),second=await grant(2,'partager',['consulter','partager'],first,1);
     await grant(3,'consulter',[],second,2);
-    await pool.query("UPDATE hestia_grant SET kind='delegated',parent_id=$2 WHERE id=$1",[first,second]);
-    expect(await caps(3)).toEqual([]);
+    await expect(pool.query("UPDATE hestia_grant SET kind='delegated',parent_id=$2 WHERE id=$1",[first,second])).rejects.toMatchObject({code:'23514'});
+    expect(await caps(3)).toEqual(['consulter']);
   });
   it('matches the policy.mjs oracle for delegated authority and mandate reduction',async()=>{
     const oraclePath=pathToFileURL(`${process.cwd()}/harness/spikes/issue-2-identity/policy.mjs`).href;

@@ -50,7 +50,7 @@ describe("persistent member admission and private folders", () => {
   it("accepts a verified admitted member with an HttpOnly cookie and no private caching", async () => {
     const result = await app.handleSession(request("/api/hestia/session", { cookie }));
     expect(result.status).toBe(200);
-    expect(await result.json()).toEqual({ user: { id: userId, name: "Camille Synthétique", email } });
+    expect(await result.json()).toEqual({ user: { id: userId, name: "Camille Synthétique", email, role: "member" } });
     expect(result.headers.get("cache-control")).toBe("private, no-store");
     const signIn = await login();
     expect(signIn.result.headers.getSetCookie().some(value => /HttpOnly/i.test(value))).toBe(true);
@@ -126,10 +126,13 @@ describe("persistent member admission and private folders", () => {
     const list = await app.handleFolders(request("/api/hestia/folders", { cookie }));
     expect(await list.json()).toEqual({ folders: [] });
     expect((await app.handleFolder(request("/api/hestia/folders/" + folderId, { method: "PATCH", body: { name: "Invisible", version: 1 }, cookie }), folderId)).status).toBe(404);
-    await pool.query("UPDATE hestia_grant SET revoked_at=NULL WHERE folder_id=$1", [folderId]);
+    await expect(pool.query("UPDATE hestia_grant SET revoked_at=NULL WHERE folder_id=$1", [folderId])).rejects.toMatchObject({ code: "23514" });
+    await pool.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,author_id,subject_epoch)
+      SELECT $1,$2,$3,'consulter','direct',$3,departure_epoch FROM hestia_member WHERE user_id=$3`, [randomUUID(),folderId,userId]);
     await pool.query("UPDATE hestia_grant SET expires_at=now()-interval '1 second' WHERE folder_id=$1 AND capability='modifier'", [folderId]);
     expect((await app.handleFolder(request("/api/hestia/folders/" + folderId, { method: "PATCH", body: { name: "Forbidden", version: 1 }, cookie }), folderId)).status).toBe(404);
-    await pool.query("UPDATE hestia_grant SET expires_at=NULL WHERE folder_id=$1", [folderId]);
+    await pool.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,author_id,subject_epoch)
+      SELECT $1,$2,$3,'modifier','direct',$3,departure_epoch FROM hestia_member WHERE user_id=$3`, [randomUUID(),folderId,userId]);
   });
   it("serializes concurrent renames with optimistic conflict detection", async () => {
     const update = (name: string) => app.handleFolder(request("/api/hestia/folders/" + folderId, { method: "PATCH", body: { name, version: 1 }, cookie }), folderId);
