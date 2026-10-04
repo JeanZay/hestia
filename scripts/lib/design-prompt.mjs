@@ -17,7 +17,7 @@ const runtimeRoot = fileURLToPath(new URL('../../', import.meta.url));
 const controllerPaths = ['scripts/design-prompt.mjs', 'scripts/lib/design-prompt.mjs', 'scripts/guard.mjs', 'scripts/lib/verification-evidence.mjs'];
 export const OFFICIAL_SOURCES = Object.freeze([
   { id: 'get-started', slug: '14604416-get-started-with-claude-design', title: 'Get started with Claude Design', section: 'How Claude Design works' },
-  { id: 'design-system', slug: '14604397-set-up-your-design-system-in-claude-design', title: 'Set up your design system in Claude Design', section: 'Prerequisites' },
+  { id: 'design-system', slug: '14604397-set-up-your-design-system-in-claude-design', title: 'Set up your design system in Claude Design', section: 'Before you start' },
   { id: 'admin', slug: '14604406-claude-design-admin-guide-for-team-and-enterprise-plans', title: 'Claude Design admin guide for Team and Enterprise plans', section: 'The design system: why it comes first' },
 ].map((item) => Object.freeze({ ...item, url: `https://support.claude.com/en/articles/${item.slug}` })));
 const allowedUrls = new Set(OFFICIAL_SOURCES.map((item) => item.url));
@@ -235,7 +235,7 @@ export function auditCatalog({ root = process.cwd() } = {}) {
   return { status: 'AUDIT_PASS', scope: 'offline-catalog-only', handoffAllowed: false, remoteStateVerified: false, catalogSha256: catalogRead.sha256, entries: catalog.entries };
 }
 
-function inspectInternal({ root, dossier: dossierPath, now }, requireReview) {
+function inspectInternal({ root, dossier: dossierPath, now }, requireReview, requireLiveSources = false) {
   const time = nowTime(now); const inputs = new Map();
   const raw = readBounded(root, dossierPath); const dossier = parseJson(raw);
   keys(dossier, ['schemaVersion', 'id', 'author', 'stage', 'setupMode', 'userObservation', 'userObservedAtUtc', 'nativeDesignSystemReady', 'prompt', 'context', 'decisions', 'requests', 'claims', 'prerequisites', 'sources', 'review'], 'invalid-dossier-fields');
@@ -268,19 +268,28 @@ function inspectInternal({ root, dossier: dossierPath, now }, requireReview) {
     loadReference(root, dossier.userObservation, inputs);
     utc(dossier.userObservedAtUtc, time, 'invalid-user-observation-date');
   } else requireValue(dossier.userObservedAtUtc === null, 'observation-date-without-source');
-  const sources = parseJson(loadReference(root, dossier.sources, inputs));
-  keys(sources, ['schemaVersion', 'extractionVersion', 'capturedAtUtc', 'sources'], 'invalid-source-bundle');
-  requireValue(sources.schemaVersion === 1 && sources.extractionVersion === EXTRACTION_VERSION && Array.isArray(sources.sources) && sources.sources.length === OFFICIAL_SOURCES.length, 'invalid-source-bundle');
-  const captured = utc(sources.capturedAtUtc, time, 'sources-stale-or-future', MAX_SOURCE_AGE_MS); const sourceIds = new Set();
-  for (const source of sources.sources) {
-    keys(source, ['id', 'url', 'finalUrl', 'httpStatus', 'contentType', 'title', 'articleSha256', 'html'], 'invalid-source-record');
-    const official = OFFICIAL_SOURCES.find((item) => item.id === source.id);
-    requireValue(official && !sourceIds.has(source.id) && source.url === official.url && allowedUrls.has(source.finalUrl) && source.httpStatus === 200 && /^text\/html(?:;|$)/i.test(source.contentType), 'source-not-official');
-    sourceIds.add(source.id);
-    const html = loadReference(root, source.html, inputs, { limit: HTTP_LIMIT, scan: false });
-    const article = extractArticle(html.text, official);
-    requireValue(source.title === article.title && source.articleSha256 === article.articleSha256, 'captured-article-hash-mismatch');
+  // A capture is evidence available to the reviewer, never a network precondition
+  // for local handoff. Keep its raw bytes bound even when the live extractor drifts.
+  let sources = null; let captured = -Infinity; const sourceIds = new Set();
+  if (dossier.sources !== null) {
+    sources = parseJson(loadReference(root, dossier.sources, inputs));
+    keys(sources, ['schemaVersion', 'extractionVersion', 'capturedAtUtc', 'sources'], 'invalid-source-bundle');
+    requireValue(sources.schemaVersion === 1 && textValue(sources.extractionVersion) && Array.isArray(sources.sources) && sources.sources.length === OFFICIAL_SOURCES.length, 'invalid-source-bundle');
+    if (requireLiveSources) requireValue(sources.extractionVersion === EXTRACTION_VERSION, 'invalid-source-bundle');
+    captured = utc(sources.capturedAtUtc, time, 'sources-stale-or-future', requireLiveSources ? MAX_SOURCE_AGE_MS : Infinity);
+    for (const source of sources.sources) {
+      keys(source, ['id', 'url', 'finalUrl', 'httpStatus', 'contentType', 'title', 'articleSha256', 'html'], 'invalid-source-record');
+      const official = OFFICIAL_SOURCES.find((item) => item.id === source.id);
+      requireValue(official && !sourceIds.has(source.id) && source.url === official.url && allowedUrls.has(source.finalUrl) && source.httpStatus === 200 && /^text\/html(?:;|$)/i.test(source.contentType) && textValue(source.title) && HASH.test(source.articleSha256), 'source-not-official');
+      sourceIds.add(source.id);
+      const html = loadReference(root, source.html, inputs, { limit: HTTP_LIMIT, scan: false });
+      if (requireLiveSources) {
+        const article = extractArticle(html.text, official);
+        requireValue(source.title === article.title && source.articleSha256 === article.articleSha256, 'captured-article-hash-mismatch');
+      }
+    }
   }
+  if (requireLiveSources) requireValue(sources !== null, 'official-capture-required-for-live-check');
   requireValue(Array.isArray(dossier.claims) && dossier.claims.length > 0 && dossier.claims.length <= 100, 'claims-missing');
   for (const claim of dossier.claims) {
     keys(claim, ['claim', 'basis', 'sourceIds'], 'invalid-claim');
@@ -304,23 +313,42 @@ function inspectInternal({ root, dossier: dossierPath, now }, requireReview) {
     loadReference(root, review.evidence, inputs);
   }
   inputs.set(dossierPath, raw.sha256);
-  return { candidateDigest, prompt: dossier.prompt, controller, files, inputs: [...inputs.entries()], sources, dossierSha256: raw.sha256 };
+  return { candidateDigest, prompt: dossier.prompt, controller, files, inputs: [...inputs.entries()], sources, claims: dossier.claims, dossierSha256: raw.sha256 };
 }
 
 export function inspectDossier({ root = process.cwd(), dossier, now } = {}) {
   const result = inspectInternal({ root, dossier, now }, false);
-  return { status: 'CANDIDATE', handoffAllowed: false, remoteStateVerified: false, candidateDigest: result.candidateDigest, prompt: result.prompt, controller: result.controller, files: result.files, limitation: 'Candidate identity only; the independent review and live check are still required.' };
+  return { status: 'CANDIDATE', handoffAllowed: false, remoteStateVerified: false, candidateDigest: result.candidateDigest, prompt: result.prompt, controller: result.controller, files: result.files, limitation: 'Candidate identity only; independent review and local qualification are still required. Live documentation is a separate optional diagnostic.' };
+}
+
+/** Normal handoff gate: exact local inputs and independent review, no HTTP request. */
+export function qualifyDossier({ root = process.cwd(), dossier, now } = {}) {
+  const before = inspectInternal({ root, dossier, now }, true);
+  const after = inspectInternal({ root, dossier, now }, true);
+  requireValue(before.candidateDigest === after.candidateDigest && before.dossierSha256 === after.dossierSha256 && canonical(before.inputs) === canonical(after.inputs), 'local-input-changed-during-qualification');
+  return {
+    status: 'LOCAL_PASS', scope: 'local-handoff', handoffAllowed: true, remoteStateVerified: false,
+    immediateHandoffOnly: true, reuseAllowed: false, checkedAtUtc: new Date(nowTime(now)).toISOString(),
+    candidateDigest: after.candidateDigest, prompt: after.prompt, dossierSha256: after.dossierSha256,
+    documentation: { status: 'NOT_CHECKED', capturedAtUtc: after.sources?.capturedAtUtc ?? null, captureFresh: after.sources ? nowTime(now) - Date.parse(after.sources.capturedAtUtc) <= MAX_SOURCE_AGE_MS : false },
+    unverifiedClaims: after.claims.filter((claim) => claim.basis === 'unverified').map((claim) => claim.claim),
+    limitations: [
+      'Local handoff of these exact bytes only; run qualify again before a later handoff.',
+      'No live documentation or account capability is verified. Captures, if present, are review-bound historical evidence, not current remote verification.',
+      'Decisions, authorizations and reviewer independence are declared evidence; this gate does not authenticate consent or identities.',
+    ],
+  };
 }
 
 export async function checkDossier({ root = process.cwd(), dossier, now, fetcher = globalThis.fetch, timeoutMs } = {}) {
-  const before = inspectInternal({ root, dossier, now }, true);
+  const before = inspectInternal({ root, dossier, now }, true, true);
   const live = await fetchOfficial(fetcher, timeoutMs);
   for (const source of live) {
     const captured = before.sources.sources.find((item) => item.id === source.id);
     requireValue(source.articleSha256 === captured.articleSha256 && source.finalUrl === captured.finalUrl, 'official-source-changed-refresh-and-review-required');
   }
-  const after = inspectInternal({ root, dossier, now }, true);
+  const after = inspectInternal({ root, dossier, now }, true, true);
   requireValue(before.candidateDigest === after.candidateDigest && before.dossierSha256 === after.dossierSha256 && canonical(before.inputs) === canonical(after.inputs), 'local-input-changed-during-live-check');
   const observedSources = live.map((source) => ({ id: source.id, url: source.url, finalUrl: source.finalUrl, httpStatus: source.httpStatus, contentType: source.contentType, title: source.title, articleSha256: source.articleSha256 }));
-  return { status: 'PASS', handoffAllowed: true, remoteStateVerified: true, immediateHandoffOnly: true, reuseAllowed: false, checkedAtUtc: new Date(nowTime(now)).toISOString(), candidateDigest: after.candidateDigest, prompt: after.prompt, dossierSha256: after.dossierSha256, sources: observedSources, limitations: ['Valid only for immediate handoff of these exact prompt bytes; run check again before any later handoff.', 'HTTP article equality and an exact independent review do not prove product capability in the user account or permanent SOTA.', 'This gate detects omissions in its workflow; it does not intercept chat or authenticate reviewer identities.'] };
+  return { status: 'PASS', scope: 'live-documentation-diagnostic', handoffAllowed: true, remoteStateVerified: true, immediateHandoffOnly: true, reuseAllowed: false, checkedAtUtc: new Date(nowTime(now)).toISOString(), candidateDigest: after.candidateDigest, prompt: after.prompt, dossierSha256: after.dossierSha256, sources: observedSources, limitations: ['Valid only for these exact prompt bytes at this observation time; run qualify before a later handoff and check again only for a new live documentation diagnostic.', 'HTTP article equality and an exact independent review do not prove product capability in the user account or permanent SOTA.', 'This gate detects omissions in its workflow; it does not intercept chat or authenticate reviewer identities.'] };
 }

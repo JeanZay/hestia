@@ -1,64 +1,60 @@
-# Qualifier chaque prompt Claude Design avant remise
+# Claude Design dans le cycle de développement Hestia
 
-Règle Hestia du 15 septembre 2026. Ce circuit s'applique aux premiers prompts, variantes, corrections et demandes complémentaires, y compris dans les dossiers locaux ignorés. La [gouvernance de design](../design-governance.md) conserve les autorisations ; les [constats Anthropic](anthropic-notes.md) donnent les références de départ, jamais une certification permanente.
+Décision clarifiée par Amaury le 4 octobre 2026. Claude Design fait partie intégrante du protocole Hestia : besoin cadré → prompt préparé et remis par l'agent → conception UI/UX dans Claude Design par Amaury → retour et validation des écrans → intégration technique fidèle → tests et recette Dev. Les ajustements suivent la même boucle.
 
-## Résultat attendu et portée du mécanisme
+La préparation, la remise et l'itération d'un prompt dans le périmètre demandé sont du travail normal de l'agent, sans GO technique supplémentaire de routine. Une nouvelle décision produit, extension de périmètre, dépense, transmission ou livraison non autorisée reste distincte. La [gouvernance de design](../design-governance.md) conserve la conception exclusive par Claude Design et la validation du hand-off avant intégration.
 
-Avant de remettre un prompt, l'agent doit établir que les fonctions demandées correspondent aux sources officielles actuelles et au contexte connu d'Amaury. Le script vérifie les octets, les prérequis déclarés et les preuves. Un relecteur indépendant juge leur pertinence et les affirmations du prompt. Aucun de ces contrôles ne garantit une esthétique « SOTA », une vérité complète ou le fonctionnement du compte sans essai.
+## Préparer le contenu et choisir le parcours réel
 
-Une demande ne doit pas être improvisée directement dans le chat pour éviter ce circuit. Rédiger le texte dans un fichier identifié, faire contrôler sa version exacte, puis remettre ce fichier et le mode d'emploi. Ne pas modifier son texte dans la réponse après le contrôle : toute modification demande une nouvelle qualification.
+Conserver sous `artifacts/design-prompts/<identifiant>/` le texte exact, son contexte, les décisions applicables et les références de design minimisées, identifiés par chemin relatif et SHA-256. Aucun secret ni document familial réel. Le prompt précise personnes, parcours, rôles, états, limites et retour attendu. Il réemploie le système validé et laisse toute conception visuelle à Claude Design.
 
-Le mécanisme ne peut intercepter tous les messages d'un agent ni empêcher un propriétaire du dépôt de le désactiver. Il rend les omissions détectables et bloque la commande encadrée de remise. Les règles ne deviennent systématiques depuis main qu'après leur intégration autorisée et vérifiée.
-
-## Choisir le parcours réel, pas un prérequis imaginaire
-
-| Phase du dossier | Condition de remise |
+| Phase | Prérequis |
 | --- | --- |
-| `bootstrap` | Exploration optionnelle sans système préalable ; ne pas affirmer un système natif déjà prêt. Ce n'est pas un passage obligatoire. |
-| `setup`, `native-create` | Création d'un système réutilisable dans Claude Design. Consigner le contexte d'utilisation observé/confirmé, sans imposer des assets préexistants. Ne pas déclarer le résultat validé avant qu'il existe. |
-| `setup`, `import-assets` | Import/extraction depuis des assets identifiés, approuvés et autorisés pour ce transfert. Leur présence ne prouve pas que le système a déjà été configuré. |
-| `screen` | Design System exact, validation et réemploi/rattachement établis ; brief du parcours qualifié et périmètre autorisé. |
-| `iteration` | Référence existante, périmètre du changement et état de validation identifiés. Une extension ne doit pas être présentée comme déjà approuvée ; réexaminer les écrans affectés. |
+| bootstrap | Exploration optionnelle sans système préalable ; ne pas annoncer un système natif déjà prêt. |
+| setup / native-create | Contexte d'utilisation observé ou confirmé ; création native sans exiger des assets d'import. |
+| setup / import-assets | Assets identifiés, approuvés et autorisés pour ce transfert ; leur présence ne prouve pas une configuration déjà faite. |
+| screen | Système exact validé et réemploi établi ; brief et périmètre identifiés. |
+| iteration | Référence existante approuvée, changement borné et effets sur les écrans existants identifiés. |
 
-La création native est explicitement confirmée par l'expérience d'Amaury. Le guide d'import ne l'interdit pas. Si les pages officielles, l'interface observée ou leurs dates divergent, relever la contradiction, expliquer la voie retenue et refuser seulement l'affirmation non étayée. Ne pas inventer une limitation puis l'imposer au responsable produit.
+Une proposition produit encore ouverte ne devient pas une règle par le dessin. Isoler une exploration ou exclure explicitement le point incertain. Un prérequis absent appelle le bon prompt de création ou de complément ; ne pas renommer artificiellement la phase pour obtenir un succès. Les observations d'usage sont datées et ne remplacent pas la validation du système. Aucun écran de remplacement n'est conçu par l'agent.
 
-Les corrections du système initial encore en construction restent en phase `setup` avec le mode réel et les références de travail dans le contexte. La phase `iteration` désigne l'évolution d'une référence de base déjà approuvée, pas toute relance de conversation. Une observation d'usage datée peut être jointe à n'importe quelle phase ; elle ne remplace jamais la validation du système requise pour un écran.
+## Revue locale et documentation externe
 
-Les propositions produit encore ouvertes ne peuvent être fixées par le dessin. Une exploration peut les écarter explicitement ; un écran dont le comportement en dépend attend leur arbitrage. Le relecteur doit vérifier cette frontière, qui ne se réduit pas à un booléen technique.
+Un relecteur indépendant examine les octets exacts : fidélité au besoin, rôles, erreurs, système réemployé, faisabilité, données transmises et récupération du résultat. Corriger les constats bloquants. Une revue n'est pas une garantie esthétique absolue ni une preuve du fonctionnement du compte Claude.
 
-## Préparer les entrées
+Consulter les sources officielles lorsqu'une capacité nouvelle ou incertaine importe à la demande. Les [constats historiques](anthropic-notes.md) sont un point de départ. Une lecture web ou une observation utilisateur peut étayer un choix sans imposer une capture automatique des trois articles. Distinguer assertions officielles capturées, observations utilisateur, adaptations Hestia et points non vérifiés.
 
-Dans `artifacts/design-prompts/<identifiant>/`, conserver le dossier JSON et les références minimisées : prompt, brief/contexte, décisions applicables, observations d'usage, éventuel système/assets et leurs validations. Chaque référence porte chemin relatif et SHA-256. Ne pas utiliser de chemins liés, secrets ou données réelles. Les noms d'auteur/relecteur sont des traces déclaratives : l'agent coordinateur vérifie réellement leur séparation.
+Une panne réseau, une rubrique renommée ou une capture ancienne ne suffit plus à bloquer un prompt correctement cadré et relu. Consigner la limite et supprimer ou conditionner l'affirmation non étayée. Si le résultat dépend réellement d'une capacité inconnue, borner ce qui peut être conçu et expliquer le problème concret. Ne pas promettre une intégration, un export, un tarif ou un accès non établis.
 
-Le dossier distingue chaque assertion de capacité : source officielle, observation d'usage datée, adaptation Hestia ou point non vérifié. Une incertitude est expliquée ou exclue de la demande, jamais cachée sous un lien générique. Les droits et tarifs d'un compte, une intégration native ou un format d'export ne se déduisent pas d'un exemple d'un autre produit Claude.
+Aucun diagnostic manquant, ancien ou en échec ne devient PASS. Les permissions et refus des outils restent applicables : ce protocole ne les désactive pas et n'autorise aucun contournement.
 
-Le format exécuté est défini par `scripts/lib/design-prompt.mjs` et ses fixtures dans `tests/harness/fixtures/design-prompt/`. Pas de second schéma parallèle à maintenir. Les champs principaux sont phase/mode, prompt, contexte, décisions, demandes, assertions, prérequis, sources et revue. `nativeDesignSystemReady` reste faux tant qu'aucune preuve de système approuvé n'est fournie.
+## Remise normale
 
-## Lire, examiner, contrôler
+Le format du dossier est défini par `scripts/lib/design-prompt.mjs` et ses fixtures, sans schéma parallèle. `sources` peut être `null` si aucune capture automatique exploitable n'est jointe. Le contexte conserve alors observations, limites et lectures réellement effectuées ; aucune assertion `official` ne peut se prévaloir d'une capture absente. Les captures jointes restent des fichiers identifiés, jamais modifiés pour masquer une dérive.
 
-1. Lire réellement les sources officielles pertinentes, dont les guides de démarrage et de Design System. La simple disponibilité HTTP n'est pas une compréhension. Vérifier également les nouveautés pertinentes si la demande invoque une fonction récente ; tout fait supplémentaire doit être sourcé et examiné. Ne pas employer la documentation API, Artifacts ou Claude Code comme preuve d'une fonction Claude Design.
-2. Capturer les sources de référence avec `node scripts/design-prompt.mjs refresh --out artifacts/design-prompts/<identifiant>/sources-<version>`. La commande n'envoie aucun prompt : uniquement des GET publics vers les articles autorisés, avec taille/durée bornées et refus des redirections non autorisées. Conserver le reçu et les contenus sans écraser une capture existante.
-3. Rédiger le dossier avec les empreintes réelles ; lancer `node scripts/design-prompt.mjs inspect --dossier <dossier.json>`. Le résultat identifie le candidat à relire ; il ne permet pas la remise.
-4. Confier le prompt, ses sources, décisions et prérequis exacts à un autre agent en contexte propre. Faire examiner faisabilité, fidélité produit, choix du parcours, hypothèses, données transmises et mode de récupération du résultat. Produire un avis et une preuve liés au `candidateDigest`, sans que l'auteur s'attribue le verdict indépendant. Reprendre tout constat bloquant.
-5. Juste avant remise, exécuter `node scripts/design-prompt.mjs check --dossier <dossier.json>`. Seul ce contrôle peut produire le PASS de remise : sources capturées depuis moins de 24 heures, pas de date future, revue applicable, inputs inchangés et GET actuels comparés aux articles capturés. Les inputs locaux sont relus après le réseau. La fenêtre de 24 heures est une règle prudente Hestia, pas une garantie Anthropic ; elle ne dispense jamais du GET au moment du contrôle.
-6. Conserver le reçu, l'identité du prompt et ses limites avec la prochaine action. Donner à Amaury le fichier exact et ce qu'il doit faire/rapporter. Un reçu ancien, une capture seule ou un audit CI ne remplace pas une nouvelle commande de contrôle pour une nouvelle remise.
+1. Préparer prompt, contexte, décisions et prérequis réels.
+2. Exécuter `node scripts/design-prompt.mjs inspect --dossier <dossier.json>` pour identifier le candidat local. Cette sortie seule ne permet pas la remise.
+3. Confier le candidat exact à un autre agent en contexte propre. Résoudre ses constats et conserver la preuve liée au `candidateDigest` et au contrôleur exécuté. L'auteur ne s'auto-approuve pas.
+4. Exécuter `node scripts/design-prompt.mjs qualify --dossier <dossier.json>`. `LOCAL_PASS`, `handoffAllowed: true` et `remoteStateVerified: false` attestent la qualification locale. La documentation est explicitement `NOT_CHECKED` ; aucun PASS réseau n'est revendiqué.
+5. Remettre le fichier exact et un mode d'emploi court, sans nouveau GO technique. Conserver résultat, limites et prochaine action : utilisation dans Claude Design, jugement des écrans puis export par Amaury.
 
-Le contrôle lie la revue au dossier complet et au contrôleur exécuté, pas seulement au texte du prompt. Un changement de brief, prérequis, assertion, source ou mécanisme impose de refaire examiner la partie affectée. Une récupération HTTP réussie après une dérive ne transforme pas l'ancien avis en avis actuel.
+Guard, chemins sûrs, empreintes, revue exacte et indépendante, absence de constat bloquant et prérequis de design restent exigés. Fichier changé, revue manquante ou donnée sensible sont des défauts locaux à résoudre. Une modification matérielle demande une nouvelle revue applicable ; une remise ultérieure demande une nouvelle vérification locale.
 
-### Refus utiles
+## Diagnostic documentaire approfondi
 
-Absence réseau, page non conforme, source changée, revue absente/non indépendante, hash différent, prérequis manquant : ne pas remettre le prompt, même sous l'étiquette « non qualifié ». Continuer les recherches ou corrections autorisées et expliquer la pièce manquante. Ne pas changer une date, déplacer un fichier ou renommer la phase pour faire disparaître un refus. Les sorties `CANDIDATE` et `AUDIT_PASS` ne sont jamais un PASS de remise.
+Ces commandes restent disponibles quand une vérification renforcée ou l'entretien du mécanisme est utile :
 
-Les captures conservent le brut ; la comparaison porte sur le titre et l'article, sans retrait du contenu de fond. La version d'extraction est identifiée. Seules les valeurs `expires`, `signature` et `req` des URLs HTTPS `downloads.intercomcdn.com/i/o/` dans les liens/images sont neutralisées : leur volatilité a été constatée le 15 septembre sans autre différence entre deux captures. Leur sémantique interne complète n'est pas documentée par les sources consultées. Hôte, chemin, fragments, autres paramètres, texte et attributs restent comparés. Les pixels des images ne sont pas téléchargés ni vérifiés par ce contrôle ; examiner manuellement les illustrations si une affirmation en dépend. Toute autre différence technique provoque encore un refus conservateur, à documenter plutôt qu'ignorer silencieusement.
+- `node scripts/design-prompt.mjs refresh --out artifacts/design-prompts/<identifiant>/sources-<version>` capture les articles officiels par GET publics bornés, sans transmettre le prompt ni écraser une capture.
+- `node scripts/design-prompt.mjs check --dossier <dossier.json>` contrôle strictement fraîcheur de moins de 24 heures, extraction, comparaison réseau, revue exacte et stabilité des entrées locales. Sans capture appropriée, il refuse ce diagnostic.
 
-## Couverture durable dans le dépôt
+Un PASS de `check` est une preuve renforcée datée. Son échec est conservé et expliqué ; il n'annule pas une qualification locale valide à lui seul. Réexaminer toute affirmation affectée : si prompt ou contexte change, refaire la revue exacte et `qualify`. Ne pas déclarer une dérive de fond cosmétique sans examen.
 
-Tout prompt Markdown versionné réside dans `docs/design/prompts/` et figure dans `docs/design/prompt-catalog.json` avec son empreinte et son état. Les versions historiques ou dépréciées restent conservées mais ne doivent pas être remises. Ne pas déplacer un prompt hors de ce chemin pour éviter son inscription.
+Le contrôle strict conserve allowlist, bornes, refus des redirections non autorisées et empreintes. Seuls `expires`, `signature` et `req` des URLs HTTPS `downloads.intercomcdn.com/i/o/` dans les liens/images sont normalisés selon l'extracteur versionné ; les pixels ne sont pas téléchargés ou vérifiés. Les dates et captures ne sont jamais falsifiées pour obtenir un succès.
 
-`node scripts/design-prompt.mjs audit` vérifie ce catalogue hors ligne ; `verify` et les tests du harnais l'exécutent. La CI ne relit pas Internet et ne certifie ni le dossier ignoré ni son actualité. Les prompts ignorés sont contrôlés explicitement par `check --dossier` avec leurs propres empreintes. Le catalogue n'est ni un backlog ni une liste d'approbations visuelles.
+## Catalogue et retour Claude Design
 
-## Réemploi et retour d'expérience
+Tout prompt Markdown versionné réside dans `docs/design/prompts/` et figure dans `docs/design/prompt-catalog.json` avec son empreinte et son état. Les versions historiques restent conservées. `node scripts/design-prompt.mjs audit` vérifie ce catalogue hors ligne ; la CI ne certifie ni le dossier ignoré ni une lecture actuelle d'Internet.
 
-Après usage, conserver l'identité du système, sa version, les validations d'Amaury et une preuve de réemploi sur un projet d'essai. Vérifier séparément les réglages de disponibilité, de référence par défaut et de rattachement au projet selon ceux réellement présents ; ne pas activer un partage ou réglage d'organisation sous un simple GO de prompt.
+Le ZIP manuel reste le circuit Hestia. Amaury utilise Claude Design, valide les écrans et dépose un nouvel export à la racine. Aucun lancement Claude par les agents, transfert automatique, publication du design, MCP ou `/design-sync` n'est requis ou autorisé ici. L'export est inspecté comme une entrée non fiable puis intégré fidèlement dans le périmètre autorisé. Une lacune entraîne un complément dans la même boucle, pas une interface inventée par l'agent.
 
-Le ZIP manuel vers Codex demeure le circuit Hestia. Le handoff Claude Code, un MCP ou `/design-sync` ne sont ni nécessaires ni autorisés par cette procédure. Inspecter l'export selon la gouvernance avant exécution ou intégration. Pour toute lacune, préparer un complément à partir des artefacts réels et faire passer ce complément par le même contrôle.
+Validation du design, qualification technique, publication GitHub, Dev et GO Production gardent leur portée. Ce protocole organise le travail et ses preuves ; il ne garantit pas l'absence d'erreurs et ne remplace pas les décisions d'Amaury.
