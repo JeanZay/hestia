@@ -33,7 +33,7 @@ test("transmettre toute la gestion puis nommer un lecteur après le départ, san
   const created = await page.request.post("/api/hestia/folders", { headers: { origin: config.origin }, data: { name: `Transmission ${suffix}` } });
   expect(created.status()).toBe(201); const { folder } = await created.json();
   const granted = await page.request.post(`/api/hestia/folders/${folder.id}/sharing`, { headers: { origin: config.origin }, data: { memberId: successorId, export: false, deposit: false, idempotencyKey: randomUUID() } });
-  expect(granted.status()).toBe(201);
+  expect(granted.status()).toBe(200);
   await page.reload(); await page.getByRole("main").getByRole("button", { name: new RegExp(`Transmission ${suffix}`) }).click();
   await page.getByRole("tab", { name: "Accès", exact: true }).click();
   await page.getByRole("button", { name: "Transmettre la gestion", exact: true }).click();
@@ -45,6 +45,10 @@ test("transmettre toute la gestion puis nommer un lecteur après le départ, san
   await page.screenshot({ path: test.info().outputPath("family-transfer-confirm.png"), fullPage: true });
   await page.getByRole("dialog").getByRole("button", { name: "Confier la gestion", exact: true }).click();
   await expect(page.getByText("Gestion transmise.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ce dossier est vide", exact: true })).toBeVisible();
+  expect((await page.request.get("/api/hestia/session")).status()).toBe(200);
+  expect((await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toHaveCount(0);
   const rights = await pool.query("SELECT capability FROM hestia_grant WHERE user_id=$1 AND folder_id=$2 AND revoked_at IS NULL", [successorId, folder.id]);
   expect(rights.rows.some(row => ["déposer", "modifier", "supprimer", "exporter"].includes(row.capability))).toBe(false);
   const adminContext = await browser.newContext({ baseURL: config.origin, ...(isMobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : {}) });

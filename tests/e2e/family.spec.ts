@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { expect, test, type Page } from "@playwright/test";
 import { readServerConfig } from "../../src/server/config";
+import { provisionSyntheticMember } from "../../src/server/db/synthetic";
 import { identityCrypto } from "../../src/server/identity/crypto";
 import { dispatchIdentityMail, type IdentityMail } from "../../src/server/identity/outbox";
 
@@ -27,7 +28,7 @@ async function login(page: Page, email: string, secret = password!) {
   for (let attempt = 0; attempt < 4; attempt++) {
     await page.getByLabel("Adresse e-mail", { exact: true }).fill(email);
     await page.getByLabel("Mot de passe", { exact: true }).fill(secret);
-    const response = page.waitForResponse(result => result.url().endsWith("/api/auth/sign-in/email"));
+    const response = page.waitForResponse(result => result.url().endsWith("/api/auth/sign-in/email"), { timeout: 10_000 });
     await page.getByRole("button", { name: "Se connecter", exact: true }).click();
     if ((await response).status() !== 429) break;
     await page.waitForTimeout(10_100);
@@ -42,7 +43,7 @@ async function activate(page: Page, link: string, email: string, secret: string)
   await page.getByRole("button", { name: "Commencer", exact: true }).click();
   await page.getByLabel("Code reçu par e-mail").fill(await collect(email, "otp"));
   await page.getByRole("button", { name: "Continuer", exact: true }).click();
-  await page.getByLabel("Nouveau mot de passe", { exact: true }).fill(secret);
+  await page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]")).fill(secret);
   await page.getByLabel("Saisissez-le de nouveau").fill(secret);
   await page.getByRole("button", { name: "Continuer", exact: true }).click();
   await expect(page.getByRole("list", { name: "Codes de secours" }).locator("li")).toHaveCount(8);
@@ -52,7 +53,7 @@ async function activate(page: Page, link: string, email: string, secret: string)
   await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
 }
 
-test("inviter, activer, récupérer puis renouveler depuis Moi, retirer et réadmettre sans droits", async ({ page, browser, isMobile }) => {
+test("inviter, activer, récupérer puis renouveler depuis Moi", async ({ page, browser, isMobile }) => {
   test.setTimeout(180_000);
   const suffix = randomUUID().slice(0, 8), email = `family-${suffix}@example.invalid`, name = `Morgan ${suffix}`;
   const secret = `Synthetic family ${randomUUID()}!`, renewed = `Synthetic renewed ${randomUUID()}!`;
@@ -90,7 +91,7 @@ test("inviter, activer, récupérer puis renouveler depuis Moi, retirer et réad
     expect(recoveryRequests).toBe(1);
     await member.getByLabel("Code reçu", { exact: true }).fill(await collect(email, "otp"));
     await member.getByRole("button", { name: "Continuer", exact: true }).click();
-    await member.getByLabel("Nouveau mot de passe", { exact: true }).fill(renewed); await member.getByLabel("Saisissez-le de nouveau").fill(renewed);
+    await member.getByLabel("Nouveau mot de passe", { exact: true }).and(member.locator("input[type=password]")).fill(renewed); await member.getByLabel("Saisissez-le de nouveau").fill(renewed);
     await member.getByRole("button", { name: "Enregistrer", exact: true }).click();
     await expect(member.getByRole("heading", { name: "Accès rétabli", exact: true })).toBeVisible();
     await member.getByRole("button", { name: "Aller à la connexion", exact: true }).click();
@@ -118,15 +119,35 @@ test("inviter, activer, récupérer puis renouveler depuis Moi, retirer et réad
     await expect(codesPanel.getByRole("button", { name: "Terminé", exact: true })).toBeEnabled();
     await expect(codesPanel.getByRole("button", { name: "Vérifier le résultat", exact: true })).toHaveCount(0);
     await codesPanel.getByRole("button", { name: "Fermer", exact: true }).click();
+  } finally { await recipient.close(); }
+});
+
+test("retirer puis réadmettre un membre sans restaurer ses droits", async ({ page, browser, isMobile }) => {
+  test.setTimeout(180_000);
+  page.setDefaultTimeout(10_000);
+  // Recovery and return use independent identities: the real email budget allows
+  // three sends per 15 minutes, which the combined accelerated journey exceeds.
+  // This test preserves the removed member's existing session cookie throughout.
+  const suffix = randomUUID().slice(0, 8), email = `return-${suffix}@example.invalid`, name = `Robin ${suffix}`;
+  const secret = `Synthetic return ${randomUUID()}!`;
+  await provisionSyntheticMember(pool, { name, email, password: secret });
+  await test.step("Connexion de l’administration", async () => { await login(page, "alex@hestia.invalid"); });
+  const recipient = await browser.newContext({ baseURL: config.origin, ...(isMobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : {}) });
+  recipient.setDefaultTimeout(10_000);
+  try {
+    const member = await recipient.newPage();
+    await test.step("Connexion du membre avant retrait", async () => { await login(member, email, secret); });
+    await test.step("Partage explicite et retrait du foyer", async () => {
     // Explicit sharing remains independent of household admission.
-    const folder = await (await page.request.post("/api/hestia/folders", { headers: { origin: config.origin }, data: { name: `Dossier ${suffix}` } })).json();
+    const created = await page.request.post("/api/hestia/folders", { headers: { origin: config.origin }, data: { name: `Dossier ${suffix}` } });
+    expect(created.status()).toBe(201); const folder = await created.json();
     let target: { id: string; email: string } | undefined, offset: number | null = 0;
     while (offset !== null && !target) {
       const membership: { members: { id: string; email: string }[]; nextOffset: number | null } = await (await page.request.get(`/api/hestia/household/members?status=active&offset=${offset}&limit=50`)).json();
       target = membership.members.find(item => item.email === email); offset = membership.nextOffset;
     }
     expect(!!target).toBe(true);
-    expect((await page.request.post(`/api/hestia/folders/${folder.folder.id}/sharing`, { headers: { origin: config.origin }, data: { memberId: target!.id, export: false, deposit: false, idempotencyKey: randomUUID() } })).status()).toBe(201);
+    expect((await page.request.post(`/api/hestia/folders/${folder.folder.id}/sharing`, { headers: { origin: config.origin }, data: { memberId: target!.id, export: false, deposit: false, idempotencyKey: randomUUID() } })).status()).toBe(200);
     await page.reload(); await clickVisible(page, "Foyer");
     await page.getByRole("button", { name: new RegExp(name) }).click();
     await page.getByRole("button", { name: "Retirer du foyer", exact: true }).click();
@@ -134,16 +155,21 @@ test("inviter, activer, récupérer puis renouveler depuis Moi, retirer et réad
     await page.getByRole("dialog").getByRole("button", { name: "Retirer du foyer", exact: true }).click();
     await expect(page.getByText("La personne a été retirée du foyer.", { exact: true })).toBeVisible();
     expect((await member.request.get("/api/hestia/session")).status()).toBe(401);
+    });
+    await test.step("Préparation du retour", async () => {
     await page.getByRole("tab", { name: "Anciens membres", exact: true }).click();
     await page.getByRole("button", { name: new RegExp(name) }).click();
     await page.getByRole("button", { name: "Préparer son retour", exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Préparer le retour", exact: true }).click();
     await expect(page.getByText("Retour préparé.", { exact: true })).toBeVisible();
-    await activate(member, await collect(email, "url"), email, secret);
+    });
+    await test.step("Activation du retour avec l’ancienne session", async () => { await activate(member, await collect(email, "url"), email, secret); });
+    await test.step("Connexion après retour et absence de droits restaurés", async () => {
     await login(member, email, secret);
     const listing = await (await member.request.get("/api/hestia/folders")).json();
     expect(listing.folders).toHaveLength(0);
     await member.screenshot({ path: test.info().outputPath("family-return-empty.png"), fullPage: true });
+    });
   } finally { await recipient.close(); }
 });
 
