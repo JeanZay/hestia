@@ -44,13 +44,18 @@ dans le dépôt.
 
 ## Prérequis avant une recette distante
 
-Le transport de messages et son déclenchement restent à configurer et qualifier
-sur Dev. `dispatchIdentityMail` accepte un transport injecté et une clé
-d’idempotence stable par message ; sans transport, il retourne
-`transport-unavailable` et ne prétend pas avoir envoyé le message. Un état
-`sent` indique que le transport a accepté l’envoi, pas que le destinataire l’a
-reçu. Les reprises sont bornées ; une réponse réseau perdue doit être traitée
-par le transport sans envoi supplémentaire incontrôlé.
+Le transport Resend utilise l’outbox chiffrée et une clé d’idempotence stable
+par message. Il reste désactivé par défaut, notamment en local. Les opérations
+d’identité et d’invitation réussies déclenchent un traitement borné après la
+réponse ; une route interne protégée et une commande opérateur permettent la
+reprise. La configuration, les limites et la planification Dev sont décrites
+dans [l’exploitation des courriels familiaux](operations/family-mail.md).
+
+Un état `sent` signifie que le fournisseur a accepté l’envoi, pas que le
+destinataire l’a reçu. Une preuve expirée ou révoquée au dernier contrôle
+n’est pas envoyée ; une annulation après le départ réseau ne peut pas rappeler
+le courriel, mais son lien ou code devient inutilisable. Le déclenchement
+après réponse et les essais locaux ne prouvent aucune délivrabilité distante.
 
 Avant de proposer ces parcours sur Dev, vérifier le transport, le déclencheur,
 la délivrabilité et la procédure de secours opérateur. Les essais locaux ne
