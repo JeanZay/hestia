@@ -1,7 +1,7 @@
 name: Hestia Dev mail retry
 on:
   schedule:
-    - cron: '2-57/5 * * * *'
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:

@@ -5,7 +5,7 @@ import { MailDeliveryError } from "./mail-error";
 
 type Crypto = ReturnType<typeof identityCrypto>;
 export type IdentityMail = { email:string; otp?:string; url?:string };
-export type MailTransport = (message:{id:string;template:string;parameters:IdentityMail})=>Promise<void>;
+export type MailTransport = (message:{id:string;template:string;parameters:IdentityMail;bindPayload:(payload:string)=>Promise<boolean>})=>Promise<void>;
 export type MailDispatchResult = { state:"transport-unavailable"|"idle"|"cancelled"|"sent"|"failed" };
 const aad=(id:string,template:string,flowId:string,version:number)=>`${id}|${template}|${flowId}|${version}`;
 export async function enqueue(client:PoolClient,crypto:Crypto,flow:{id:string;version:number},template:string,parameters:IdentityMail,proofId?:string) {
@@ -74,7 +74,15 @@ export async function dispatchIdentityMail(pool:Pool,crypto:Crypto,transport?:Ma
     }
     // Cancellation after this recheck can send a now-invalid token; no recall
     // is claimed. Provider idempotency identity and ciphertext never change.
-    await transport({id:row.id,template:row.template,parameters});
+    await transport({id:row.id,template:row.template,parameters,bindPayload:async(payload:string)=>{
+      // HMAC prevents an outbox reader from brute-forcing six-digit OTPs from
+      // the stored fingerprint. Bind before network, across processes/restarts.
+      const digest=crypto.digest("mail-payload",row.id,payload);
+      const bound=await pool.query(`UPDATE hestia_mail_outbox o SET payload_digest=$3
+        WHERE o.id=$1 AND o.lease_id=$2 AND o.state='sending' AND o.lease_until>clock_timestamp()
+        AND ${validFlow} AND ${withinWindow} AND (o.payload_digest IS NULL OR o.payload_digest=$3)`,[row.id,lease,digest]);
+      return bound.rowCount===1;
+    }});
     const result=await pool.query(`UPDATE hestia_mail_outbox SET state='sent',ciphertext=NULL,lease_until=NULL,lease_id=NULL
       WHERE id=$1 AND lease_id=$2 AND state='sending'`,[row.id,lease]);
     return {state:result.rowCount?"sent":"cancelled"};

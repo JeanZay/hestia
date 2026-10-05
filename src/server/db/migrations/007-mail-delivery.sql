@@ -1,5 +1,6 @@
 ALTER TABLE hestia_mail_outbox ADD COLUMN proof_id uuid REFERENCES hestia_identity_proof(id);
 ALTER TABLE hestia_mail_outbox ADD COLUMN first_attempt_at timestamptz;
+ALTER TABLE hestia_mail_outbox ADD COLUMN payload_digest text CHECK (payload_digest ~ '^[0-9a-f]{64}$');
 -- The old encrypted OTP cannot be safely attributed to one proof. Require a
 -- fresh OTP rather than guessing. Existing sent mail remains historical.
 UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL

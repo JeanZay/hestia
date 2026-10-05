@@ -6,6 +6,21 @@ const address = (value: unknown): value is string => typeof value === "string" &
   && /^[^@\s<>,;:"\\\x00-\x1f\x7f]+@[^@\s<>,;:"\\\x00-\x1f\x7f]+\.[^@\s<>,;:"\\\x00-\x1f\x7f]+$/.test(value);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+async function boundedBody(result: Response): Promise<unknown> {
+  const reader = result.body?.getReader();
+  if (!reader) throw new MailDeliveryError(true);
+  const chunks: Uint8Array[] = []; let length = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      length += chunk.value.length;
+      if (length > 2048) { await reader.cancel(); throw new MailDeliveryError(true); }
+      chunks.push(chunk.value);
+    }
+  } finally { reader.releaseLock(); }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
 /** No external transport in local mode, even with inherited provider credentials. */
 export function createResendTransport(config: ServerConfig, env: Record<string, string | undefined> = process.env,
   request: typeof fetch = fetch): MailTransport | undefined {
@@ -43,29 +58,26 @@ export function createResendTransport(config: ServerConfig, env: Record<string, 
     // The endpoint, payload and key remain stable across ambiguous retries.
     // Never log a provider body: it may echo recipients or private links.
     try {
+      const payload = JSON.stringify({ from, to: [p.email], subject, text });
+      if (typeof message.bindPayload !== "function" || !await message.bindPayload(payload)) throw new MailDeliveryError(false);
       const result = await request("https://api.resend.com/emails", {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(5000),
         headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "user-agent": "hestia/0.1", "Idempotency-Key": `hestia/${id}` },
-        body: JSON.stringify({ from, to: [p.email], subject, text }),
+        body: payload,
       });
       if (!result.ok) {
-        await result.body?.cancel();
+        let permanentConflict = false;
+        if (result.status === 409) {
+          try {
+            const errorBody = await boundedBody(result) as { name?: unknown } | null;
+            permanentConflict = errorBody?.name === "invalid_idempotent_request";
+          } catch { /* Unknown conflict remains bounded by the outbox retry policy. */ }
+        } else await result.body?.cancel();
         const delay = Number(result.headers.get("retry-after"));
-        throw new MailDeliveryError(result.status === 408 || result.status === 409 || result.status === 429 || result.status >= 500,
+        throw new MailDeliveryError(!permanentConflict && (result.status === 408 || result.status === 409 || result.status === 429 || result.status >= 500),
           Number.isFinite(delay) && delay > 0 ? Math.min(delay, 3600) : undefined);
       }
-      const reader = result.body?.getReader();
-      if (!reader) throw new MailDeliveryError(true);
-      const chunks: Uint8Array[] = []; let length = 0;
-      try {
-        for (;;) {
-          const chunk = await reader.read(); if (chunk.done) break;
-          length += chunk.value.length;
-          if (length > 2048) { await reader.cancel(); throw new MailDeliveryError(true); }
-          chunks.push(chunk.value);
-        }
-      } finally { reader.releaseLock(); }
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      const body = await boundedBody(result) as { id?: unknown } | null;
       if (!body || typeof body.id !== "string" || !uuid.test(body.id)) throw new MailDeliveryError(true);
     } catch (error) {
       if (error instanceof MailDeliveryError) throw error;

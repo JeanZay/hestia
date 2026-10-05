@@ -40,7 +40,11 @@ résultat minimisé ne remplace pas une vérification de réception.
 
 Chaque appel au fournisseur expire après cinq secondes. Les tentatives sont
 limitées à cinq et à une fenêtre de 23 heures depuis la première tentative,
-avec la même clé d’idempotence et le même contenu. Les erreurs permanentes
+avec la même clé d’idempotence et le même contenu. Une empreinte HMAC du corps
+complet est liée durablement avant le premier envoi. Si un changement de
+configuration ou de modèle modifie ce corps entre tentatives, le message
+s’arrête sans nouvel envoi ; l’opérateur fait reprendre le parcours existant.
+L’enveloppe HTTP complète n’est pas conservée. Les erreurs permanentes
 sont terminales ; les erreurs temporaires restent reprenables dans ces bornes.
 Une dernière tentative interrompue se clôture après expiration du bail. Un
 retour fournisseur tardif ne réécrit jamais un message annulé.
@@ -66,7 +70,10 @@ des accès nécessaires. Il utilise uniquement :
 | Secret `HESTIA_DEV_VERCEL_BYPASS` | Contournement de protection Dev si nécessaire. |
 
 Ne transmettre à ce workflow ni clé Resend, ni accès SQL, ni secret Production.
-Le calendrier prévoit un passage toutes les cinq minutes. GitHub peut retarder
+Le calendrier prévoit un passage toutes les quinze minutes, afin de laisser
+la base Dev revenir en veille entre les passages. Cette cadence ne constitue
+pas une garantie de quota disponible. L’envoi normal reste immédiat ; le secours
+annule un OTP déjà expiré, à réémettre par le parcours existant. GitHub peut retarder
 ces exécutions et désactive les workflows planifiés d’un dépôt public après
 60 jours sans activité. Cette cadence ne garantit donc pas l’arrivée d’un OTP
 avant expiration. Voir les [limites des déclenchements planifiés GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).

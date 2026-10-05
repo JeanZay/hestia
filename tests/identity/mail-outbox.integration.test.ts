@@ -82,7 +82,7 @@ describe("durable mail leases, proof binding and retry limits",()=>{
     expect(await dispatchIdentityMail(pool,crypto,send)).toEqual({state:"failed"});
     const first=await row(f.id);expect(first.ciphertext).not.toBeNull();await due(f.id);
     expect(await dispatchIdentityMail(other,crypto,send)).toEqual({state:"sent"});
-    expect(send.mock.calls[1][0]).toEqual(send.mock.calls[0][0]);expect(accepted.size).toBe(1);
+    expect(JSON.stringify(send.mock.calls[1][0])).toEqual(JSON.stringify(send.mock.calls[0][0]));expect(accepted.size).toBe(1);
     expect((await row(f.id)).first_attempt_at).toEqual(first.first_attempt_at);
   });
   it("serializes concurrent workers while the provider is still in flight",async()=>{
@@ -92,6 +92,18 @@ describe("durable mail leases, proof binding and retry limits",()=>{
     const first=dispatchIdentityMail(pool,crypto,send);await ready;
     expect(await dispatchIdentityMail(other,crypto,send)).toEqual({state:"idle"});release();
     expect(await first).toEqual({state:"sent"});expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("persists a keyed payload binding before network and refuses drift across pools",async()=>{
+    const f=await fixture();let networkCalls=0;
+    const send=(payload:string):MailTransport=>async message=>{
+      if(!await message.bindPayload(payload))throw new MailDeliveryError(false);
+      expect((await row(f.id)).payload_digest).toBe(crypto.digest("mail-payload",f.id,payload));
+      networkCalls++;throw new MailDeliveryError(true);
+    };
+    await dispatchIdentityMail(pool,crypto,send("first complete synthetic envelope"));await due(f.id);
+    await dispatchIdentityMail(other,crypto,send("first complete synthetic envelope"));await due(f.id);
+    await dispatchIdentityMail(other,crypto,send("changed synthetic envelope"));
+    expect(networkCalls).toBe(2);expect(await row(f.id)).toMatchObject({state:"failed",ciphertext:null,attempts:3});
   });
   it.each([false,true])("late callback cannot resurrect cancelled state (failure=%s)",async(failure)=>{
     const f=await fixture();
