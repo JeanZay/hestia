@@ -76,7 +76,7 @@ export function createIdentity(pool:Pool,config:ServerConfig,access:Access) {
     await client.query("DELETE FROM hestia_identity_rate WHERE expires_at<clock_timestamp()-interval '1 hour'");
     await client.query(`UPDATE hestia_identity_flow SET status=CASE WHEN kind IN ('invite','readmit') THEN status ELSE 'revoked' END,browser_digest=NULL,capability_digest=NULL,
       prepared_password_hash=NULL,prepared_ciphertext=NULL WHERE expires_at<=clock_timestamp() AND status NOT IN ('completed','revoked')`);
-    await client.query(`UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL WHERE state IN ('pending','sending','failed')
+    await client.query(`UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL WHERE state IN ('pending','sending','failed')
       AND flow_id IN (SELECT id FROM hestia_identity_flow WHERE status='revoked' OR expires_at<=clock_timestamp())`);
     await client.query("DELETE FROM hestia_identity_confirmation WHERE expires_at<clock_timestamp()-interval '1 day'");
     await client.query("DELETE FROM hestia_identity_receipt WHERE created_at<clock_timestamp()-interval '30 days'");
@@ -124,16 +124,16 @@ export function createIdentity(pool:Pool,config:ServerConfig,access:Access) {
   async function revokeFlow(client:PoolClient,id:string) {
     await client.query("UPDATE hestia_identity_flow SET status='revoked',capability_digest=NULL,browser_digest=NULL,prepared_ciphertext=NULL,prepared_password_hash=NULL WHERE id=$1",[id]);
     await client.query("UPDATE hestia_identity_proof SET revoked_at=clock_timestamp() WHERE flow_id=$1",[id]);
-    await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[id]);
+    await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[id]);
   }
   async function issueOtp(client:PoolClient,f:Flow,purpose:string) {
     const recent=(await client.query("SELECT 1 FROM hestia_identity_proof WHERE flow_id=$1 AND created_at>clock_timestamp()-interval '60 seconds'",[f.id])).rowCount;
     if(recent)return false;
     await client.query("UPDATE hestia_identity_proof SET revoked_at=clock_timestamp() WHERE flow_id=$1 AND consumed_at IS NULL",[f.id]);
-    await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL WHERE flow_id=$1 AND template='otp' AND state IN ('pending','sending','failed')",[f.id]);
+    await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL WHERE flow_id=$1 AND template='otp' AND state IN ('pending','sending','failed')",[f.id]);
     const otp=randomInt(0,1000000).toString().padStart(6,"0"),id=randomUUID();
     await client.query("INSERT INTO hestia_identity_proof(id,flow_id,version,email,purpose,digest) VALUES($1,$2,$3,$4,$5,$6)",[id,f.id,f.version,f.email,purpose,crypto.digest("otp",id,f.id,f.version,f.email,purpose,otp)]);
-    if(f.kind!=="recovery"||f.target_id)await enqueue(client,crypto,f,"otp",{email:f.email,otp});
+    if(f.kind!=="recovery"||f.target_id)await enqueue(client,crypto,f,"otp",{email:f.email,otp},id);
     return true;
   }
   async function proveOtp(client:PoolClient,f:Flow,otp:unknown,purpose:string) {
@@ -289,7 +289,7 @@ export function createIdentity(pool:Pool,config:ServerConfig,access:Access) {
           }
           await replaceCodes(client,target!,f.prepared_batch,codes);await revokeFlows(client,target!,f.id);
           await client.query("UPDATE hestia_identity_flow SET target_id=$2,status='completed',capability_digest=NULL,prepared_ciphertext=NULL,prepared_password_hash=NULL WHERE id=$1",[f.id,target]);
-          await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[f.id]);
+          await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[f.id]);
           return send(await r.save({completed:true,recoveryCodeCount:8}));
         });
       }
@@ -356,7 +356,7 @@ export function createIdentity(pool:Pool,config:ServerConfig,access:Access) {
           // cancel and prepare a fresh intention, never inherit a stale one.
           await actorStillValid(client,f);if(!await emailBudget(client,f.email))return fail(limited());
           await client.query("UPDATE hestia_identity_proof SET revoked_at=clock_timestamp() WHERE flow_id=$1",[id]);
-          await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[id]);
+          await client.query("UPDATE hestia_mail_outbox SET state='cancelled',ciphertext=NULL,lease_id=NULL,lease_until=NULL WHERE flow_id=$1 AND state IN ('pending','sending','failed')",[id]);
           const secret=capability(),version=f.version+1;
           await client.query(`UPDATE hestia_identity_flow SET version=$2,capability_digest=$3,status='pending',email_verified=false,
             browser_digest=NULL,prepared_ciphertext=NULL,prepared_password_hash=NULL,expires_at=clock_timestamp()+interval '72 hours' WHERE id=$1`,[id,version,crypto.digest("capability",id,version,secret)]);

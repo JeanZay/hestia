@@ -1,0 +1,29 @@
+name: Hestia Dev mail retry
+on:
+  schedule:
+    - cron: '2-57/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: hestia-dev-mail
+  cancel-in-progress: false
+jobs:
+  retry:
+    if: vars.HESTIA_DEV_MAIL_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Resume bounded Dev outbox
+        run: node scripts/mail-worker.mjs
+        env:
+          AUTH_BASE_URL: ${{ vars.HESTIA_DEV_ORIGIN }}
+          MAIL_WORKER_SECRET: ${{ secrets.HESTIA_DEV_MAIL_WORKER_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.HESTIA_DEV_VERCEL_BYPASS }}
