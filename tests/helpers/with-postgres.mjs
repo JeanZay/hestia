@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { POSTGRES_IMAGE, resolvePostgresImage, assertPostgresContainerImage } from './postgres-image.mjs';
 import { startS3Bench, stopS3Bench } from './s3-bench.mjs';
+import { waitForContainerRemoval } from './container-removal.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const runner = path.join(root, 'tests/helpers/run-application.mjs');
@@ -27,8 +28,8 @@ const dockerEnv = { ...systemEnv, POSTGRES_PASSWORD: password, RUSTFS_ACCESS_KEY
 const receipt = { runId, at: new Date().toISOString(), image, scope: 'ephemeral-local-only', repairPerformed: false };
 let network, container, child, interrupted = false, exitCode = 1;
 
-function docker(args) {
-  const result = spawnSync('docker', args, { env: dockerEnv, encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024 });
+function docker(args, timeout = 30000) {
+  const result = spawnSync('docker', args, { env: dockerEnv, encoding: 'utf8', timeout, maxBuffer: 1024 * 1024 });
   if (result.status !== 0) throw Error(`DOCKER_${args[0].toUpperCase()}_FAILED`);
   return result.stdout.trim();
 }
@@ -158,7 +159,7 @@ try {
 } finally {
   stopChild();
   try {
-    receipt.s3Removed = stopS3Bench(docker, runId);
+    receipt.s3Removed = await stopS3Bench(docker, runId);
     // Recover exact owned IDs if a Docker command completed after its client timed out.
     const matches = docker(['ps', '-a', '--no-trunc', '--filter', `name=^/${runId}$`, '--format', '{{.ID}}']).split('\n').filter(Boolean);
     if (matches.length > 1) throw Error('OWNERSHIP_MISMATCH');
@@ -168,7 +169,7 @@ try {
       container = current.Id;
       docker(['stop', '--time', '3', container]);
     }
-    receipt.containerRemoved = docker(['ps', '-a', '--no-trunc', '--filter', `name=^/${runId}$`, '--format', '{{.ID}}']) === '';
+    receipt.containerRemoved = await waitForContainerRemoval(docker, runId, container ?? null);
     const networks = docker(['network', 'ls', '--no-trunc', '--filter', `name=^${runId}$`, '--format', '{{.ID}}']).split('\n').filter(Boolean);
     if (networks.length > 1) throw Error('OWNERSHIP_MISMATCH');
     if (networks.length) {

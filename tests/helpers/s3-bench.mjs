@@ -1,4 +1,5 @@
 import { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { waitForContainerRemoval } from './container-removal.mjs';
 
 // RustFS 1.0.1, Linux amd64. Disposable test server only, not an application dependency.
 export const S3_IMAGE = 'rustfs/rustfs@sha256:7465b31993156ca5cc0eb4b3c59a01ff69651961be62bcfeb6ce569f22034a56';
@@ -46,14 +47,16 @@ export async function startS3Bench({ docker, runId, network, accessKey, secretKe
   } finally { client.destroy(); }
 }
 
-export function stopS3Bench(docker, runId) {
+export async function stopS3Bench(docker, runId) {
   const name = `${runId}-s3`;
+  let expectedId = null;
   const ids = docker(['ps', '-a', '--no-trunc', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']).split('\n').filter(Boolean);
   if (ids.length > 1) throw Error('S3_OWNERSHIP_MISMATCH');
   if (ids.length) {
     const info = JSON.parse(docker(['inspect', ids[0]]))[0];
     if (info.Name !== `/${name}` || info.Config.Labels['hestia.qualification'] !== runId) throw Error('S3_OWNERSHIP_MISMATCH');
+    expectedId = info.Id;
     docker(['stop', '--time', '3', info.Id]);
   }
-  return docker(['ps', '-a', '--no-trunc', '--filter', `name=^/${name}$`, '--format', '{{.ID}}']) === '';
+  return await waitForContainerRemoval(docker, name, expectedId);
 }
