@@ -13,8 +13,8 @@ export function FamilyManagement({ folderId, succession = false, onDone, onClose
   useEffect(() => { alive.current = true; const reads = readSequence; const sequence = ++reads.current; familyRequest<Review>(path).then(result => { if (alive.current && sequence === reads.current) setReview(result); }).catch(error => { if (!alive.current || sequence !== reads.current) return; if (error instanceof FamilyRequestError && error.status === 401) onAccessLost(); else if (succession || !(error instanceof FamilyRequestError && [403,404].includes(error.status))) setMessage({ tone: "danger", title: "Gestion indisponible.", text: familyError(error) }); }).finally(() => { if (alive.current && sequence === reads.current) setLoading(false); }); return () => { alive.current = false; ++reads.current; }; }, [path, succession, onAccessLost]);
   async function reload() {
     const sequence = ++readSequence.current;
-    setLoading(true); setNominee(""); setConfirm(false); operation.current = null;
-    try { const result = await familyRequest<Review>(path); if (alive.current && sequence === readSequence.current) setReview(result); }
+    setLoading(true); setNominee(""); setConfirm(false);
+    try { const result = await familyRequest<Review>(path); if (alive.current && sequence === readSequence.current) { setReview(result); operation.current = null; } }
     catch (error) { if (alive.current && sequence === readSequence.current) { setOpen(false); if (error instanceof FamilyRequestError && [401,403,404].includes(error.status)) setReview(null); throw error; } }
     finally { if (alive.current && sequence === readSequence.current) setLoading(false); }
   }

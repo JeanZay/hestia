@@ -127,8 +127,21 @@ test("transfert : lecture échouée ou tardive, conflit réel et résultat incer
     await panel.getByRole("button", { name: "Fermer", exact: true }).click();
     await open.click();
     await expect(page.getByRole("button", { name: "Continuer", exact: true })).toBeDisabled();
+    // An inconclusive receipt followed by a failed re-read must retain the key
+    // so another explicit check can still discover the committed operation.
+    let receiptReads = 0;
+    await page.route("**/api/hestia/membership-operations/*", async route => {
+      receiptReads++;
+      if (receiptReads === 1) await route.fulfill({ json: { status: "not-recorded" } });
+      else await route.continue();
+    });
+    mode = "fail";
+    await page.getByRole("button", { name: "Vérifier le résultat", exact: true }).click();
+    await expect(page.getByText("Vérification impossible.", { exact: true })).toBeVisible();
+    await open.click(); mode = "normal";
     await page.getByRole("button", { name: "Vérifier le résultat", exact: true }).click();
     await expect(page.getByText("Gestion transmise.", { exact: true })).toBeVisible();
+    expect(receiptReads).toBe(2);
     expect(posts).toBe(2);
     expect((await pool.query("SELECT count(*)::int AS count FROM hestia_membership_receipt WHERE actor_id=$1 AND kind='transfer'", [creator])).rows[0].count).toBe(1);
   } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
