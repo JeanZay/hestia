@@ -19,16 +19,26 @@ export function FamilyHousehold({ onAccessLost }: { onAccessLost: () => void }) 
   const readmissionConfirmation = useRef<string | null>(null);
   const load = useCallback(async () => {
     const epoch = ++sequence.current;
-    const collected: Member[] = []; let offset: number | null = 0;
-    while (offset !== null) { const result: { members: Member[]; nextOffset: number | null } = await familyRequest(`/api/hestia/household/members?status=${tab === "removed" ? "removed" : "active"}&offset=${offset}&limit=50`); collected.push(...result.members); offset = result.nextOffset; }
+    async function memberPages() {
+      const rows: Member[] = []; let offset: number | null = 0;
+      while (offset !== null) { const result: { members: Member[]; nextOffset: number | null } = await familyRequest(`/api/hestia/household/members?status=${tab === "removed" ? "removed" : "active"}&offset=${offset}&limit=50`); rows.push(...result.members); offset = result.nextOffset; }
+      return rows;
+    }
     async function pendingPages(path: string) {
       const rows: Invitation[] = []; let pageOffset: number | null = 0;
       while (pageOffset !== null) { const result: { invitations: Invitation[]; nextOffset: number | null } = await familyRequest(`${path}?offset=${pageOffset}&limit=50`); rows.push(...result.invitations); pageOffset = result.nextOffset ?? null; }
       return rows;
     }
-    const [pending, returning] = await Promise.all([pendingPages("/api/hestia/household/invitations"), pendingPages("/api/hestia/household/readmissions")]);
-    const folders: Vacant[] = []; offset = 0;
-    while (offset !== null) { const result: { folders: Vacant[]; nextOffset: number | null } = await familyRequest(`/api/hestia/household/folders/without-manager?offset=${offset}&limit=50`); folders.push(...result.folders); offset = result.nextOffset ?? null; }
+    async function vacantPages() {
+      const rows: Vacant[] = []; let offset: number | null = 0;
+      while (offset !== null) { const result: { folders: Vacant[]; nextOffset: number | null } = await familyRequest(`/api/hestia/household/folders/without-manager?offset=${offset}&limit=50`); rows.push(...result.folders); offset = result.nextOffset ?? null; }
+      return rows;
+    }
+    // Lists are independent; pages within each list still follow their cursor.
+    const [collected, pending, returning, folders] = await Promise.all([
+      memberPages(), pendingPages("/api/hestia/household/invitations"),
+      pendingPages("/api/hestia/household/readmissions"), vacantPages(),
+    ]);
     if (!alive.current || epoch !== sequence.current) return;
     setMembers(collected); setInvitations([...pending.map(item => ({ ...item, kind: "invite" as const })), ...returning.map(item => ({ ...item, kind: "readmit" as const }))]); setVacant(folders);
   }, [tab]);
