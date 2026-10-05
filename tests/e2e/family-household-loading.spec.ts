@@ -95,3 +95,48 @@ test("Foyer ne réutilise pas les réponses d'une ouverture abandonnée", async 
   await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
   await expect(page.getByText("Ancien members", { exact: true })).toHaveCount(0);
 });
+
+for (const status of [401, 403]) test(`Foyer traite un refus ${status} même après une autre erreur`, async ({ page }) => {
+  await login(page);
+  const denied = deferred(), arrived = new Set<string>();
+  await page.route("**/api/hestia/household/**", async route => {
+    const path = new URL(route.request().url()).pathname.slice(prefix.length);
+    if (!paths.includes(path)) return route.continue();
+    arrived.add(path);
+    if (path === "members") { await denied.promise; await route.fulfill({ status, json: { error: { message: "Accès perdu" } } }); }
+    else if (path === "invitations") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
+    else await route.fulfill({ json: body(path, "Données non affichables") });
+  });
+  try {
+    await navigate(page, "Foyer");
+    await expect.poll(() => arrived.size).toBe(4);
+    await expect(page.getByText("L’action n’a pas abouti.", { exact: true })).toBeVisible();
+  } finally { denied.resolve(); }
+  await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
+  await expect(page.getByText("Données non affichables", { exact: true })).toHaveCount(0);
+});
+
+test("Foyer ignore un refus tardif de l'ouverture abandonnée", async ({ page }) => {
+  await login(page);
+  const denied = deferred(), counts = new Map<string, number>();
+  await page.route("**/api/hestia/household/**", async route => {
+    const path = new URL(route.request().url()).pathname.slice(prefix.length);
+    if (!paths.includes(path)) return route.continue();
+    const number = (counts.get(path) ?? 0) + 1; counts.set(path, number);
+    if (number === 1 && path === "members") { await denied.promise; await route.fulfill({ status: 403, json: { error: { message: "Ancien contexte" } } }); }
+    else if (number === 1 && path === "invitations") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
+    else await route.fulfill({ json: body(path, `Actuel ${path}`) });
+  });
+  let late: Promise<void> | undefined;
+  try {
+    await navigate(page, "Foyer");
+    await expect(page.getByText("L’action n’a pas abouti.", { exact: true })).toBeVisible();
+    await navigate(page, "Moi"); await navigate(page, "Foyer");
+    await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
+    late = page.waitForResponse(r => r.url().includes(`${prefix}members?`) && r.status() === 403).then(async response => { await response.finished(); });
+  } finally { denied.resolve(); }
+  await late;
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toHaveCount(0);
+});

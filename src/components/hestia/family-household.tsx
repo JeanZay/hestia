@@ -17,6 +17,8 @@ export function FamilyHousehold({ onAccessLost }: { onAccessLost: () => void }) 
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [uncertain, setUncertain] = useState(false), [notice, setNotice] = useState<{ tone: "danger" | "info" | "success"; title: string; text?: string } | null>(null);
   const operation = useRef<string | null>(null), alive = useRef(true), sequence = useRef(0);
   const readmissionConfirmation = useRef<string | null>(null);
+  const accessLost = useRef(false);
+  const fail = useCallback((error: unknown) => { if (!alive.current || accessLost.current) return; if (error instanceof FamilyRequestError && [401,403].includes(error.status)) { accessLost.current = true; onAccessLost(); return; } setNotice({ tone: "danger", title: "L’action n’a pas abouti.", text: familyError(error) }); }, [onAccessLost]);
   const load = useCallback(async () => {
     const epoch = ++sequence.current;
     async function memberPages() {
@@ -34,16 +36,22 @@ export function FamilyHousehold({ onAccessLost }: { onAccessLost: () => void }) 
       while (offset !== null) { const result: { folders: Vacant[]; nextOffset: number | null } = await familyRequest(`/api/hestia/household/folders/without-manager?offset=${offset}&limit=50`); rows.push(...result.folders); offset = result.nextOffset ?? null; }
       return rows;
     }
+    async function protectAccess<T>(request: Promise<T>): Promise<T> {
+      try { return await request; } catch (error) {
+        // A fast network/server failure must not hide a later access revocation.
+        if (alive.current && epoch === sequence.current && error instanceof FamilyRequestError && [401,403].includes(error.status)) fail(error);
+        throw error;
+      }
+    }
     // Lists are independent; pages within each list still follow their cursor.
     const [collected, pending, returning, folders] = await Promise.all([
-      memberPages(), pendingPages("/api/hestia/household/invitations"),
-      pendingPages("/api/hestia/household/readmissions"), vacantPages(),
+      protectAccess(memberPages()), protectAccess(pendingPages("/api/hestia/household/invitations")),
+      protectAccess(pendingPages("/api/hestia/household/readmissions")), protectAccess(vacantPages()),
     ]);
-    if (!alive.current || epoch !== sequence.current) return;
+    if (!alive.current || accessLost.current || epoch !== sequence.current) return;
     setMembers(collected); setInvitations([...pending.map(item => ({ ...item, kind: "invite" as const })), ...returning.map(item => ({ ...item, kind: "readmit" as const }))]); setVacant(folders);
-  }, [tab]);
-  const fail = useCallback((error: unknown) => { if (!alive.current) return; if (error instanceof FamilyRequestError && [401,403].includes(error.status)) { onAccessLost(); return; } setNotice({ tone: "danger", title: "L’action n’a pas abouti.", text: familyError(error) }); }, [onAccessLost]);
-  useEffect(() => { alive.current = true; const sequencing = sequence; void Promise.resolve().then(() => { if (!alive.current) return; setLoading(true); return load().catch(fail).finally(() => { if (alive.current) setLoading(false); }); }); return () => { alive.current = false; ++sequencing.current; }; }, [load, fail]);
+  }, [tab, fail]);
+  useEffect(() => { alive.current = true; let current = true; const sequencing = sequence; void Promise.resolve().then(() => { if (!current) return; setLoading(true); return load().catch(error => { if (current) fail(error); }).finally(() => { if (current) setLoading(false); }); }); return () => { current = false; alive.current = false; ++sequencing.current; }; }, [load, fail]);
   function close() { setPerson(null); setInvitation(null); setInvite(false); setNominate(null); setName(""); setEmail(""); setPassword(""); setAction(null); setNotice(null); setUncertain(false); operation.current = null; readmissionConfirmation.current = null; }
   async function createInvite() {
     if (busy || uncertain) return; setBusy(true); setNotice(null); operation.current ??= crypto.randomUUID();
