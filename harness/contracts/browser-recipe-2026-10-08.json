@@ -5,7 +5,8 @@
   "scope": {
     "included": [
       "Implémenter le plan du 8 octobre 2026, maintenir compatibilité historique.",
-      "Skill, fiches Markdown, CLI locale, preuves et historique, contrôles, cinq propositions."
+      "Skill, fiches Markdown, CLI locale, preuves et historique, contrôles, cinq propositions.",
+      "Remédiation compatible de source-map-js 1.2.1 vers 1.2.2, nécessaire pour lever une alerte Production préexistante détectée par la validation obligatoire."
     ],
     "excluded": [
       "Produit Hestia, UI, workflow Refinement pour ce lot.",
@@ -32,7 +33,8 @@
       "docs/delivery-governance.md",
       "AGENTS.md",
       "package.json",
-      "scripts/lib/browser-recipe-paths.mjs"
+      "scripts/lib/browser-recipe-paths.mjs",
+      "package-lock.json"
     ]
   },
   "dataPolicy": "synthetic-only",
