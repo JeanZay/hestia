@@ -16,15 +16,15 @@ Inventaire du **4 octobre 2026**, établi à partir du code et des reçus d'expl
 
 ## Adresses utiles
 
-| Ressource | Adresse |
-| --- | --- |
-| Code et documentation | [JeanZay/hestia](https://github.com/JeanZay/hestia) |
-| Besoins et suivi | [Issues](https://github.com/JeanZay/hestia/issues) · [Project](https://github.com/users/JeanZay/projects/3) |
-| Contrôles distants | [GitHub Actions](https://github.com/JeanZay/hestia/actions) |
-| Hébergement | [Console Vercel](https://vercel.com) |
-| Base et stockage | [Console Neon](https://console.neon.tech) |
-| Courriels | [Resend](https://resend.com) |
-| Domaine et DNS | [GoDaddy](https://www.godaddy.com) |
+| Ressource | Adresse | Connexion |
+| --- | --- | --- |
+| Code et documentation | [JeanZay/hestia](https://github.com/JeanZay/hestia) | — |
+| Besoins et suivi | [Issues](https://github.com/JeanZay/hestia/issues) · [Project](https://github.com/users/JeanZay/projects/3) | — |
+| Contrôles distants | [GitHub Actions](https://github.com/JeanZay/hestia/actions) | — |
+| Hébergement | [Console Vercel](https://vercel.com) | Via GitHub, compte **JeanZay** (confirmé par Amaury le 8 octobre 2026) |
+| Base et stockage | [Console Neon](https://console.neon.tech) | — |
+| Courriels | [Resend](https://resend.com) | — |
+| Domaine et DNS | [GoDaddy](https://www.godaddy.com) | — |
 
 Les consoles nécessitent leur authentification habituelle. Les identifiants d'infrastructure privée, adresses personnelles, secrets, URL signées et moyens de paiement sont exclus de ce document public. Les références exactes des déploiements et projets restent dans les preuves d'exploitation locales.
 
