@@ -38,3 +38,9 @@ Chaque auteur a des chemins et destinations de preuves distincts. Le coordinateu
 Conserver preuves et limites nécessaires au prochain agent. Après publication, les reçus locaux demeurent figés ; actualiser GitHub dans le périmètre autorisé, pas un tableau local concurrent. Ni un run ni un checkpoint ne déclenchent une publication, un déploiement ou une automatisation récurrente.
 
 La clôture technique conserve l'état des branches, non un backlog produit. Les snapshots de vérification incluent le registre partagé, ses références et l'inventaire Git avant/après ; leur changement invalide l'ancien résultat courant. Une intégration distante reste distincte de la synchronisation du checkout local et de la préservation des sources ignorées lors du nettoyage.
+
+## Reprise du catalogue et des campagnes Browser Use
+
+Lire [la procédure de recette](browser-recipe.md). Les fiches versionnées décrivent les scénarios ; les propositions, décisions et campagnes ignorées sont centralisées sous `artifacts/functional-browser/` dans la racine primaire du clone. Chaque campagne fige les fiches du worktree appelant et identifie séparément l'application déployée. Les preuves survivent au nettoyage du worktree, pas à la disparition du clone sans transfert autorisé.
+
+Retrouver les campagnes incomplètes et réconcilier leurs dernières observations ; ne jamais rejouer une mutation incertaine ni transformer une ancienne réussite en couverture actuelle. La reprise de conversation n'autorise pas de campagne. Les fichiers ignorés absents d'un clone ou de la CI restent explicitement indisponibles ; ne pas reconstruire un accord humain à partir d'un statut.

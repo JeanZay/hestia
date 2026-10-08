@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Analyse d'impact du catalogue Browser Use et revue indépendante",
+  "$ref": "#/$defs/impact",
+  "$defs": {
+    "text": {"type":"string","minLength":1,"maxLength":20000,"pattern":"\\S"},
+    "digest": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "key": {"type":"string","pattern":"^[A-Za-z][A-Za-z0-9_-]{0,99}$"},
+    "date": {"type":"string","format":"date-time"},
+    "file": {"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/text"},"sha256":{"$ref":"#/$defs/digest"}}},
+    "candidate": {"type":"object","additionalProperties":false,"required":["head","sourceDigest"],"properties":{"head":{"type":"string","pattern":"^[a-f0-9]{40}(?:[a-f0-9]{24})?$"},"sourceDigest":{"$ref":"#/$defs/digest"}}},
+    "impact": {
+      "type":"object","additionalProperties":false,
+      "required":["schemaVersion","kind","recordedAtUtc","candidate","authors","source","conclusions","reservations","review"],
+      "properties": {
+        "schemaVersion":{"const":1},"kind":{"const":"browser-recipe-impact"},"recordedAtUtc":{"$ref":"#/$defs/date"},"candidate":{"$ref":"#/$defs/candidate"},
+        "authors":{"type":"array","minItems":1,"maxItems":50,"items":{"$ref":"#/$defs/key"}},"source":{"$ref":"#/$defs/file"},
+        "conclusions":{"type":"array","minItems":1,"maxItems":500,"items":{"type":"object","additionalProperties":false,"required":["kind","scenarioIds","reason","references"],"properties":{"kind":{"enum":["unchanged","added","modified","retired","no-impact"]},"scenarioIds":{"type":"array","maxItems":500,"items":{"$ref":"#/$defs/key"}},"reason":{"$ref":"#/$defs/text"},"references":{"type":"array","minItems":1,"maxItems":500,"items":{"$ref":"#/$defs/file"}}}}},
+        "reservations":{"type":"array","maxItems":500,"items":{"$ref":"#/$defs/text"}},"review":{"$ref":"#/$defs/file"}
+      }
+    },
+    "policy": {
+      "type":"object","additionalProperties":false,
+      "required":["schemaVersion","kind","repository","lotId","branch","recordedAtUtc","policyVersion","source","recipeImpact"],
+      "properties":{"schemaVersion":{"const":1},"kind":{"const":"browser-recipe-policy"},"repository":{"type":"string","pattern":"^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},"lotId":{"$ref":"#/$defs/key"},"branch":{"type":"string","minLength":1,"maxLength":200,"pattern":"^[A-Za-z0-9][A-Za-z0-9._/-]*$"},"recordedAtUtc":{"$ref":"#/$defs/date"},"policyVersion":{"const":1},"source":{"$ref":"#/$defs/file"},"recipeImpact":{"anyOf":[{"type":"null"},{"$ref":"#/$defs/file"}]}}
+    },
+    "review": {
+      "type":"object","additionalProperties":false,
+      "required":["schemaVersion","kind","recordedAtUtc","analysisDigest","reviewer","status","openBlockingFindings","evidence"],
+      "properties":{"schemaVersion":{"const":1},"kind":{"const":"browser-recipe-impact-review"},"recordedAtUtc":{"$ref":"#/$defs/date"},"analysisDigest":{"$ref":"#/$defs/digest"},"reviewer":{"type":"object","additionalProperties":false,"required":["identity","cleanContext"],"properties":{"identity":{"$ref":"#/$defs/key"},"cleanContext":{"const":true}}},"status":{"enum":["PASS","CHANGES_REQUIRED","NOT_PERFORMED","BLOCKED"]},"openBlockingFindings":{"type":"integer"},"evidence":{"$ref":"#/$defs/file"}}
+    }
+  }
+}

@@ -53,3 +53,11 @@ La porte de clôture vérifie aussi les pièces locales ignorées du rapport de 
 Les hooks fournis appellent aussi le contrôleur. Ils ne sont effectifs que lorsqu'ils sont configurés : vérifier `core.hooksPath` et l'emplacement résolu. Après intégration autorisée, utiliser un chemin stable du checkout principal, jamais un chemin vers un worktree destiné au nettoyage, et tester les refus avant d'annoncer l'activation. Ne pas écraser un hook tiers sans examen. Durant un candidat local non intégré, distinguer exécution directe des portes, essai des hooks et installation permanente.
 
 Ces mécanismes rendent les omissions détectables et bloquent les commandes encadrées. Ils ne sont ni un ordonnanceur permanent, ni une signature de consentement, ni une barrière contre un propriétaire qui modifie le registre, désactive les hooks ou utilise Git directement. Ne jamais annoncer une garantie plus large que les chemins effectivement contrôlés.
+
+## Analyse du catalogue de recettes
+
+Les nouveaux lots portent la politique de couverture Browser Use selon [la procédure](browser-recipe.md). Leur passage à prêt/intégration requiert une analyse d'impact relue, liée au candidat, et ses références figées dans les preuves de vérification. Les lots historiques sans cette politique restent inchangés ; ne pas réécrire leurs validations. La réserve de parcours non approuvés ou non joués peut accompagner une livraison Dev autorisée, mais ne remplace aucun critère bloquant du lot.
+
+Cette politique et la référence d'analyse vivent dans une preuve annexe `artifacts/closure/browser-recipe/<empreinte-branche>.json` de la racine primaire, capturée par les contrôles. Le registre existant conserve son format, compatible avec les hooks d'une ancienne version du harnais. Le démarrage encadré journalise la nouvelle exigence pour détecter une preuve annexe manquante. Les hooks stables appliquent les nouvelles portes une fois le harnais intégré dans leur racine ; avant cette intégration, qualifier le candidat avec ses commandes locales, sans déplacer ni désactiver les hooks existants.
+
+Conserver les propositions, accords et rapports centralisés dans la racine primaire ; les copies de fiches associées aux campagnes sont des preuves, pas un deuxième catalogue. Les hooks relaient seulement les contrôles rapides existants. Ils ne lancent ni LLM, ni Browser Use.

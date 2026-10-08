@@ -1,0 +1,66 @@
+{
+  "id": "browser-recipe-2026-10-08",
+  "objective": "Catalogue et recettes Browser Use à la demande : propositions approuvées, campagnes manuelles traçables et intégration au harnais.",
+  "githubIssue": null,
+  "scope": {
+    "included": [
+      "Implémenter le plan du 8 octobre 2026, maintenir compatibilité historique.",
+      "Skill, fiches Markdown, CLI locale, preuves et historique, contrôles, cinq propositions."
+    ],
+    "excluded": [
+      "Produit Hestia, UI, workflow Refinement pour ce lot.",
+      "Dev, Production, navigateur réel, publication/merge, parallélisme Browser Use, routage modèle, secrets et coûts."
+    ],
+    "ownedPaths": [
+      "scripts/browser-recipe.mjs",
+      "scripts/lib/browser-recipe.mjs",
+      "scripts/lib/browser-recipe-impact.mjs",
+      "scripts/verify.mjs",
+      "scripts/lib/closure-state.mjs",
+      "scripts/lib/closure-runner.mjs",
+      "harness/schemas",
+      "harness/templates",
+      "harness/contracts/browser-recipe-2026-10-08.json",
+      "tests/harness",
+      "tests/functional-browser",
+      ".agents/skills/hestia-browser-recipe",
+      ".agents/skills/hestia-delivery/SKILL.md",
+      ".agents/skills/hestia-refinement/SKILL.md",
+      "docs/browser-recipe.md",
+      "docs/continuity.md",
+      "docs/lot-closure.md",
+      "docs/delivery-governance.md",
+      "AGENTS.md",
+      "package.json",
+      "scripts/lib/browser-recipe-paths.mjs"
+    ]
+  },
+  "dataPolicy": "synthetic-only",
+  "authorization": {
+    "source": "artifacts/qualification/browser-recipe-2026-10-08/authorization.md ; demande directe dans cette conversation le 8 octobre 2026.",
+    "allowedActions": [
+      "Préparation locale, branche/worktree isolés, implémentation, tests, commits locaux et revue indépendante."
+    ],
+    "forbiddenActions": [
+      "Aucun push, merge distant, déploiement, recette distante, validation des cinq propositions ou accès secret."
+    ]
+  },
+  "acceptanceCriteria": [
+    "Catalogue : propositions séparées, promotion liée au contenu approuvé, correction sans changement métier relue.",
+    "Campagnes sur sélection explicite sans navigateur automatique, historiques immuables et versions exactes.",
+    "Durée, modèle et effort effectifs ou indisponibles ; pas de PASS sur identité inconnue ou ancienne version.",
+    "Impact catalogue obligatoire pour nouveaux lots avec compatibilité ancienne ; verify/CI sans recette Browser Use.",
+    "Cinq propositions non approuvées, non exécutées ; documentation et revue indépendante du candidat."
+  ],
+  "validation": [
+    "Tests synthétiques Node du harnais et skill forward-test sans navigateur.",
+    "Vérification locale complète avec Docker, tests navigateur automatisés existants et revue indépendante."
+  ],
+  "independentReview": {
+    "required": true,
+    "reviewerMustDifferFromAuthor": true,
+    "cleanContext": true,
+    "candidateIdentity": "commit-sha-and-worktree-or-sha256-manifest"
+  },
+  "deliveryTarget": "local"
+}

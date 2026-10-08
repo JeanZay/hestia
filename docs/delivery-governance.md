@@ -94,3 +94,9 @@ GitHub Issues est l'unique registre du travail ; GitHub Projects en présente le
 Présenter le bilan avec une date et des preuves : **livré localement** pour les fichiers et comportements vérifiés ; **proposé pour GitHub** pour les éléments non publiés ; **bloqué** seulement pour un obstacle avéré ; **différé** pour les capacités hors lot. Ne pas présenter une limitation prévue comme une panne ni un test local comme une réussite de Production.
 
 Le GO Production est distinct et explicite. Il identifie le commit, le déploiement Dev essayé, les migrations, les contrôles automatisés, la recette, les risques acceptés et le retour arrière. Toute modification du candidat requiert une nouvelle vérification proportionnée avant de solliciter le GO sur sa version actualisée.
+
+## Recettes Browser Use à la demande
+
+La [procédure de recette](browser-recipe.md) sépare catalogue approuvé, propositions, décisions et rapports de campagnes. Le développement prévoit l'analyse d'impact et sa revue ; seules les demandes explicites d'Amaury déclenchent une sélection de parcours puis son exécution Dev. Les preuves Browser Use et celles des tests automatisés restent distinctes. Les nouveaux lots sont contrôlés sans requalification rétroactive des anciens.
+
+Un nouveau parcours ou changement du contrat de test requiert une validation humaine exacte. Une correction conserve l'accord seulement si acteur, droits, prérequis, action métier, résultat attendu, assertions et effets sur les données restent inchangés, avec diff et revue indépendante. Toute incertitude demande validation. L'admission au catalogue ne vaut pas exécution. Une proposition en attente n'interdit pas à elle seule la livraison Dev : déclarer la réserve et respecter les autres critères de livraison. La V1 ne comprend aucune recette Production.
