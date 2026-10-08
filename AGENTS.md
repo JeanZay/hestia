@@ -28,3 +28,7 @@ Claude Design fait partie intégrante du développement Hestia : besoin cadré �
 - Terminer par les états datés « livré localement », « proposé pour GitHub », « bloqué » ou « différé », selon les preuves. Toute Production nécessite un GO explicite sur le candidat exact.
 
 Ces consignes encadrent les agents ; elles ne constituent pas une barrière technique face à un acteur malveillant. Les hooks locaux sont volontaires ; vérifier les protections distantes effectivement configurées avant chaque intégration.
+
+## Catalogue et recettes Browser Use
+
+Pour maintenir les parcours ou jouer une recette explicitement demandée, utiliser [hestia-browser-recipe](.agents/skills/hestia-browser-recipe/SKILL.md) et la [procédure](docs/browser-recipe.md). Préparer et faire relire l'impact catalogue durant les lots ; ne lancer aucune recette sur commit, push, déploiement ou simple invocation. Les nouveaux parcours et changements métier attendent la validation d'Amaury avant admission au catalogue. Une sélection exacte et autorisée précède toute campagne Dev ; aucun PASS historique n'est transféré à une nouvelle fiche ou version. Une maintenance de cette méthode suit un contrat technique et une revue directe, sans workflow Refinement produit.

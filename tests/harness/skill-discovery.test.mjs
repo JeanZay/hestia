@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const expectedSkills = ['hestia-delivery', 'hestia-refinement'];
+const expectedSkills = ['hestia-delivery', 'hestia-refinement', 'hestia-browser-recipe'];
 
 function markdownFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

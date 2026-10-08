@@ -1,0 +1,220 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "scenarioId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resumes": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deployment": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "const": "Dev"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-f0-9]{40,64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "environment",
+        "url",
+        "id",
+        "commit",
+        "source",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "preflight": {
+      "type": "object",
+      "properties": {
+        "syntheticAccountsAuthorized": {
+          "type": "boolean"
+        },
+        "preconditionsMet": {
+          "type": "boolean"
+        },
+        "browserAvailable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "syntheticAccountsAuthorized",
+        "preconditionsMet",
+        "browserAvailable"
+      ],
+      "additionalProperties": false
+    },
+    "executor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "browser": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "device": {
+      "enum": [
+        "desktop",
+        "mobile-simulated"
+      ]
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "value",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effort": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "required": [
+            "value",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "campaignId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+    }
+  },
+  "required": [
+    "scenarioId",
+    "startedAt",
+    "deployment",
+    "preflight",
+    "executor",
+    "tool",
+    "browser",
+    "device",
+    "model",
+    "effort",
+    "campaignId"
+  ],
+  "additionalProperties": false
+}

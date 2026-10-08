@@ -7,6 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { closureInputs, discoverRepository, inspectClosure, inventory } from '../../scripts/lib/closure-state.mjs';
 import { captureCandidate } from '../../scripts/lib/verification-evidence.mjs';
+import { checkRecipeImpact, recipeImpactDigest, recipePolicyPath } from '../../scripts/lib/browser-recipe-impact.mjs';
 
 const repository = 'https://github.com/example/closure-fixture';
 const when = '2026-09-15T00:00:00Z';
@@ -104,6 +105,96 @@ function changeReport(f, entry, change) {
   wrapper.evidence = put(f.primary, wrapper.evidence.path, report);
   entry.proofs.validation = put(f.primary, entry.proofs.validation.path, wrapper); f.save();
 }
+
+function recipePolicy(f, entry, recipeImpact = null) {
+  return put(f.primary, recipePolicyPath(entry.branch), { schemaVersion: 1, kind: 'browser-recipe-policy', repository, lotId: entry.lotId, branch: entry.branch, recordedAtUtc: when, policyVersion: 1, source: f.source, recipeImpact });
+}
+function recipeReady(f, entry) {
+  recipePolicy(f, entry);
+  const checkout = f.paths.get(entry.branch);
+  const snapshot = captureCandidate({ root: checkout, runId: 'synthetic-impact', phase: 'snapshot' });
+  const source = put(checkout, 'artifacts/impact-source.md', 'SYNTHETIC scoped impact analysis source.\n');
+  const evidence = put(checkout, 'artifacts/impact-review.md', 'SYNTHETIC independent impact review.\n');
+  const impactPath = 'artifacts/impact.json';
+  const impact = { schemaVersion: 1, kind: 'browser-recipe-impact', recordedAtUtc: when, candidate: { head: snapshot.commit, sourceDigest: snapshot.sourceDigest }, authors: ['author'], source, conclusions: [{ kind: 'no-impact', scenarioIds: [], reason: 'Synthetic technical change preserves the catalogue.', references: [source] }], reservations: ['Synthetic proposed scenarios are not approved or executed.'], review: { path: 'artifacts/impact-review.json', sha256: 'a'.repeat(64) } };
+  impact.review = put(checkout, impact.review.path, { schemaVersion: 1, kind: 'browser-recipe-impact-review', recordedAtUtc: when, analysisDigest: recipeImpactDigest(impact), reviewer: { identity: 'independent-reviewer', cleanContext: true }, status: 'PASS', openBlockingFindings: 0, evidence });
+  const reference = put(checkout, impactPath, impact);
+  const inputPaths = checkRecipeImpact({ root: checkout, impactPath }).references.map(item => item.path);
+  const evidenceRoot = path.relative(f.primary, checkout).split(path.sep).join('/');
+  f.ready(entry, { inputPaths, evidenceRoot });
+  recipePolicy(f, entry, { ...reference, path: `${evidenceRoot}/${impactPath}` });
+  changeReport(f, entry, (report, wrapper) => {
+    report.results.push({ name: 'browser-recipe-impact', required: true, status: 'PASS', exitCode: 0 });
+    wrapper.checks.push({ name: 'browser-recipe-impact', status: 'PASS', exitCode: 0 });
+  });
+  return { impact, checkout, inputPaths, evidenceRoot };
+}
+
+test('recipe policy is explicit: historical ready remains compatible, working stays verifiable, new ready requires impact', () => fixture(f => {
+  const entry = f.add();
+  recipePolicy(f, entry);
+  assert.equal(f.check('verify').valid, true);
+  f.ready(entry);
+  has(f.check('finish', { branch: entry.branch }), 'recipe-impact-proof-required');
+  has(f.check('merge', { branch: entry.branch }), 'recipe-impact-proof-required');
+  rmSync(path.join(f.primary, recipePolicyPath(entry.branch)));
+  assert.equal(f.check('finish', { branch: entry.branch }).valid, true);
+}));
+
+test('sidecar identity and content are validated and captured without changing the legacy registry', () => fixture(f => {
+  const entry = f.add();
+  const registryBefore = readFileSync(path.join(f.primary, 'artifacts/closure/registry.json'));
+  recipePolicy(f, entry);
+  const first = closureInputs(f.primary);
+  assert.ok(first.files.some(item => item.path === recipePolicyPath(entry.branch)));
+  const policy = JSON.parse(readFileSync(path.join(f.primary, recipePolicyPath(entry.branch))));
+  policy.recordedAtUtc = '2026-09-15T01:00:00Z';
+  put(f.primary, recipePolicyPath(entry.branch), policy);
+  assert.notDeepEqual(closureInputs(f.primary).files, first.files);
+  assert.deepEqual(readFileSync(path.join(f.primary, 'artifacts/closure/registry.json')), registryBefore);
+  policy.lotId = 'another-lot'; put(f.primary, recipePolicyPath(entry.branch), policy);
+  has(f.check('verify'), 'recipe-policy-entry-mismatch');
+}));
+
+test('reviewed impact with captured inputs admits ready with reservations but never grants merge authority', () => fixture(f => {
+  const entry = f.add(); recipeReady(f, entry);
+  const finish = f.check('finish', { branch: entry.branch });
+  assert.equal(finish.valid, true, JSON.stringify(finish.diagnostics));
+  has(f.check('merge', { branch: entry.branch }), 'exact-merge-approval-required');
+  const input = closureInputs(f.primary);
+  assert.ok(input.files.some(item => item.path.endsWith('/artifacts/impact-review.md')));
+  entry.state = 'working'; f.save();
+  assert.equal(f.check('finish', { branch: entry.branch }).valid, true);
+}));
+
+test('a recipe wrapper cannot replace a required PASS in the actual verification report', () => fixture(f => {
+  const entry = f.add(); recipeReady(f, entry);
+  changeReport(f, entry, report => { report.results = report.results.filter(item => item.name !== 'browser-recipe-impact'); });
+  has(f.check('finish', { branch: entry.branch }), 'recipe-impact-validation-not-passed');
+}));
+
+test('changed ignored impact review inputs invalidate ready even with the same tracked source candidate', () => fixture(f => {
+  const entry = f.add(); const prepared = recipeReady(f, entry);
+  put(prepared.checkout, 'artifacts/impact-review.md', 'SYNTHETIC changed independent review.\n');
+  has(f.check('finish', { branch: entry.branch }), 'reference-digest-mismatch');
+}));
+
+test('an impact review omitted from both manifests is not covered by otherwise coherent validation', () => fixture(f => {
+  const entry = f.add(); const prepared = recipeReady(f, entry);
+  changeReport(f, entry, report => {
+    for (const phase of ['before', 'after']) {
+      const reference = report.candidate[phase];
+      const manifestPath = `${prepared.evidenceRoot}/${reference.path}`;
+      const manifest = JSON.parse(readFileSync(path.join(f.primary, manifestPath)));
+      manifest.activeInputs = manifest.activeInputs.filter(item => item.path !== 'artifacts/impact-review.md');
+      manifest.inputDigest = hash(JSON.stringify(manifest.activeInputs));
+      manifest.identityDigest = hash(JSON.stringify({ commit: manifest.commit, sourceDigest: manifest.sourceDigest, inputDigest: manifest.inputDigest, deletedFiles: manifest.deletedFiles }));
+      reference.sha256 = put(f.primary, manifestPath, manifest).sha256;
+      reference.identityDigest = manifest.identityDigest;
+    }
+  });
+  has(f.check('finish', { branch: entry.branch }), 'recipe-impact-input-not-captured');
+}));
 
 test('every worktree discovers the primary registry and the same deterministic inventory', () => fixture((f) => {
   const entry = f.add(); const checkout = f.paths.get(entry.branch);

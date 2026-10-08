@@ -4,6 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import path from 'node:path';
 import { readJsonSafe } from '../refinement-check.mjs';
 import { discoverRepository, inspectClosure } from './closure-state.mjs';
+import { recipePolicyPath } from './browser-recipe-impact.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const shaPattern = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
@@ -237,7 +238,9 @@ export function runClosure(options, dependencies = {}) {
       requireCondition(reservationRecord.branch === branch && reservationRecord.lotId === lotId && reservationRecord.target === target && shaPattern.test(reservationRecord.baseHead), 'reservation-request-mismatch');
       requireCondition(git(root, ['rev-parse', '--verify', `refs/heads/${target}`]) === reservationRecord.baseHead, 'reservation-base-changed');
       destination = startDestination(repository, reservationRecord, gate.inventory);
-      preparation = { branch, target, baseHead: reservationRecord.baseHead, worktree: reservationRecord.worktree, ownedPaths: reservationRecord.paths };
+      const policyPath = recipePolicyPath(branch);
+      requireCondition(!existsSync(safePath(primaryRoot, policyPath, true)), 'recipe-policy-already-exists');
+      preparation = { branch, target, baseHead: reservationRecord.baseHead, worktree: reservationRecord.worktree, ownedPaths: reservationRecord.paths, browserRecipePolicy: { version: 1, path: policyPath } };
     } else if (action === 'finish') {
       preparation = readRef(primaryRoot, entry.disposition);
       requireCondition(['ready', 'blocked', 'deferred', 'abandoned', 'merged'].includes(preparation.kind), 'finish-disposition-invalid');
@@ -261,6 +264,8 @@ export function runClosure(options, dependencies = {}) {
       const create = dependencies.createWorktree ?? ((args) => git(root, args));
       create(['worktree', 'add', '-b', branch, destination, reservationRecord.baseHead]);
       requireCondition(git(destination, ['rev-parse', '--verify', 'HEAD']) === reservationRecord.baseHead && git(destination, ['branch', '--show-current']) === branch, 'created-worktree-not-confirmed');
+      mkdirSync(safePath(primaryRoot, 'artifacts/closure/browser-recipe', true), { recursive: true });
+      immutable(primaryRoot, preparation.browserRecipePolicy.path, { schemaVersion: 1, kind: 'browser-recipe-policy', repository: registry.repository, lotId, branch, recordedAtUtc: new Date().toISOString(), policyVersion: 1, source: reservationRecord.source, recipeImpact: null });
       registry.entries.push({ lotId, branch, target, state: 'working', reason: 'Lot démarré par commande encadrée ; clôture obligatoire.', source: reservationRecord.source, candidate: null, proofs: { validation: null, review: null }, authorization: null, disposition: null, reservation, nextAction: reservationRecord.nextAction });
       effect = { branch, worktree: reservationRecord.worktree, head: reservationRecord.baseHead };
     } else if (action === 'finish') {

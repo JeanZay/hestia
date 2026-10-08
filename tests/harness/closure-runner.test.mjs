@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { acquireClosureLock, githubAdapter, pendingOperations, runClosure } from '../../scripts/lib/closure-runner.mjs';
+import { recipePolicyPath } from '../../scripts/lib/browser-recipe-impact.mjs';
+import { inspectClosure } from '../../scripts/lib/closure-state.mjs';
 
 const runnerUrl = new URL('../../scripts/lib/closure-runner.mjs', import.meta.url).href;
 const cli = fileURLToPath(new URL('../../scripts/closure.mjs', import.meta.url));
@@ -119,6 +121,11 @@ test('start creates a real bounded worktree and records its branch under the sha
   assert.equal(git(path.join(f.root, 'artifacts/worktrees/synthetic'), ['branch', '--show-current']), 'codex/synthetic');
   const registry = read(f.root, 'artifacts/closure/registry.json');
   assert.equal(registry.entries[0].state, 'working');
+  assert.equal(Object.hasOwn(registry.entries[0], 'browserRecipePolicy'), false);
+  assert.equal(Object.hasOwn(registry.entries[0].proofs, 'recipeImpact'), false);
+  const policy = read(f.root, recipePolicyPath('codex/synthetic'));
+  assert.equal(policy.policyVersion, 1);
+  assert.equal(policy.recipeImpact, null);
   assert.equal(registry.entries[0].branch, 'codex/synthetic');
   const operation = `artifacts/closure/operations/${result.operationId}`;
   const intent = read(f.root, `${operation}/intent.json`);
@@ -128,6 +135,14 @@ test('start creates a real bounded worktree and records its branch under the sha
   assert.deepEqual(readFileSync(path.join(f.root, `${operation}/registry-after.json`)), readFileSync(path.join(f.root, 'artifacts/closure/registry.json')));
   assert.equal(read(f.root, `${operation}/result.json`).status, 'COMPLETED');
   assert.deepEqual(pendingOperations(f.root), []);
+  assert.deepEqual(Object.keys(registry.entries[0]).sort(), ['lotId', 'branch', 'target', 'state', 'reason', 'source', 'candidate', 'proofs', 'authorization', 'disposition', 'reservation', 'nextAction'].sort(), 'The strict legacy registry entry shape is preserved.');
+  assert.deepEqual(Object.keys(registry.entries[0].proofs).sort(), ['review', 'validation']);
+  assert.deepEqual(readdirSync(path.join(f.root, operation)).sort(), ['intent.json', 'registry-after.json', 'registry-before.json', 'result.json'], 'The legacy journal inventory admits every operation file.');
+  assert.equal(inspectClosure({ root: f.root, action: 'verify' }).valid, true);
+  rmSync(path.join(f.root, recipePolicyPath('codex/synthetic')));
+  const missingPolicy = inspectClosure({ root: f.root, action: 'verify' });
+  assert.equal(missingPolicy.valid, false);
+  assert.ok(missingPolicy.diagnostics.some(item => item.code === 'recipe-policy-required-by-start'));
 });
 
 test('registry-before preserves compact and CRLF formatting byte for byte before mutation', t => {

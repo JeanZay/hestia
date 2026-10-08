@@ -1,0 +1,6 @@
+interface:
+  display_name: "Recettes Hestia"
+  short_description: "Catalogue et recettes navigateur à la demande"
+  default_prompt: "Utilise $hestia-browser-recipe pour afficher les parcours disponibles et me laisser choisir lesquels tester."
+policy:
+  allow_implicit_invocation: false

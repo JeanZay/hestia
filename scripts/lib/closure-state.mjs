@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { inspectFile } from '../guard.mjs';
 import { readJsonSafe, validateJsonSchema } from '../refinement-check.mjs';
 import { captureCandidate } from './verification-evidence.mjs';
+import { checkRecipeImpact, recipePolicyPath, validateRecipePolicy } from './browser-recipe-impact.mjs';
 
 const REGISTRY = 'artifacts/closure/registry.json';
 const PROTECTED = new Set(['main', 'develop']);
@@ -142,6 +143,26 @@ function validateEvidence(proof, load, currentInputs, primaryRoot) {
     // These historical snapshots predate the ready transition; the current registry is gated separately.
     if (snapshots.before.stateDigest !== snapshots.after.stateDigest) fail('validation-closure-changed');
   }
+  return { report, manifests, evidenceRoot };
+}
+
+function validateRecipeImpactEvidence(entry, policy, proof, validated, primaryRoot, load) {
+  if (!policy.recipeImpact || !proof || !validated || !entry.candidate) fail('recipe-impact-proof-required');
+  const { report, manifests, evidenceRoot } = validated;
+  const reference = policy.recipeImpact;
+  if (!reference.path.startsWith(evidenceRoot)) fail('recipe-impact-evidence-root-mismatch');
+  const impactPath = relative(reference.path.slice(evidenceRoot.length));
+  load(reference, 'json');
+  const step = report.results.filter(item => item.name === 'browser-recipe-impact');
+  if (step.length !== 1 || step[0].status !== 'PASS' || step[0].exitCode !== 0 || step[0].required !== true || !proof.checks.some(item => item.name === 'browser-recipe-impact' && item.status === 'PASS' && item.exitCode === 0)) fail('recipe-impact-validation-not-passed');
+  const result = checkRecipeImpact({ root: path.resolve(primaryRoot, evidenceRoot || '.'), impactPath, candidate: entry.candidate });
+  for (const item of result.references) {
+    if (!manifests.after.activeInputs.some(input => input.path === item.path && input.sha256 === item.sha256)) fail('recipe-impact-input-not-captured');
+    load({ path: `${evidenceRoot}${item.path}`, sha256: item.sha256 });
+  }
+  // A separate input digest covers ignored review files. Never put a source
+  // manifest digest inside one of the source files it hashes.
+  if (manifests.after.files.some(item => [impactPath, result.impact.review.path].includes(item.path))) fail('recipe-impact-must-be-ignored');
 }
 
 function context(discovered, { action, branch, lotId } = {}) {
@@ -172,12 +193,25 @@ function context(discovered, { action, branch, lotId } = {}) {
   for (const entry of registry.entries) {
     load(entry.source);
     const docs = {};
+    let validationEvidence = null;
     if (entry.disposition) docs.disposition = load(entry.disposition, 'disposition');
     for (const kind of ['validation', 'review']) if (entry.proofs[kind]) {
       docs[kind] = load(entry.proofs[kind], kind);
       if (docs[kind].evidence.path === entry.proofs[kind].path) fail('evidence-cannot-be-wrapper');
       if (kind === 'review') load(docs[kind].evidence);
-      else validateEvidence(docs.validation, load, ['working', 'ready'].includes(entry.state) || (action === 'finish' && entry.branch === selectedBranch && docs.disposition?.kind === 'ready'), discovered.primaryRoot);
+      else validationEvidence = validateEvidence(docs.validation, load, ['working', 'ready'].includes(entry.state) || (action === 'finish' && entry.branch === selectedBranch && docs.disposition?.kind === 'ready'), discovered.primaryRoot);
+    }
+    let policyRead = null;
+    const policyPath = recipePolicyPath(entry.branch);
+    try { policyRead = readBounded(discovered.primaryRoot, policyPath); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (policyRead) {
+      const policy = validateRecipePolicy(load({ path: policyPath, sha256: policyRead.sha256 }, 'json'));
+      if (policy.repository !== registry.repository || policy.lotId !== entry.lotId || policy.branch !== entry.branch) fail('recipe-policy-entry-mismatch');
+      load(policy.source);
+      if (policy.recipeImpact) load(policy.recipeImpact, 'json');
+      docs.recipePolicy = policy;
+      if (entry.state === 'ready' || (action === 'finish' && entry.branch === selectedBranch && docs.disposition?.kind === 'ready')) validateRecipeImpactEvidence(entry, policy, docs.validation, validationEvidence, discovered.primaryRoot, load);
     }
     if (entry.authorization) docs.authorization = load(entry.authorization, 'authorization');
     if (entry.reservation) docs.reservation = load(entry.reservation, 'reservation');
@@ -214,6 +248,10 @@ function operationState(actual, loaded) {
     let complete = Boolean(intent?.schemaVersion === 1 && intent.operationId === name && ['start', 'finish', 'merge'].includes(intent.action) && result?.schemaVersion === 1 && result.operationId === name && result.action === intent.action && result.status === 'COMPLETED');
     if (complete) {
       for (const [phase, reference] of [['before', intent.registryBefore], ['after', result.registry]]) complete = Boolean(complete && reference?.path === `${base}/registry-${phase}.json` && reference.sha256 === loaded.inputs.get(reference.path) && docs[`registry-${phase}.json`]);
+    }
+    if (complete && intent.action === 'start' && intent.preparation?.browserRecipePolicy) {
+      const marker = intent.preparation.browserRecipePolicy;
+      if (marker.version !== 1 || marker.path !== recipePolicyPath(intent.branch) || !loaded.documents.get(intent.branch)?.recipePolicy) fail('recipe-policy-required-by-start');
     }
     entries.push({ id: name, complete, status: result?.status === 'COMPLETED' ? 'COMPLETED' : result?.status === 'AMBIGUOUS' ? 'AMBIGUOUS' : 'INCOMPLETE', files });
   }
