@@ -33,7 +33,7 @@ describe('normalized folder sharing and mandate boundaries',()=>{
   beforeEach(async()=>{
     await pool.query('UPDATE hestia_member SET active=true WHERE user_id=ANY($1::text[])',[users.map(u=>u.id)]);
     for(const user of users){await pool.query('UPDATE "rateLimit" SET "lastRequest"=0');const r=await app.handleAuth(req('/api/auth/sign-in/email',{email:user.email,password}));expect(r.status).toBe(200);user.cookie=r.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ');}
-    const r=await app.handleFolders(req('/api/hestia/folders',{name:'Dossier partage synthétique'}));expect(r.status).toBe(201);folderId=(await r.json()).folder.id;
+    const r=await app.handleFolders(req('/api/hestia/folders',{name:`Dossier partage synthétique ${randomUUID()}`}));expect(r.status).toBe(201);folderId=(await r.json()).folder.id;
     reference=(await pool.query("SELECT id FROM hestia_grant WHERE folder_id=$1 AND kind='reference'",[folderId])).rows[0].id;
   });
   afterAll(async()=>{await pool.end();});
@@ -78,7 +78,8 @@ describe('normalized folder sharing and mandate boundaries',()=>{
     const bridge=await grant(2,'partager',['consulter'],mandate,1);
     await expect(grant(1,'consulter',[],bridge,2)).rejects.toMatchObject({status:404});
     expect((await share(3,2,{export:false})).status).toBe(200);
-    expect((await listing(2)).status).toBe(404);
+    const sharingView=await listing(2);expect(sharingView.status).toBe(200);
+    expect((await sharingView.json()).grants.every((g:{canRevoke:boolean})=>!g.canRevoke)).toBe(true);
     expect((await share(3,2)).status).toBe(404);
     expect(await caps(1)).toEqual(['administrer']);
     await expect(grant(3,'administrer',[],mandate,1)).rejects.toMatchObject({status:404});
@@ -128,7 +129,8 @@ describe('normalized folder sharing and mandate boundaries',()=>{
   it('filters access listings and revokes only the local administration envelope',async()=>{
     await grant(1,'administrer',['consulter']);expect((await share(2)).status).toBe(200);
     const groups=(await (await listing(1)).json()).grants;
-    expect(groups.every((g:{capabilities:string[]})=>g.capabilities.every(c=>c==='consulter'))).toBe(true);
+    expect(groups.filter((g:{memberId:string})=>g.memberId!==users[1].id).every((g:{capabilities:string[]})=>g.capabilities.every(c=>c==='consulter'))).toBe(true);
+    expect(groups.filter((g:{memberId:string})=>g.memberId===users[1].id).every((g:{canRevoke:boolean})=>!g.canRevoke)).toBe(true);
     const read=groups.find((g:{memberId:string})=>g.memberId===users[2].id);
     expect((await revoke(read.id,1)).status).toBe(200);expect(await caps(2)).toEqual(['exporter']);
   });

@@ -41,7 +41,7 @@ describe("trash retention, current rights and physical deletion", () => {
     otherId=await provisionSyntheticMember(pool,{email:other,name:"Alex Test",password});
     cookie=await login(email);otherCookie=await login(other);
   });
-  beforeEach(async()=>{now=new Date();const r=await app.handleFolders(req("/api/hestia/folders",{name:"Corbeille test"}));expect(r.status).toBe(201);folderId=(await r.json()).folder.id;});
+  beforeEach(async()=>{now=new Date();const r=await app.handleFolders(req("/api/hestia/folders",{name:`Corbeille test ${randomUUID()}`}));expect(r.status).toBe(201);folderId=(await r.json()).folder.id;});
   afterEach(()=>{failDelete=false;loseDeleteResponse=false;getHook=undefined;deleteHook=undefined;});
   afterAll(async()=>{await pool.end();});
 

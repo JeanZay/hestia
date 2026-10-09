@@ -42,7 +42,7 @@ describe("private immutable originals over SQL and real S3", () => {
     return result.headers.getSetCookie().map(v=>v.split(";")[0]).join("; ");
   }
   async function folder(selectedCookie=cookie) {
-    const result = await app.handleFolders(request("/api/hestia/folders",{name:"Appareil synthétique"},selectedCookie));
+    const result = await app.handleFolders(request("/api/hestia/folders",{name:`Appareil synthétique ${randomUUID()}`},selectedCookie));
     expect(result.status).toBe(201); return (await result.json()).folder.id as string;
   }
   const metadata = (bytes=image, extra:Record<string,unknown>={}) => ({folderId,idempotencyKey:randomUUID(),fileName:"Facture-énergie.png",title:"Facture été",size:bytes.length,mediaType:"image/png",sha256:digest(bytes),source:"import",...extra});

@@ -7,7 +7,7 @@ import { isNativePickerOpen, requestNativeCapture, requestNativeImport, type Cap
 import { Banner, Button, Dialog, EmptyState, Icon, PageHeader, Skeleton, TextField, Toast } from "./design-system";
 
 export type FileDocument = { id: string; folderId: string; title: string; fileName: string; mediaType: string; size: number; sha256: string; createdAt: string; uploadedByName: string; source: "import" | "camera"; version: number; previewSupported: boolean; capabilities: string[] };
-type Folder = { id: string; name: string; capabilities: string[] };
+type Folder = { id: string; name: string; capabilities: string[]; visibleParentId?: string | null; childCount?: number; documentCount?: number; breadcrumbs?: {id:string;name:string}[] };
 type Draft = NativeDraft;
 const MAX = 20 * 1024 * 1024;
 class FileError extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
@@ -37,13 +37,13 @@ function prepareDrafts(files: File[], source: "import" | "camera"): Draft[] {
 }
 
 export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onUpdated, query, onQuery, onFolder, initialCapture, onCaptureConsumed, suppressPanel = false, onOpenPanel }: { suppressPanel?: boolean; onOpenPanel?: () => void; userId: string; onCaptureConsumed?: () => void; initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
-  const [documents, setDocuments] = useState<FileDocument[]>([]);
+  const [storedDocuments, setDocuments] = useState<FileDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string>();
   const [panel, setPanel] = useState<"deposit" | "capture" | "document" | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const draftsRef = useRef<Draft[]>([]);
-  const [active, setActive] = useState<FileDocument | null>(null);
+  const [storedActive, setActive] = useState<FileDocument | null>(null);
   const [preview, setPreview] = useState<string>();
   const [previewState, setPreviewState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [capture, setCapture] = useState<{ file: File; url: string } | null>(null);
@@ -55,14 +55,28 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   const [panelError, setPanelError] = useState<string>();
   const [over, setOver] = useState(false);
   const [trashTarget, setTrashTarget] = useState<FileDocument | null>(null);
-  const [trashed, setTrashed] = useState<{id: string; title: string; version: number; restorableUntil: string} | null>(null);
+  const [trashed, setTrashed] = useState<{id: string; folderId: string; title: string; version: number; restorableUntil: string} | null>(null);
   const [restored, setRestored] = useState(false);
   const [mutationError, setMutationError] = useState<string>();
   const controller = useRef(new AbortController());
+  const listingController = useRef<AbortController | null>(null);
   const previewController = useRef<AbortController | null>(null);
   const urls = useRef(new Set<string>());
   const running = useRef(false);
   const listEpoch = useRef(0);
+  // A fresh inventory is authoritative for rendering, even before a search
+  // request finishes. Never retain a server document from a removed scope.
+  const permitted = (doc: {folderId: string}) => folders.find(f=>f.id===doc.folderId&&f.capabilities.includes("consulter"));
+  const documents = storedDocuments.flatMap(doc=>{const allowed=permitted(doc);return allowed?[{...doc,capabilities:doc.capabilities.filter(cap=>allowed.capabilities.includes(cap))}]:[];});
+  const activeScope=storedActive&&permitted(storedActive);
+  const active=storedActive&&activeScope?{...storedActive,capabilities:storedActive.capabilities.filter(cap=>activeScope.capabilities.includes(cap))}:null;
+  useEffect(()=>{
+    if(!storedActive||folders.some(f=>f.id===storedActive.folderId&&f.capabilities.includes("consulter")))return;
+    previewController.current?.abort();
+    for(const url of urls.current)URL.revokeObjectURL(url);urls.current.clear();
+    const timer=setTimeout(()=>{setActive(null);setPreview(undefined);setPanel(null);setTitle(null);setTrashTarget(null);},0);
+    return()=>clearTimeout(timer);
+  },[storedActive,folders]);
   const createUrl = (blob: Blob) => { const url = URL.createObjectURL(blob); urls.current.add(url); return url; };
   const revoke = (url?: string) => { if (url) { URL.revokeObjectURL(url); urls.current.delete(url); } };
   const pickerSnapshot = () => ({userId, drafts: draftsRef.current.map(d => ({...d}))});
@@ -70,13 +84,14 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   const fail = useCallback((error: unknown) => { if (error instanceof FileError && [401, 403, 404].includes(error.status)) onAccessLost(); }, [onAccessLost]);
   const reload = useCallback(async () => {
     const seq = ++listEpoch.current;
-    const signal = controller.current.signal;
+    listingController.current?.abort(); const listing = new AbortController(); listingController.current=listing;
+    const signal = listing.signal;
     setLoading(true); setFailure(undefined);
     try {
       if (query !== undefined && !query.trim()) { setDocuments([]); return; }
       const params = new URLSearchParams(); if (folder) params.set("folderId", folder.id); if (query !== undefined) params.set("q", query);
       const result = await api<{ documents: FileDocument[] }>(`/documents?${params}`, signal);
-      if (!signal.aborted && seq === listEpoch.current) setDocuments(result.documents);
+      if (!signal.aborted && seq === listEpoch.current) { setDocuments(result.documents.slice().sort((a,b)=>a.title.localeCompare(b.title,"fr"))); setActive(previous=>previous ? result.documents.find(d=>d.id===previous.id)??null : null); }
     } catch (error) { if (!signal.aborted && seq === listEpoch.current) { setDocuments([]); setFailure(message(error)); fail(error); } }
     finally { if (!signal.aborted && seq === listEpoch.current) setLoading(false); }
   }, [folder, query, fail]);
@@ -84,10 +99,14 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     controller.current = new AbortController();
     const liveUrls = urls.current;
     Promise.resolve().then(() => { if (!controller.current.signal.aborted) setCamera(mobileCamera()); });
-    return () => { controller.current.abort(); previewController.current?.abort(); if (!isNativePickerOpen()) for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
+    return () => { controller.current.abort(); listingController.current?.abort(); previewController.current?.abort(); if (!isNativePickerOpen()) for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
   }, []);
-  useEffect(() => { const timer = setTimeout(() => void reload(), query === undefined ? 0 : 180); return () => clearTimeout(timer); }, [reload, query]);
+  useEffect(() => { const sequence=listEpoch;const listing=listingController;const timer = setTimeout(() => void reload(), query === undefined ? 0 : 180); return () => {clearTimeout(timer);++sequence.current;listing.current?.abort();}; }, [reload, query, folders]);
   useEffect(() => { if (!trashed) return; const timer = setTimeout(() => setTrashed(null), 7000); return () => clearTimeout(timer); }, [trashed]);
+  useEffect(() => {
+    if (!trashed || folders.some(f=>f.id===trashed.folderId&&f.capabilities.includes("consulter"))) return;
+    const timer=setTimeout(()=>setTrashed(null),0);return()=>clearTimeout(timer);
+  }, [trashed, folders]);
 
   useEffect(() => {
     if (!initialCapture) return;
@@ -116,7 +135,7 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     try {
       const result = await api<{documentId: string; version: number; restorableUntil: string}>(`/documents/${trashTarget.id}/trash`, signal, "POST", {version:trashTarget.version});
       if (signal.aborted) return;
-      setTrashed({id:result.documentId,title:trashTarget.title,version:result.version,restorableUntil:result.restorableUntil}); setRestored(false); setTrashTarget(null);
+      setTrashed({id:result.documentId,folderId:trashTarget.folderId,title:trashTarget.title,version:result.version,restorableUntil:result.restorableUntil}); setRestored(false); setTrashTarget(null);
       running.current = false; closePanel(); await reload(); onUpdated();
     } catch (error) { if (!signal.aborted) { setTrashTarget(null); setPanelError(message(error)); fail(error); if (error instanceof FileError && error.status === 409) { running.current = false; closePanel(); await reload(); setMutationError("Le document a changé. Ouvrez-le à nouveau avant de réessayer."); } } }
     finally { running.current = false; if (!signal.aborted) setBusy(false); }
@@ -242,9 +261,9 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     revoke(capture?.url); setCapture(null); setCaptureFailed(false); setPanel("capture"); setCaptureStatus("waiting"); setPanelError(undefined);
     if (folder) requestNativeCapture(folder.id, pickerSnapshot());
   }
-  const matchingFolders = query?.trim() ? folders.filter(f => fold(f.name).includes(fold(query.trim()))) : [];
+  const matchingFolders = (query?.trim() ? folders.filter(f => fold(f.name).includes(fold(query.trim()))) : folder ? folders.filter(f => f.visibleParentId === folder.id) : []).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
   const canDeposit = folder?.capabilities.includes("déposer");
-  const panelContent = !suppressPanel && panel && host && createPortal(<aside className="h-panel h-files-panel" aria-label={panel === "document" ? "Document" : panel === "capture" ? "Photo" : "Ajout de documents"}>
+  const panelContent = !suppressPanel && panel && (panel !== "document" || !!active) && host && createPortal(<aside className="h-panel h-files-panel" aria-label={panel === "document" ? "Document" : panel === "capture" ? "Photo" : "Ajout de documents"}>
     <Button variant="tertiary" compact icon="x" disabled={busy} onClick={closePanel}>Fermer</Button>
     {panelError && <Banner tone="danger" title="Action impossible.">{panelError}</Banner>}
     {panel === "deposit" && <div className="h-file-stack"><h2>Ajouter des documents</h2><p className="h-hint">Dans « {folder?.name} » · PDF, JPEG, PNG, WebP, HEIC ou HEIF · 20 Mio par fichier</p>
@@ -261,12 +280,12 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   </aside>, host);
   return <>
     {mutationError && <Banner tone="danger" title="Action non confirmée.">{mutationError}</Banner>}
-    {query !== undefined && <><PageHeader title="Recherche" summary={query.trim() ? `${documents.length} document${documents.length > 1 ? "s" : ""}` : ""}/><TextField label="Rechercher" type="search" hint="Titre ou nom d’origine d’un document, nom d’un dossier" value={query} onChange={e => onQuery?.(e.target.value)}/></>}
+    {query !== undefined && <><PageHeader title="Recherche" summary={query.trim() ? `${documents.length + matchingFolders.length} résultat${documents.length + matchingFolders.length > 1 ? "s" : ""}` : ""}/><TextField label="Rechercher" type="search" hint="Titre ou nom d’origine d’un document, nom d’un dossier" value={query} onChange={e => onQuery?.(e.target.value)}/></>}
     {canDeposit && <div className="h-actions"><Button icon="upload" disabled={busy} onClick={() => { if (running.current) return; onOpenPanel?.(); closePanel(); setPanel("deposit"); if (folder) requestNativeImport(folder.id, pickerSnapshot()); }}>Ajouter un document</Button><Button variant="secondary" icon="camera" disabled={!camera || busy} title={camera ? undefined : "La prise de photo est disponible sur téléphone et tablette."} onClick={startCapture}>Prendre une photo</Button></div>}
-    {loading ? <Skeleton/> : failure ? <Banner tone="danger" title="Chargement impossible.">{failure}</Banner> : query !== undefined && !query.trim() ? <EmptyState title="Que recherchez-vous ?">Saisissez un titre de document ou un nom de dossier.</EmptyState> : <>{matchingFolders.length > 0 && <><div className="h-overline">Dossiers · {matchingFolders.length}</div><ul className="h-document-list">{matchingFolders.map(f => <li key={f.id}><button className="h-document-row cdv-focus" onClick={() => onFolder?.(f.id)}><Icon name="folder"/><span className="h-row-text"><strong>{f.name}</strong></span></button></li>)}</ul></>}{documents.length > 0 ? <><div className="h-overline">Documents · {documents.length}</div><ul className="h-document-list">{documents.map(d => <li key={d.id}><button className="h-document-row cdv-focus" disabled={busy} onClick={() => void openDocument(d)}><Thumb type={d.mediaType}/><span className="h-row-text"><strong>{d.title}</strong><span>{d.fileName} · {dateLabel(d.createdAt)}</span></span></button></li>)}</ul></> : matchingFolders.length === 0 && <EmptyState title={query !== undefined ? "Aucun résultat" : "Ce dossier est vide"}>{query !== undefined ? "La recherche porte sur les documents et dossiers auxquels vous avez accès. Les documents à la corbeille n’apparaissent pas." : "Aucun document n’a encore été ajouté."}</EmptyState>}</>}
+    {loading ? <Skeleton/> : failure ? <Banner tone="danger" title="Chargement impossible.">{failure}</Banner> : query !== undefined && !query.trim() ? <EmptyState title="Que recherchez-vous ?">Saisissez un titre de document ou un nom de dossier.</EmptyState> : <>{matchingFolders.length > 0 && <><div className="h-overline">Dossiers · {matchingFolders.length}</div><ul className="h-document-list">{matchingFolders.map(f => <li key={f.id}><button className="h-document-row cdv-focus" onClick={() => onFolder?.(f.id)}><Icon name="folder"/><span className="h-row-text"><strong>{f.name}</strong><span>{query !== undefined ? (f.breadcrumbs && f.breadcrumbs.length > 1 ? `Dans ${f.breadcrumbs.slice(0,-1).slice(-2).map(x=>x.name).join(" › ")}` : "Dossier partagé avec vous") : `Dossier · ${(f.childCount ?? 0) + (f.documentCount ?? 0)} élément${(f.childCount ?? 0) + (f.documentCount ?? 0) > 1 ? "s" : ""}`}</span></span></button></li>)}</ul></>}{documents.length > 0 ? <><div className="h-overline">Documents · {documents.length}</div><ul className="h-document-list">{documents.map(d => <li key={d.id}><button className="h-document-row cdv-focus" disabled={busy} onClick={() => void openDocument(d)}><Thumb type={d.mediaType}/><span className="h-row-text"><strong>{d.title}</strong><span>{d.fileName} · {dateLabel(d.createdAt)}</span></span></button></li>)}</ul></> : matchingFolders.length === 0 && <EmptyState title={query !== undefined ? "Aucun résultat" : "Ce dossier est vide"}>{query !== undefined ? "La recherche porte sur les documents et dossiers auxquels vous avez accès. Les documents à la corbeille n’apparaissent pas." : "Aucun document n’a encore été ajouté."}</EmptyState>}</>}
     {panelContent}
-    {trashTarget && <Dialog title={`Mettre « ${trashTarget.title} » à la corbeille ?`} confirmLabel="Mettre à la corbeille" confirmIcon="trash" busy={busy} onCancel={() => setTrashTarget(null)} onConfirm={() => void trashDocument()}>Il disparaîtra pour toutes les personnes qui ont accès au dossier : plus de consultation, de recherche ni de téléchargement. Il restera récupérable pendant 7 jours, puis sera supprimé de Hestia. Les copies déjà téléchargées ne sont pas concernées.</Dialog>}
-    {trashed && <Toast action="Restaurer" onAction={() => void undoTrash()}>« {trashed.title} » est dans la corbeille jusqu’au {new Date(trashed.restorableUntil).toLocaleString("fr-FR")}.</Toast>}
+    {trashTarget && permitted(trashTarget) && <Dialog title={`Mettre « ${trashTarget.title} » à la corbeille ?`} confirmLabel="Mettre à la corbeille" confirmIcon="trash" busy={busy} onCancel={() => setTrashTarget(null)} onConfirm={() => void trashDocument()}>Il disparaîtra pour toutes les personnes qui ont accès au dossier : plus de consultation, de recherche ni de téléchargement. Il restera récupérable pendant 7 jours. Ensuite, il ne pourra plus être consulté ni récupéré. Les copies déjà téléchargées ne sont pas concernées.</Dialog>}
+    {trashed && permitted(trashed) && <Toast action="Restaurer" onAction={() => void undoTrash()}>« {trashed.title} » est dans la corbeille jusqu’au {new Date(trashed.restorableUntil).toLocaleString("fr-FR")}.</Toast>}
     {restored && <Banner tone="success" title="Restauré.">Le document est de nouveau visible selon les accès actuels. Les accès retirés ne sont pas rétablis.</Banner>}
   </>;
 }
