@@ -59,4 +59,3 @@ export function campaign(f, outcome = 'PASS', { selection = ['folder-new'], depl
 export function override(f, extra = {}) {
   f.input.manualOverride = write(f.root, 'artifacts/override.json', { schemaVersion: 1, kind: 'browser-recipe-delivery-choice', mode: 'manual', scopeDigest: check(f).scopeDigest, actor: 'Amaury', decidedAt: time(7), source: write(f.root, 'artifacts/override-source.txt', 'Proceed manually after these findings.'), quote: 'Proceed manually after these findings.', reports: f.input.campaigns.map(item => item.report), reservations: ['Observed findings remain open; no Browser PASS claimed.'], ...extra });
 }
-
