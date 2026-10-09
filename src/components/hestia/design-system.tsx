@@ -7,6 +7,10 @@ export function Logo({ dark = false }: { dark?: boolean }) {
   return <span className="h-logo"><svg width="32" height="32" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hestia"><path d="M9 44V24a15 15 0 0 1 9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M39 44V24a15 15 0 0 0-9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M20.5 4.5h7l3 9.5h-13z" fill={dark ? "#5FB3C6" : "var(--cdv-action)"}/></svg><span aria-hidden="true">Hestia</span></span>;
 }
 const paths: Record<string, ReactNode> = {
+  "folder-input": <><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/></>,
+  "user-plus": <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></>,
+  "user-minus": <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="22" x2="16" y1="11" y2="11"/></>,
+  "arrow-right-left": <><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></>,
   "folder-plus": <><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></>,
   "folder-open": <><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></>,
   "list-tree": <><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/></>,

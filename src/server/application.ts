@@ -8,6 +8,7 @@ import { folderNameKey } from "./db/folder-name";
 
 import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, isUuid, type Actor } from "./access";
 import { createDocuments, type DocumentDependencies } from "./documents/service";
+import { createFolderMoves } from "./documents/moves";
 import { createIdentity, revokeIdentityArtifacts } from "./identity";
 import { createMembership } from "./membership/service";
 const folderName = (value: unknown) => textField(value, 120);
@@ -210,6 +211,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
     });
   }
   return { handleAuth, handleSession, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
+    ...createFolderMoves(access, { now: dependencies?.now }),
     ...createDocuments(pool, access, dependencies), ...createIdentity(pool, config, access),
     ...createMembership(access, { revokeIdentityArtifacts }) };
 }
