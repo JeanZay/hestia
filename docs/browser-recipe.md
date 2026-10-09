@@ -22,6 +22,10 @@ Chaque nouvelle révision garde sa propre identité, y compris pour une correcti
 
 ## Choisir une campagne
 
+Après une livraison Dev et ses contrôles QA techniques, delivery propose systématiquement le choix entre les **nouvelles fiches du périmètre livré** et les tests manuels directs, selon la [gouvernance](delivery-governance.md#choix-avant-les-tests-manuels-sur-dev). Le GO Dev ne lance rien. Sans réponse, attendre le choix ; une décision déjà sourcée reste utilisable uniquement pour le même déploiement et les mêmes fiches/versions. Les anciennes fiches, y compris leurs nouvelles révisions, restent exclues de cette proposition.
+
+Le manuel direct conserve `NOT_RUN` et les réserves, sans imposer validation ou admission des propositions. Le choix Browser Use fige les nouvelles fiches sélectionnées, fait valider celles qui le nécessitent, puis conduit la campagne et présente ses résultats avant le manuel. Après échec, blocage ou interruption, demander le choix entre traitement et poursuite manuelle explicite avec réserves. La porte interne `delivery check` contrôle ce passage en lecture seule ; elle n'exécute pas la campagne et n'intercepte pas tous les messages.
+
 L'appel simple du skill présente les modes **Catalogue** et **Recette**. Une demande de recette sans liste exacte affiche les thèmes puis les parcours actuels, leur statut et les durées historiques disponibles, et demande lesquels jouer. Une demande par thème n'inclut pas automatiquement tous ses parcours. Si Amaury a déjà fourni la liste exacte, ne pas redemander la même décision.
 
 Une demande explicite « tout le catalogue » sélectionne tous les parcours actuellement approuvés et non retirés. Afficher et figer cette liste sans demander une confirmation de sélection redondante ; les autorisations et prérequis restent à vérifier. Cette sélection globale n'est jamais le choix par défaut.

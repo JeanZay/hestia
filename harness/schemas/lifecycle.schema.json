@@ -16,6 +16,7 @@
     },
     "refinement": { "$ref": "#/$defs/file" },
     "contract": { "$ref": "#/$defs/file" },
+    "recipeDelivery": { "$ref": "#/$defs/file" },
     "localHandoff": {
       "description": "Démarrage strictement local du brief entier sur une Issue existante relue, sans mutation GitHub. Portée et dépendances liées à la revue indépendante.",
       "type": "object", "additionalProperties": false,
@@ -42,7 +43,7 @@
     "ownership": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/owner" } },
     "nextAction": {
       "type": "object", "additionalProperties": false, "required": ["owner", "action", "support", "expectedResponse", "unblocks"],
-      "properties": { "owner": { "enum": ["Amaury", "agent"] }, "action": { "$ref": "#/$defs/text" }, "support": { "$ref": "#/$defs/text" }, "expectedResponse": { "$ref": "#/$defs/text" }, "unblocks": { "$ref": "#/$defs/text" } }
+      "properties": { "kind": { "enum": ["recipe-choice", "manual-recipe"] }, "owner": { "enum": ["Amaury", "agent"] }, "action": { "$ref": "#/$defs/text" }, "support": { "$ref": "#/$defs/text" }, "expectedResponse": { "$ref": "#/$defs/text" }, "unblocks": { "$ref": "#/$defs/text" } }
     }
   },
   "$defs": {
