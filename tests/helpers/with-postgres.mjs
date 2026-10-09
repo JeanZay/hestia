@@ -85,7 +85,9 @@ async function runApplication(env) {
       });
       finishStreams.push(() => output.write(redact(pending)));
     }
-    const timeout = setTimeout(() => { failure = 'APPLICATION_TIMEOUT'; stopChild(); }, 600000);
+    // The owned bench now includes the tree/move SQL matrix and 100 browser
+    // cases. Keep a finite budget for application checks and their fixtures.
+    const timeout = setTimeout(() => { failure = 'APPLICATION_TIMEOUT'; stopChild(); }, 900000);
     const progress = setInterval(() => console.log(JSON.stringify({ runId, application: 'running' })), 15000);
     child.on('error', () => { failure = 'APPLICATION_SPAWN_FAILED'; });
     child.on('close', (code, signal) => {

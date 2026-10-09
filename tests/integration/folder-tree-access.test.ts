@@ -27,12 +27,14 @@ describe('tree access with PostgreSQL and signed sessions',()=>{
  it('exposes exact four-checkbox combinations and permits access inspection to a sharer without admin',async()=>{await grant(1,'consulter');await grant(1,'partager',root,reference,0,['consulter','modifier','supprimer']);const options=await app.handleSharing(req(undefined,1),child);expect(options.status).toBe(200);const member=(await options.json()).members.find((m:{id:string})=>m.id===users[2].id);expect(member.allowedCapabilitySets).toContainEqual(['consulter','modifier','supprimer']);expect(member.allowedCapabilitySets.every((s:string[])=>!s.includes('exporter'))).toBe(true);const r=await app.handleSharing(req({memberId:users[2].id,export:false,deposit:false,modify:true,delete:true,idempotencyKey:randomUUID()},1),child);expect(r.status).toBe(200);expect(await rights(2)).toEqual(expect.arrayContaining(['consulter','modifier','supprimer']));const view=await app.handleFolderAccess(req(undefined,1),child);expect(view.status).toBe(200);expect(JSON.stringify(await view.json())).not.toContain(root);});
  it('refuses a subtree restriction with hidden affected descendants without any partial change',async()=>{await grant(1,'consulter');await grant(1,'administrer',root,reference,0,['consulter']);await pool.query('INSERT INTO hestia_folder_restriction(id,folder_id,user_id,capability,authority_grant_id,author_id) VALUES($1,$2,$3,$4,$5,$6)',[randomUUID(),leaf,users[1].id,'consulter',reference,users[0].id]);const r=await app.handleFolderRestriction(req({memberId:users[2].id,capabilities:['consulter'],restricted:true},1),child);expect(r.status).toBe(404);expect((await pool.query('SELECT count(*)::int n FROM hestia_folder_restriction WHERE user_id=$1',[users[2].id])).rows[0].n).toBe(0);});
  it('refuses grant-producing writers at capacity without receipts or a global read outage',async()=>{
+  const started=performance.now();let populated=started,checked=started;
   await grant(1,'consulter');const marker=`capacity-${randomUUID()}`;
   const preview=await app.handleManagementTransfer(req(),child);expect(preview.status).toBe(200);const p=await preview.json();
   const count=Number((await pool.query('SELECT count(*)::int n FROM hestia_grant')).rows[0].n);
   try{
    await pool.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,revoked_at,origin)
     SELECT gen_random_uuid(),$1,$2,'consulter','direct',clock_timestamp(),$3 FROM generate_series(1,$4::int)`,[root,users[0].id,marker,50000-count]);
+   populated=performance.now();
    const key=randomUUID(),shared=await app.handleSharing(req({memberId:users[2].id,export:true,deposit:false,idempotencyKey:key}),child);
    expect(shared.status).toBe(503);expect((await shared.json()).error.code).toBe('RESOURCE_LIMIT');
    await expect(grant(2,'consulter')).rejects.toMatchObject({status:503,code:'RESOURCE_LIMIT'});
@@ -43,8 +45,11 @@ describe('tree access with PostgreSQL and signed sessions',()=>{
    expect((await pool.query('SELECT count(*)::int n FROM hestia_membership_receipt WHERE actor_id=$1 AND idempotency_key=$2',[users[0].id,operation])).rows[0].n).toBe(0);
    expect((await pool.query('SELECT count(*)::int n FROM hestia_grant')).rows[0].n).toBe(50000);
    expect(await rights(0)).toContain('consulter');expect((await pool.query('SELECT reference_grant_id FROM hestia_folder WHERE id=$1',[child])).rows[0].reference_grant_id).toBeNull();
-  }finally{await pool.query('DELETE FROM hestia_grant WHERE origin=$1',[marker]);}
- },60000);
+   checked=performance.now();
+  }finally{await pool.query('DELETE FROM hestia_grant WHERE origin=$1',[marker]);console.log(JSON.stringify({test:'grant capacity 50000',populationMs:Math.round(populated-started),checksMs:Math.round(Math.max(0,checked-populated)),cleanupMs:Math.round(performance.now()-Math.max(populated,checked))}));}
+ // Includes inserting/removing 50,000 real rows on the single-CPU owned bench;
+ // the operation/refusal assertions and all policy limits remain unchanged.
+ },120000);
  it('refuses an additional restriction at capacity and retains an operable policy graph',async()=>{
   const marker=`capacity-${randomUUID()}`,ids:string[]=[];
   try{
