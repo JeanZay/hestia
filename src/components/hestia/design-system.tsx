@@ -7,6 +7,13 @@ export function Logo({ dark = false }: { dark?: boolean }) {
   return <span className="h-logo"><svg width="32" height="32" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hestia"><path d="M9 44V24a15 15 0 0 1 9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M39 44V24a15 15 0 0 0-9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M20.5 4.5h7l3 9.5h-13z" fill={dark ? "#5FB3C6" : "var(--cdv-action)"}/></svg><span aria-hidden="true">Hestia</span></span>;
 }
 const paths: Record<string, ReactNode> = {
+  "folder-plus": <><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></>,
+  "folder-open": <><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></>,
+  "list-tree": <><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/></>,
+  more: <><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></>,
+  ban: <><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></>,
+  "arrow-down": <><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></>,
+  key: <><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/></>,
   trash: <><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
   "rotate-ccw": <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>,
   clock: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
@@ -42,8 +49,8 @@ export function TextField({ label, hint, error, id, ...props }: InputHTMLAttribu
   const generated = useId(); const fieldId = id || generated;
   return <div className="h-field"><label htmlFor={fieldId}>{label}</label>{hint && <div className="h-hint" id={`${fieldId}-hint`}>{hint}</div>}<input {...props} id={fieldId} className="cdv-focus" aria-invalid={!!error || undefined} aria-describedby={[hint && `${fieldId}-hint`, error && `${fieldId}-error`].filter(Boolean).join(" ") || undefined}/>{error && <div className="h-field-error" id={`${fieldId}-error`} role="alert"><Icon name="alert" size={18}/>{error}</div>}</div>;
 }
-export function Banner({ tone = "info", title, children }: { tone?: "info" | "danger" | "success"; title: string; children?: ReactNode }) {
-  return <div role={tone === "danger" ? "alert" : "status"} className={`h-banner h-banner-${tone}`}><Icon name={tone === "danger" ? "x" : tone === "success" ? "check" : "info"}/><div><strong>{title} </strong>{children}</div></div>;
+export function Banner({ tone = "info", title, children, action, onAction }: { tone?: "info" | "danger" | "success" | "warning"; title: string; children?: ReactNode; action?: string; onAction?: () => void }) {
+  return <div role={tone === "danger" || tone === "warning" ? "alert" : "status"} className={`h-banner h-banner-${tone}`} style={tone === "warning" ? {background:"var(--cdv-warning-tint)",borderColor:"var(--cdv-warning)"} : undefined}><Icon name={tone === "danger" ? "x" : tone === "success" ? "check" : tone === "warning" ? "alert" : "info"}/><div><strong>{title} </strong>{children}{action && <button type="button" className="cdv-focus" onClick={onAction} style={{marginLeft:6,border:0,background:"transparent",padding:0,color:"var(--cdv-action)",fontWeight:700,fontSize:15,textDecoration:"underline",textUnderlineOffset:3,textDecorationThickness:2,cursor:"pointer",fontFamily:"inherit"}}>{action}</button>}</div></div>;
 }
 export function EmptyState({ title, children, icon = "folder" }: { title: string; children: ReactNode; icon?: string }) {
   return <div className="h-empty"><Icon name={icon} size={40}/><h2>{title}</h2><p>{children}</p></div>;

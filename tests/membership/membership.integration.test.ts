@@ -10,6 +10,7 @@ import { migrateDatabase } from '../../src/server/db/migrate';
 import { provisionSyntheticMember } from '../../src/server/db/synthetic';
 import { getFolderAccess,issueGrant } from '../../src/server/permissions/service';
 
+let privateTitle:string;
 describe('family membership on owned real PostgreSQL',()=>{
  const config=readServerConfig();
  if(config.environment!=='local'||!/^\/hestia_test_[a-z0-9_]+$/.test(new URL(config.databaseUrl).pathname)||!/^hestia-app-[a-f0-9]{16}$/.test(process.env.HESTIA_TEST_RUN_ID??''))throw Error('Owned synthetic bench required');
@@ -24,10 +25,10 @@ describe('family membership on owned real PostgreSQL',()=>{
  async function removal(user:number,actor=1){const r=await membership.handleRemovalPreview(req(undefined,actor),users[user].id);expect(r.status).toBe(200);const p=await r.json();return {idempotencyKey:randomUUID(),expectedMembershipVersion:p.target.membershipVersion,reviewVersion:p.reviewVersion};}
  async function transfer(user:number){const r=await membership.handleManagementTransfer(req(),folder);expect(r.status).toBe(200);const p=await r.json();return {idempotencyKey:randomUUID(),referenceId:p.referenceId,nomineeId:users[user].id,reviewVersion:p.reviewVersion};}
  beforeAll(async()=>{expect((await pool.query("SELECT to_regclass('hestia_bench_marker') AS marker")).rows[0].marker).toBeTruthy();await migrateDatabase(pool,config);for(let i=0;i<5;i++){const email=`membership-${randomUUID()}@example.invalid`;const id=await provisionSyntheticMember(pool,{email,name:`Membre synthétique ${i}`,password,role:i===1?'admin':'member'});users.push({id,email,cookie:''});}});
- beforeEach(async()=>{
+ beforeEach(async()=>{privateTitle=`TITRE STRICTEMENT PRIVE ${randomUUID()}`;
   await pool.query("UPDATE hestia_member SET active=true,role=CASE WHEN user_id=$2 THEN 'admin' ELSE 'member' END WHERE user_id=ANY($1::text[])",[users.map(u=>u.id),users[1].id]);
   for(const u of users){await pool.query('UPDATE "rateLimit" SET "lastRequest"=0');const r=await app.handleAuth(new Request(config.origin+'/api/auth/sign-in/email',{method:'POST',headers:{origin:config.origin,'content-type':'application/json'},body:JSON.stringify({email:u.email,password})}));expect(r.status).toBe(200);u.cookie=r.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ');}
-  const r=await app.handleFolders(req({name:'TITRE STRICTEMENT PRIVE'}));expect(r.status).toBe(201);folder=(await r.json()).folder.id;reference=(await pool.query('SELECT reference_grant_id FROM hestia_folder WHERE id=$1',[folder])).rows[0].reference_grant_id;
+  const r=await app.handleFolders(req({name:privateTitle}));expect(r.status).toBe(201);folder=(await r.json()).folder.id;reference=(await pool.query('SELECT reference_grant_id FROM hestia_folder WHERE id=$1',[folder])).rows[0].reference_grant_id;
  });
  afterAll(async()=>{await pool.end();});
  it('removes once, invalidates old sessions, keeps documents provenance and direct authority descendants',async()=>{
@@ -38,7 +39,7 @@ describe('family membership on owned real PostgreSQL',()=>{
   const after=(await pool.query('SELECT * FROM hestia_member WHERE user_id=$1',[users[0].id])).rows[0];
   expect(after.epoch).toBe(before.epoch+1);expect(after.departure_epoch).toBe(before.departure_epoch+1);expect(BigInt(after.membership_version)).toBe(BigInt(before.membership_version)+1n);
   expect((await app.handleFolders(req())).status).toBe(401);expect(await caps(3)).toEqual(['consulter']);
-  expect((await pool.query('SELECT created_by,name FROM hestia_folder WHERE id=$1',[folder])).rows[0]).toEqual({created_by:users[0].id,name:'TITRE STRICTEMENT PRIVE'});
+  expect((await pool.query('SELECT created_by,name FROM hestia_folder WHERE id=$1',[folder])).rows[0]).toEqual({created_by:users[0].id,name:privateTitle});
   expect((await membership.handleRemoveMember(req({...input,expectedMembershipVersion:'999'},1),users[0].id)).status).toBe(409);
  });
  it('rejects an admin peer, ordinary actor, stale role and unknown payload',async()=>{
@@ -98,7 +99,7 @@ describe('family membership on owned real PostgreSQL',()=>{
  it('refuses unattested initial provenance and does not launder it through a successor',async()=>{
   const suspectFolder=randomUUID(),suspectReference=randomUUID(),successor=randomUUID();
   await tx(async c=>{
-   await c.query("INSERT INTO hestia_folder(id,name,created_by) VALUES($1,'Historique synthétique incohérent',$2)",[suspectFolder,users[0].id]);
+   await c.query("INSERT INTO hestia_folder(id,name,name_key,created_by) VALUES($1,'Historique synthétique incohérent','historique synthétique incohérent',$2)",[suspectFolder,users[0].id]);
    await c.query(`INSERT INTO hestia_grant(id,folder_id,user_id,kind,capability,transmit,origin,author_id,subject_epoch,batch_id)
     VALUES($1,$2,$3,'reference','administrer',ARRAY['consulter'],'unattested',$3,(SELECT departure_epoch FROM hestia_member WHERE user_id=$3),$2)`,[suspectReference,suspectFolder,users[0].id]);
    await c.query("UPDATE hestia_folder SET reference_grant_id=$2 WHERE id=$1",[suspectFolder,suspectReference]);

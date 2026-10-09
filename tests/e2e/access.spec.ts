@@ -15,6 +15,10 @@ async function login(page: Page, member = "camille") {
   }
   await expect(page.getByRole("heading", {name:"Dossiers",exact:true})).toBeVisible();
 }
+async function openShare(page: Page) {
+  await page.getByRole("tab", {name:"Accès",exact:true}).click();
+  await page.getByRole("button", {name:"Donner accès",exact:true}).click();
+}
 async function createFolder(page: Page) {
   const name = `Accès ${randomUUID().slice(0,8)}`;
   await login(page);
@@ -29,21 +33,20 @@ async function createFolder(page: Page) {
 
 test("partage borné, accès réel d’Alex et retrait confirmé", async ({page, browser, isMobile}) => {
   const folder = await createFolder(page);
-  await page.getByRole("button", {name:"Donner accès",exact:true}).click();
-  const share = page.getByRole("complementary", {name:"Donner accès",exact:true});
-  const mainEmpty = page.getByRole("main",{includeHidden:true}).getByRole("heading",{name:"Ce dossier est vide",exact:true,includeHidden:true});
+  await openShare(page);
+  const share = page.getByRole("complementary", {name:/^Donner accès à/});
+  const mainEmpty = page.getByRole("tabpanel",{name:"Accès",exact:true,includeHidden:true});
   await expect(mainEmpty).toBeAttached();
   if (!isMobile) await expect(mainEmpty).toBeVisible();
   await share.getByLabel("Personne du foyer").selectOption({label:"Alex"});
-  await expect(share.getByRole("checkbox", {name:"Exporter : télécharger les fichiers",exact:true})).toBeChecked();
-  await share.getByRole("checkbox", {name:"Exporter : télécharger les fichiers",exact:true}).uncheck();
-  await share.getByRole("checkbox", {name:"Déposer : ajouter des documents",exact:true}).check();
+  await expect(share.getByRole("checkbox", {name:"Exporter",exact:true})).not.toBeChecked();
+  await share.getByRole("checkbox", {name:"Déposer",exact:true}).check();
   await page.screenshot({path:test.info().outputPath("share.png"),fullPage:true});
   await share.getByRole("button", {name:"Donner accès",exact:true}).click();
   await expect(page.getByText("Accès accordé.",{exact:true})).toBeVisible();
   await expect(page.getByText("Dossier créé.",{exact:true})).toHaveCount(0);
   await expect(page.getByText(/est privé : personne d’autre que vous/)).toHaveCount(0);
-  await page.getByRole("button",{name:"Donner accès",exact:true}).click();
+  await openShare(page);
   const mainAccess = page.getByRole("tabpanel",{name:"Accès",exact:true,includeHidden:true});
   await expect(mainAccess.getByText("Alex",{exact:true})).toBeAttached();
   if (!isMobile) await expect(mainAccess.getByText("Alex",{exact:true})).toBeVisible();
@@ -63,13 +66,13 @@ test("partage borné, accès réel d’Alex et retrait confirmé", async ({page,
     expect((await alex.request.get(`/api/hestia/folders/${folder.id}/access`)).status()).toBe(404);
     const access = page.getByRole("tabpanel",{name:"Accès",exact:true});
     await expect(access.getByText("Alex",{exact:true})).toBeVisible();
-    await access.getByRole("button",{name:"Retirer l’accès accordé à Alex",exact:true}).click();
+    await access.getByRole("button",{name:/Alex/}).click();
+    await page.getByRole("complementary",{name:"Alex",exact:true}).getByRole("button",{name:"Retirer l’accès propre",exact:true}).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button",{name:"Annuler",exact:true})).toBeFocused();
     await dialog.getByRole("button",{name:"Annuler",exact:true}).click();
-    await expect(access.getByText("Alex",{exact:true})).toBeVisible();
-    await access.getByRole("button",{name:"Retirer l’accès accordé à Alex",exact:true}).click();
-    await dialog.getByRole("button",{name:"Retirer l’accès",exact:true}).click();
+    await page.getByRole("complementary",{name:"Alex",exact:true}).getByRole("button",{name:"Retirer l’accès propre",exact:true}).click();
+    await dialog.getByRole("button",{name:"Retirer l’accès propre",exact:true}).click();
     await expect(page.getByText("Accès retiré.",{exact:true})).toBeVisible();
     await expect(access.getByText("Alex",{exact:true})).toHaveCount(0);
     const after = await (await alex.request.get("/api/hestia/folders")).json();
@@ -94,12 +97,13 @@ test("corbeille confirmée, ancien contenu refusé, restauration même original"
   const detail = page.getByRole("complementary",{name:"Document",exact:true});
   if (!isMobile) {
     await expect(detail).toBeVisible();
-    await page.getByRole("button",{name:"Donner accès",exact:true}).click();
-    await expect(page.getByRole("complementary",{name:"Donner accès",exact:true})).toBeVisible();
+    await openShare(page);
+    await expect(page.getByRole("complementary",{name:/^Donner accès à/})).toBeVisible();
     await expect(detail).toHaveCount(0);
+    await page.getByRole("tab",{name:/^Contenu/}).click();
     await page.getByRole("main").getByRole("button",{name:/Document à récupérer/}).click();
     await expect(detail).toBeVisible();
-    await expect(page.getByRole("complementary",{name:"Donner accès",exact:true})).toHaveCount(0);
+    await expect(page.getByRole("complementary",{name:/^Donner accès à/})).toHaveCount(0);
   }
   await detail.getByRole("button",{name:"Mettre à la corbeille",exact:true}).click();
   let dialog = page.getByRole("dialog");
@@ -117,18 +121,19 @@ test("corbeille confirmée, ancien contenu refusé, restauration même original"
   await page.getByRole("tab",{name:"Corbeille",exact:true}).click();
   await expect(page.getByText("Document à récupérer",{exact:true})).toBeVisible();
   await page.screenshot({path:test.info().outputPath("trash.png"),fullPage:true});
-  await page.getByRole("button",{name:"Donner accès",exact:true}).click();
-  const mainTrash = page.getByRole("tabpanel",{name:"Corbeille",exact:true,includeHidden:true});
-  await expect(mainTrash.getByText("Document à récupérer",{exact:true})).toBeAttached();
-  if (!isMobile) await expect(mainTrash.getByText("Document à récupérer",{exact:true})).toBeVisible();
-  await page.getByRole("complementary",{name:"Donner accès",exact:true}).getByRole("button",{name:"Fermer",exact:true}).click();
+  await openShare(page);
+  const mainAccessDuringShare = page.getByRole("tabpanel",{name:"Accès",exact:true,includeHidden:true});
+  await expect(mainAccessDuringShare).toBeAttached();
+  if (!isMobile) await expect(mainAccessDuringShare).toBeVisible();
+  await page.getByRole("complementary",{name:/^Donner accès à/}).getByRole("button",{name:"Fermer",exact:true}).click();
+  await page.getByRole("tab",{name:"Corbeille",exact:true}).click();
   await page.getByRole("button",{name:"Restaurer « Document à récupérer »",exact:true}).click();
   await expect(page.getByText("Restauré.",{exact:true})).toBeVisible();
   await expect(page.getByRole("heading",{name:"La corbeille est vide",exact:true})).toBeVisible();
   const after = await (await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json();
   expect(after.documents).toHaveLength(1);
   expect(after.documents[0].id).toBe(original.id); expect(after.documents[0].sha256).toBe(original.sha256);
-  await page.getByRole("tab",{name:/^Documents/}).click();
+  await page.getByRole("tab",{name:/^Contenu/}).click();
   await expect(page.getByRole("main").getByRole("button",{name:/Document à récupérer/})).toBeVisible();
 });
 
@@ -137,13 +142,13 @@ test("enveloppe serveur borne les options même si le membre détient les capaci
   await page.route(`**/api/hestia/folders/${folder.id}/sharing`, async route => {
     if (route.request().method() !== "GET") return route.continue();
     const response = await route.fetch(); const data = await response.json();
-    await route.fulfill({response,json:{members:data.members.map((member: {id: string; name: string}) => ({...member,canExport:false,canDeposit:false,canExportAndDeposit:false}))}});
+    await route.fulfill({response,json:{members:data.members.map((member: {id: string; name: string}) => ({...member,canExport:false,canDeposit:false,canExportAndDeposit:false,allowedCapabilitySets:[["consulter"]]}))}});
   });
-  await page.getByRole("button",{name:"Donner accès",exact:true}).click();
-  const panel = page.getByRole("complementary",{name:"Donner accès",exact:true});
-  await expect(panel.getByRole("checkbox",{name:"Exporter : télécharger les fichiers",exact:true})).toBeDisabled();
-  await expect(panel.getByRole("checkbox",{name:"Exporter : télécharger les fichiers",exact:true})).not.toBeChecked();
-  await expect(panel.getByRole("checkbox",{name:"Déposer : ajouter des documents",exact:true})).toBeDisabled();
+  await openShare(page);
+  const panel = page.getByRole("complementary",{name:/^Donner accès à/});
+  await expect(panel.getByRole("checkbox",{name:"Exporter",exact:true})).toBeDisabled();
+  await expect(panel.getByRole("checkbox",{name:"Exporter",exact:true})).not.toBeChecked();
+  await expect(panel.getByRole("checkbox",{name:"Déposer",exact:true})).toBeDisabled();
 });
 
 test("options par bénéficiaire : deux enveloppes séparées ne permettent pas leur combinaison", async ({page}) => {
@@ -154,24 +159,25 @@ test("options par bénéficiaire : deux enveloppes séparées ne permettent pas 
     const alex = data.members.find((member: {name: string}) => member.name === "Alex");
     expect(alex).toBeTruthy();
     await route.fulfill({response,json:{members:[
-      {...alex,canExport:true,canDeposit:true,canExportAndDeposit:false},
-      {id:randomUUID(),name:"Morgan synthétique",canExport:false,canDeposit:true,canExportAndDeposit:false}
+      {...alex,canExport:true,canDeposit:true,canExportAndDeposit:false,allowedCapabilitySets:[["consulter","exporter"],["consulter","déposer"]]},
+      {id:randomUUID(),name:"Morgan synthétique",canExport:false,canDeposit:true,canExportAndDeposit:false,allowedCapabilitySets:[["consulter","déposer"]]}
     ]}});
   });
-  await page.getByRole("button",{name:"Donner accès",exact:true}).click();
-  const panel = page.getByRole("complementary",{name:"Donner accès",exact:true});
-  const exp = panel.getByRole("checkbox",{name:"Exporter : télécharger les fichiers",exact:true});
-  const deposit = panel.getByRole("checkbox",{name:"Déposer : ajouter des documents",exact:true});
-  await expect(exp).toBeChecked(); await expect(deposit).not.toBeChecked(); await expect(deposit).toBeDisabled();
-  await exp.uncheck(); await expect(deposit).toBeEnabled(); await deposit.check();
+  await openShare(page);
+  const panel = page.getByRole("complementary",{name:/^Donner accès à/});
+  const exp = panel.getByRole("checkbox",{name:"Exporter",exact:true});
+  const deposit = panel.getByRole("checkbox",{name:"Déposer",exact:true});
+  await expect(exp).not.toBeChecked(); await expect(deposit).not.toBeChecked(); await expect(deposit).toBeEnabled();
+  await exp.check(); await expect(deposit).toBeDisabled(); await exp.uncheck(); await expect(deposit).toBeEnabled(); await deposit.check();
   await expect(exp).not.toBeChecked(); await expect(exp).toBeDisabled();
   await panel.getByLabel("Personne du foyer").selectOption({label:"Morgan synthétique"});
   await expect(exp).not.toBeChecked(); await expect(exp).toBeDisabled();
   await expect(deposit).not.toBeChecked(); await expect(deposit).toBeEnabled();
   await deposit.check();
   await panel.getByLabel("Personne du foyer").selectOption({label:"Alex"});
-  await expect(exp).toBeChecked(); await expect(exp).toBeEnabled();
-  await expect(deposit).not.toBeChecked(); await expect(deposit).toBeDisabled();
+  await expect(exp).not.toBeChecked(); await expect(exp).toBeEnabled();
+  await expect(deposit).not.toBeChecked(); await expect(deposit).toBeEnabled();
+  await exp.check(); await expect(deposit).toBeDisabled();
   const submitted = page.waitForRequest(request => request.url().endsWith(`/folders/${folder.id}/sharing`) && request.method() === "POST");
   await panel.getByRole("button",{name:"Donner accès",exact:true}).click();
   expect((await submitted).postDataJSON()).toMatchObject({export:true,deposit:false});
@@ -194,11 +200,11 @@ test("ouvrir le partage abandonne le dépôt non confirmé et conserve le corps 
     await upload.getByRole("button",{name:"Enregistrer",exact:true}).click();
     const {operation} = await (await started).json(); await chunk;
     const cancelled = page.waitForResponse(response => response.url().endsWith(`/api/hestia/uploads/${operation.id}`) && response.request().method() === "DELETE");
-    await page.getByRole("button",{name:"Donner accès",exact:true}).click();
+    await openShare(page);
     expect((await cancelled).status()).toBe(200);
     await expect(upload).toHaveCount(0);
-    await expect(page.getByRole("complementary",{name:"Donner accès",exact:true})).toBeVisible();
-    await expect(page.getByRole("main").getByRole("heading",{name:"Ce dossier est vide",exact:true})).toBeVisible();
+    await expect(page.getByRole("complementary",{name:/^Donner accès à/})).toBeVisible();
+    await expect(page.getByRole("tabpanel",{name:"Accès",exact:true})).toBeVisible();
     const result = await (await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json();
     expect(result.documents).toEqual([]);
   } finally { releaseChunk(); await page.unroute("**/api/hestia/uploads/*/chunks/*"); }

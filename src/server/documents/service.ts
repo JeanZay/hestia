@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { type Access, type Actor, HttpError, bodyBytes, guarded, invalid, isUuid, json, privateHeaders, response, textField, unavailable } from "../access";
 import type { ObjectStore } from "../storage";
 import { validateOriginal } from "../formats";
-import { getFolderAccess } from "../permissions/service";
+import { getFolderAccess, getFolderAccessEvaluator } from "../permissions/service";
 
 export const CHUNK_SIZE = 2 * 1024 * 1024;
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -281,12 +281,15 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
         if (folderId) await permissions(client,actor,folderId,required);
         const now = await clock(client);
         const rows = (await client.query<StoredDocument>(`SELECT d.* FROM hestia_document d WHERE d.purged_at IS NULL
-          AND (CASE WHEN $3::boolean THEN d.trashed_at IS NOT NULL AND d.trashed_at > $4::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
-          AND ($1::uuid IS NULL OR d.folder_id=$1) AND EXISTS(SELECT 1 FROM hestia_grant g WHERE g.folder_id=d.folder_id AND g.user_id=$2
-          AND g.capability='consulter') ORDER BY d.folder_id,d.created_at,d.id`, [folderId,actor.id,Boolean(trash),now])).rows;
+          AND (CASE WHEN $2::boolean THEN d.trashed_at IS NOT NULL AND d.trashed_at > $3::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
+          AND ($1::uuid IS NULL OR d.folder_id=$1) ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`, [folderId,Boolean(trash),now])).rows;
+        if (rows.length>10000) throw new HttpError(503,"RESOURCE_LIMIT","Cette recherche est trop importante. Précisez le dossier recherché.");
+        const evaluate=await getFolderAccessEvaluator(client,actor.id);
+        const rightsByFolder=new Map<string,ReturnType<typeof evaluate>>();
         const result = [];
         for (const row of rows) {
-          const rights = await getFolderAccess(client,actor.id,row.folder_id);
+          let rights=rightsByFolder.get(row.folder_id);
+          if(!rights){rights=evaluate(row.folder_id);rightsByFolder.set(row.folder_id,rights);}
           if (required.some(right => !rights.capabilities.includes(right))) continue;
           if (!fold(row.title + " " + row.file_name).includes(fold(q))) continue;
           result.push(trash ? { ...dto(row,rights.capabilities), trashedAt: row.trashed_at!.toISOString(),

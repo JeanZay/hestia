@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { type Access, type Actor, guarded, HttpError, invalid, isUuid, json, response, unavailable } from '../access';
-import { evaluateFolderAccess, getFolderAccess, type Grant } from '../permissions/service';
+import { assertPolicyCapacity, getFolderAccess, type Grant } from '../permissions/service';
+import { evaluateTreeAccess, type TreeFolder } from '../permissions/tree';
 import { CAPABILITIES } from '../permissions/capabilities';
 
 type Member = {user_id:string;name:string;email:string;role:string;active:boolean;epoch:number;departure_epoch:number;membership_version:string;removed_at:Date|null};
@@ -41,18 +42,25 @@ async function loadFolder(client:PoolClient,id:string) {
 
 // Succession history attests where the envelope came from; it is not an
 // authorization dependency on former holders or authors remaining active.
-function attestedReference(folder:Folder, reference:Grant, rows:Grant[]) {
-  const byId=new Map(rows.map(g=>[g.id,g])),seen=new Set<string>();
+function attestedReference(folder:Folder, reference:Grant, rows:Grant[],folders:Pick<TreeFolder,'id'|'created_by'>[]=[folder]) {
+  const byId=new Map(rows.map(g=>[g.id,g])),byFolder=new Map(folders.map(f=>[f.id,f])),seen=new Set<string>();
   let current:Grant|undefined=reference;
   while(current) {
-    if(seen.has(current.id)||current.folder_id!==folder.id||current.kind!=='reference'
+    const originFolder=byFolder.get(current.folder_id);
+    if(!originFolder||seen.has(current.id)||current.kind!=='reference'
       ||current.capability!=='administrer'||current.parent_id||current.lineage.length||!current.author_id)return false;
     seen.add(current.id);
-    if(current.origin==='initial')return !current.replaces_reference_id&&current.user_id===folder.created_by
-      &&current.author_id===folder.created_by&&current.batch_id===folder.id;
+    if(current.origin==='initial')return !current.replaces_reference_id&&!current.anchor_reference_id&&current.user_id===originFolder.created_by
+      &&current.author_id===originFolder.created_by&&current.batch_id===originFolder.id;
+    if(current.origin==='reference-inherited-transfer'){
+      const anchor:Grant|undefined=current.anchor_reference_id?byId.get(current.anchor_reference_id):undefined;
+      if(!anchor||current.replaces_reference_id||current.folder_id===anchor.folder_id||current.author_id!==anchor.user_id
+        ||!current.transmit.every(c=>anchor.transmit.includes(c))||(current.expires_at?.getTime()??Infinity)>(anchor.expires_at?.getTime()??Infinity))return false;
+      current=anchor;continue;
+    }
     if(!['reference-transfer','reference-succession'].includes(current.origin)||!current.replaces_reference_id)return false;
     const previous=byId.get(current.replaces_reference_id);
-    if(!previous?.revoked_at||!current.transmit.every(c=>previous.transmit.includes(c))
+    if(!previous?.revoked_at||previous.folder_id!==current.folder_id||current.anchor_reference_id||!current.transmit.every(c=>previous.transmit.includes(c))
       ||(current.expires_at?.getTime()??Infinity)>(previous.expires_at?.getTime()??Infinity))return false;
     current=previous;
   }
@@ -103,26 +111,68 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
   });}
   async function succession(client:PoolClient,actor:Member,id:string,mode:'transfer'|'nominate') {
     const folder=await loadFolder(client,id),state=await getFolderAccess(client,actor.user_id,id);
-    const reference=state.rows.find(g=>g.id===folder.reference_grant_id);
-    if(!reference || !attestedReference(folder,reference,state.rows))throw unavailable();
+    const reference=folder.reference_grant_id?state.rows.find(g=>g.id===folder.reference_grant_id):
+      state.held.find(g=>g.kind==='reference'&&g.capability==='administrer');
+    if(!reference || !attestedReference(folder,reference,state.graphRows,state.graph.folders))throw unavailable();
     const bound=state.limits(reference.id),holder=await loadMember(client,reference.user_id);
     if(!bound || !(bound.end>state.now) || !holder)throw unavailable();
     if(mode==='transfer') {
       if(reference.user_id!==actor.user_id || !state.valid(reference.id))throw unavailable();
     } else {
-      if(!['owner','admin'].includes(actor.role) || !reference.revoked_at || holder.departure_epoch<=reference.subject_epoch || state.rows.some(g=>g.kind==='reference'&&state.valid(g.id)))throw unavailable();
+      if(!['owner','admin'].includes(actor.role) || !reference.revoked_at || holder.departure_epoch<=reference.subject_epoch || state.sources.some(g=>g.kind==='reference'))throw unavailable();
     }
-    const after=evaluateFolderAccess(actor.user_id,id,folder,state.rows,[...state.members.values()],state.now,new Set([reference.id]));
-    const lostReaders=[...state.members.values()].filter(m=>state.rows.some(g=>g.user_id===m.user_id&&g.capability==='consulter'&&state.valid(g.id))&&!state.rows.some(g=>g.user_id===m.user_id&&g.capability==='consulter'&&after.valid(g.id))).map(m=>({id:m.user_id,name:m.name}));
-    const revokedDependentAccessCount=state.rows.filter(g=>g.id!==reference.id&&state.valid(g.id)&&!after.valid(g.id)).length;
+    const after=state.effectiveFor(actor.user_id,new Set([reference.id]));
+    const subtree=state.graph.folders.filter(candidate=>{
+      const seen=new Set<string>();let current:TreeFolder|undefined=candidate,isDescendant=false;
+      while(current){if(seen.has(current.id))throw unavailable();seen.add(current.id);if(current.id===id){isDescendant=true;break;}current=state.graph.folders.find(f=>f.id===current!.parent_folder_id);}
+      return isDescendant&&!candidate.trashed_at;
+    });
+    const lostReaderIds=new Set<string>(),effects:[string,string,string[],string[]][]=[];let revokedDependentAccessCount=0;
+    if(mode==='transfer')for(const candidate of subtree){
+      const beforeNode=evaluateTreeAccess(state.graph,actor.user_id,candidate.id),afterNode=evaluateTreeAccess(state.graph,actor.user_id,candidate.id,new Set([reference.id]));
+      const removed=beforeNode.sources.filter(g=>g.id!==reference.id&&!afterNode.valid(g.id));
+      if(removed.length&&!beforeNode.capabilities.includes('consulter'))throw unavailable();
+      revokedDependentAccessCount+=removed.length;
+      for(const member of state.members.values()){
+        const beforeCaps=canonicalCaps(beforeNode.sources.filter(g=>g.user_id===member.user_id).map(g=>g.capability));
+        const afterCaps=canonicalCaps(afterNode.sources.filter(g=>g.user_id===member.user_id).map(g=>g.capability));
+        if(JSON.stringify(beforeCaps)!==JSON.stringify(afterCaps))effects.push([candidate.id,member.user_id,beforeCaps,afterCaps]);
+        if(beforeCaps.includes('consulter')&&!afterCaps.includes('consulter'))lostReaderIds.add(member.user_id);
+      }
+    }
+    const lostReaders=[...lostReaderIds].map(memberId=>({id:memberId,name:state.members.get(memberId)!.name}));
+    // A vacancy still has a management scope. Reactivate only the historical
+    // reference in a hypothetical graph to identify that scope through the
+    // same placement/cut evaluator. This does not revive any grant in storage,
+    // and does not include an autonomous nested frame, even when it is vacant.
+    const referenceScopeGraph={...state.graph,
+      grants:state.graphRows.map(g=>g.id===reference.id?{...g,revoked_at:null}:g),
+      members:state.graph.members.map(m=>m.user_id===reference.user_id?{...m,active:true,departure_epoch:reference.subject_epoch}:m)};
+    const affectedManagementScope=new Set(subtree.filter(candidate=>evaluateTreeAccess(referenceScopeGraph,reference.user_id,candidate.id).valid(reference.id)).map(candidate=>candidate.id));
     const eligible=[...state.members.values()].filter(m=>m.active && (mode!=='transfer'||m.user_id!==actor.user_id)).map(m=>{
-      const capabilities=canonicalCaps(state.rows.filter(g=>g.user_id===m.user_id&&after.valid(g.id)).map(g=>g.capability));
+      const capabilities=canonicalCaps(after.sources.filter(g=>g.user_id===m.user_id).map(g=>g.capability));
       return {id:m.user_id,name:m.name,capabilities};
-    }).filter(m=>m.capabilities.includes('consulter'));
+    }).filter(m=>{
+      if(!m.capabilities.includes('consulter')||state.restrictedAt(m.id,'administrer'))return false;
+      const nominee=state.members.get(m.id)!;
+      const prospective:Grant={...reference,id:'prospective-reference',folder_id:id,user_id:m.id,parent_id:null,kind:'reference',revoked_at:null,
+        transmit:bound.transmit,subject_epoch:nominee.departure_epoch,expires_at:Number.isFinite(bound.end)?new Date(bound.end):null};
+      const graph={...state.graph,grants:[...state.graphRows,prospective]};
+      // Cover the replaced frame after transfer or departure, without making
+      // unrelated autonomous vacancies a prerequisite for this operation.
+      for(const candidate of subtree){
+        const projected=evaluateTreeAccess(graph,m.id,candidate.id,new Set([reference.id]));
+        if(candidate.id===id&&!projected.valid(prospective.id))return false;
+        if(affectedManagementScope.has(candidate.id)&&!projected.sources.some(g=>g.kind==='reference'))return false;
+      }
+      return true;
+    });
     // Fingerprint grants and membership, not wall clock. Eligibility/expiry is
     // nevertheless recalculated at commit using database time.
     const reviewVersion=digest([mode,actor.user_id,actor.epoch,actor.role,actor.membership_version,folder.reference_grant_id,
-      state.rows.map(g=>[g.id,g.user_id,g.kind,g.capability,g.parent_id,g.transmit,g.subject_epoch,g.revoked_at,g.expires_at]),
+      state.graphRows.map(g=>[g.id,g.user_id,g.kind,g.capability,g.parent_id,g.transmit,g.subject_epoch,g.revoked_at,g.expires_at,g.anchor_reference_id]),
+      state.graph.folders,state.graph.restrictions,state.graph.cuts,
+      effects,canonicalCaps(after.capabilities),revokedDependentAccessCount,
       [...state.members.values()].map(m=>[m.user_id,m.active,m.departure_epoch]),eligible.map(m=>[m.id,m.capabilities])]);
     const envelope={transmitCapabilities:canonicalCaps(bound.transmit),expiresAt:Number.isFinite(bound.end)?new Date(bound.end).toISOString():null};
     const folderView={id,adminReference:`D-${folder.admin_reference}`,...(mode==='transfer'&&state.capabilities.includes('consulter')?{title:folder.name}:{})};
@@ -134,10 +184,10 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
     const results=[];
     for(const f of folders.slice(0,paging.limit)){
       const state=await getFolderAccess(client,actor.id,f.id);
-      if(state.rows.some(g=>g.kind==='reference'&&state.valid(g.id)))continue;
-      const readers=new Set(state.rows.filter(g=>g.capability==='consulter'&&state.valid(g.id)).map(g=>g.user_id));
+      if(state.sources.some(g=>g.kind==='reference'))continue;
+      const readers=new Set(state.sources.filter(g=>g.capability==='consulter').map(g=>g.user_id));
       const ref=state.rows.find(g=>g.id===f.reference_grant_id),bound=ref&&state.limits(ref.id);
-      results.push({id:f.id,adminReference:`D-${f.admin_reference}`,creator:{id:f.created_by,name:f.creator_name},createdAt:f.created_at.toISOString(),vacantSince:f.vacant_since.toISOString(),readerCount:readers.size,canNominate:readers.size>0&&Boolean(ref&&attestedReference(f,ref,state.rows)&&bound&&bound.end>state.now)});
+      results.push({id:f.id,adminReference:`D-${f.admin_reference}`,creator:{id:f.created_by,name:f.creator_name},createdAt:f.created_at.toISOString(),vacantSince:f.vacant_since.toISOString(),readerCount:readers.size,canNominate:readers.size>0&&Boolean(ref&&attestedReference(f,ref,state.graphRows,state.graph.folders)&&bound&&bound.end>state.now)});
     }
     return {folders:results,nextOffset:folders.length>paging.limit?paging.offset+paging.limit:null};
   }));});}
@@ -153,7 +203,7 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
       const hash=digest([mode,id,input[referenceKey],input.nomineeId,input.reviewVersion]);
       const prior=await existing(client,member,input.idempotencyKey as string,hash);if(prior)return prior;
       const folder=await loadFolder(client,id);
-      if(folder.reference_grant_id!==input[referenceKey]) {
+      if(folder.reference_grant_id!==null&&folder.reference_grant_id!==input[referenceKey]) {
         if(mode==='nominate')throw conflict('REFERENCE_CHANGED');
         const priorReference=(await client.query("SELECT id FROM hestia_grant WHERE id=$1 AND folder_id=$2 AND kind='reference' AND user_id=$3",[input[referenceKey],id,actor.id])).rows[0];
         if(priorReference)throw conflict('REFERENCE_CHANGED');
@@ -164,10 +214,16 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
       if(state.reviewVersion!==input.reviewVersion)throw conflict();
       if(!state.eligible.some(m=>m.id===input.nomineeId))throw conflict('NO_ELIGIBLE_READER');
       const nominee=state.state.members.get(input.nomineeId as string)!;
-      await client.query('UPDATE hestia_grant SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1',[state.reference.id]);
+      const inherited=state.reference.folder_id!==id;
+      assertPolicyCapacity(state.state.graphRows.length,1);
+      if(inherited)assertPolicyCapacity(state.state.graph.cuts?.length??0,1,10000);
+      if(!inherited)await client.query('UPDATE hestia_grant SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1',[state.reference.id]);
       const newId=randomUUID();
-      await client.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,parent_id,transmit,lineage,origin,author_id,subject_epoch,expires_at,replaces_reference_id) VALUES($1,$2,$3,'administrer','reference',NULL,$4,$5,$6,$7,$8,$9,$10)`,[newId,id,nominee.user_id,state.reference.transmit,[],mode==='transfer'?'reference-transfer':'reference-succession',actor.id,nominee.departure_epoch,state.reference.expires_at,state.reference.id]);
+      await client.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,parent_id,transmit,lineage,origin,author_id,subject_epoch,expires_at,replaces_reference_id,anchor_reference_id) VALUES($1,$2,$3,'administrer','reference',NULL,$4,$5,$6,$7,$8,$9,$10,$11)`,[newId,id,nominee.user_id,state.envelope.transmitCapabilities,[],inherited?'reference-inherited-transfer':mode==='transfer'?'reference-transfer':'reference-succession',actor.id,nominee.departure_epoch,state.reference.expires_at,inherited?null:state.reference.id,inherited?state.reference.id:null]);
       await client.query('UPDATE hestia_folder SET reference_grant_id=$2 WHERE id=$1',[id,newId]);
+      if(inherited)await client.query('INSERT INTO hestia_management_cut(folder_id,source_reference_id,new_reference_id) VALUES($1,$2,$3)',[id,state.reference.id,newId]);
+      const committed=await getFolderAccess(client,nominee.user_id,id);
+      if(!committed.valid(newId)||!committed.capabilities.includes('consulter'))throw conflict('NO_ELIGIBLE_READER');
       return record(client,member,input.idempotencyKey as string,mode,id,hash);
     }));
   });}

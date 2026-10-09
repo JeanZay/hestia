@@ -24,10 +24,11 @@ async function login(page: Page, email: string, secret = password!) {
 }
 
 async function shareFromAccess(page: Page, name: string, id: string) {
+  await page.getByRole("tab", { name: "Accès", exact: true }).click();
   await page.getByRole("button", { name: "Donner accès", exact: true }).click();
-  const panel = page.getByRole("complementary", { name: "Donner accès", exact: true });
+  const panel = page.getByRole("complementary", { name: /^Donner accès à/ });
   await panel.getByLabel("Personne du foyer").selectOption(id);
-  await panel.getByRole("checkbox", { name: /Exporter :/ }).uncheck();
+  await expect(panel.getByRole("checkbox", { name: "Exporter", exact: true })).not.toBeChecked();
   await panel.getByRole("button", { name: "Donner accès", exact: true }).click();
   await expect(page.getByText("Accès accordé.", { exact: true })).toBeVisible();
   await expect(page.getByRole("tabpanel", { name: "Accès" }).getByText(name, { exact: true }).first()).toBeVisible();

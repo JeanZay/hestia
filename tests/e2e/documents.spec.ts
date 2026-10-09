@@ -26,14 +26,15 @@ test("un dossier privé persiste après renommage, rechargement et reconnexion",
   await page.getByLabel("Nom du dossier").fill(name);
   await page.getByRole("button", { name: "Créer le dossier", exact: true }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Renommer", exact: true }).click();
+  await page.getByRole("button", { name: "Actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Renommer", exact: true }).click();
   await page.getByLabel("Nom du dossier").fill(renamed);
   await page.getByRole("button", { name: "Enregistrer le nom", exact: true }).click();
   await expect(page.getByRole("heading", { name: renamed, exact: true })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath("private-folder.png"), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.reload();
-  await page.getByRole("main").getByRole("button", { name: `${renamed} Aucun document`, exact: true }).click();
+  await page.getByRole("main").getByRole("button", { name: new RegExp(renamed) }).click();
   await expect(page.getByRole("heading", { name: renamed, exact: true })).toBeVisible();
 
   // An administrator is not implicitly a reader of another member's folder.
@@ -56,7 +57,7 @@ test("un dossier privé persiste après renommage, rechargement et reconnexion",
   await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
   expect((await page.request.get("/api/hestia/folders")).status()).toBe(401);
   await login(page);
-  await page.getByRole("main").getByRole("button", { name: `${renamed} Aucun document`, exact: true }).click();
+  await page.getByRole("main").getByRole("button", { name: new RegExp(renamed) }).click();
   await expect(page.getByRole("heading", { name: renamed, exact: true })).toBeVisible();
 });
 
@@ -88,12 +89,13 @@ test("un conflit de renommage préserve la modification concurrente", async ({ p
   await page.getByRole("button", { name: "Nouveau dossier", exact: true }).click();
   await page.getByLabel("Nom du dossier").fill(name);
   await page.getByRole("button", { name: "Créer le dossier", exact: true }).click();
-  await page.getByRole("button", { name: "Renommer", exact: true }).click();
+  await page.getByRole("button", { name: "Actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Renommer", exact: true }).click();
   const folders = (await (await page.request.get("/api/hestia/folders")).json()).folders;
   const folder = folders.find((f: { name: string }) => f.name === name);
   const current = `${name} serveur`;
   const update = await page.request.patch(`/api/hestia/folders/${folder.id}`, {
-    headers: { Origin: "http://127.0.0.1:3210" }, data: { name: current, version: folder.version },
+    headers: { Origin: "http://127.0.0.1:3210" }, data: { name: current, version: folder.version, idempotencyKey:randomUUID() },
   });
   expect(update.status()).toBe(200);
   await page.getByLabel("Nom du dossier").fill(`${name} ancien`);
