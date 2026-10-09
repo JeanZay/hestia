@@ -13,8 +13,8 @@ const stale = () => new HttpError(409,'MOVE_STALE','La situation a changé. Vér
 const conflict = () => new HttpError(409,'IDEMPOTENCY_CONFLICT','Cette opération correspond à une autre demande.');
 const budget = () => new HttpError(503,'RESOURCE_LIMIT','Cette opération est trop importante. Aucune modification appliquée.');
 export type MoveInput = {kind:'folder'|'document';sourceId:string;destinationId:string|null;name?:string};
-export type MoveFolder = TreeFolder & {name:string;name_key:string;version:number};
-export type MoveDocument = {id:string;folder_id:string;title:string|null;version:number;trashed_at:Date|null;purged_at:Date|null};
+export type MoveFolder = TreeFolder & {name:string;name_key:string;version:number;trash_group_id?:string|null};
+export type MoveDocument = {id:string;folder_id:string;title:string|null;version:number;trashed_at:Date|null;purged_at:Date|null;trash_group_id?:string|null};
 export type MoveImpactGroup = {icon:'user-plus'|'user-minus'|'arrow-right-left'|'folder-open';title:string;lead?:string;
   items:{name:string;text:string;details?:{text:string;folders:string[]}[]}[]};
 export type MovePreview = {previewToken:string|null;source:{id:string;kind:'folder'|'document';name:string};
@@ -23,10 +23,21 @@ export type MovePreview = {previewToken:string|null;source:{id:string;kind:'fold
 type State = ReturnType<typeof evaluateTreeAccess>;
 type Profile = {transmit:string[];end:number|null};
 type Cell = {member:string;capability:string;before:Profile[];after:Profile[]};
-type Element = {id:string;folderId:string;afterFolderId:string;name:string;trashed:boolean;folder:boolean};
+type Element = {id:string;folderId:string;afterFolderId:string;name:string;trashed:boolean;folder:boolean;groupId?:string|null};
 type Effect = {element:Element;member:string;gain:string[];loss:string[];before:string[];after:string[];description:string};
 const expiry = (p:Profile) => p.end??Infinity;
 const dominates = (a:Profile,b:Profile) => expiry(a)>=expiry(b) && b.transmit.every(c=>a.transmit.includes(c));
+
+/** Current policy for one recoverable group. Only its exact folder members
+ * and retained placement ancestors lose the lifecycle mask. Another deleted
+ * group must never become an authority merely because this one is inspected. */
+export function currentTrashPolicy(graph:AccessGraph,folderIds:ReadonlySet<string>):AccessGraph {
+  const rows=new Map(graph.folders.map(f=>[f.id,f])),visible=new Set(folderIds);
+  for(const id of folderIds){let cursor=rows.get(id);const seen=new Set<string>();
+    while(cursor){if(seen.has(cursor.id))throw budget();seen.add(cursor.id);visible.add(cursor.id);cursor=cursor.parent_folder_id?rows.get(cursor.parent_folder_id):undefined;}
+  }
+  return {...graph,folders:graph.folders.map(f=>visible.has(f.id)?{...f,trashed_at:null}:f)};
+}
 
 function inputFrom(body:Record<string,unknown>):MoveInput {
   if (!['folder','document'].includes(String(body.kind)) || !isUuid(body.sourceId)
@@ -62,12 +73,24 @@ function authority(state:State,required:string[],adminOnly:boolean,subject:strin
 
 /** Pure policy planning, also exercised by unit tests. SQL callers must load all
  * inputs while holding the policy lock; no browser-provided graph is accepted. */
-export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:MoveDocument[],actorId:string,input:MoveInput) {
+export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:MoveDocument[],actorId:string,input:MoveInput,options?:{restoring?:boolean}) {
   if(folders.length>10000||documents.length>10000||graph.members.length>1000)throw budget();
   const rows=new Map(folders.map(f=>[f.id,f])),sourceDocument=input.kind==='document'?documents.find(d=>d.id===input.sourceId):undefined;
   const source=rows.get(input.kind==='folder'?input.sourceId:sourceDocument?.folder_id??'');
   if(!source||source.trashed_at||(input.kind==='document'&&(!sourceDocument||sourceDocument.trashed_at||sourceDocument.purged_at)))throw unavailable();
-  const beforeCache=new Map<string,State>(),afterCache=new Map<string,State>();let evaluationWork=0;
+  // Lifecycle masking remains mandatory for source/destination navigation.
+  // The placement policy projection also covers recoverable older trash groups.
+  // A restore's initial placement policy needs its own retained ancestors,
+  // never an unrelated deleted authority. Its exact group is already active
+  // in the supplied simulation; older groups remain masked in this baseline.
+  const restoreAncestors=new Set<string>();
+  if(options?.restoring){let cursor:MoveFolder|undefined=source;while(cursor){
+    if(restoreAncestors.has(cursor.id))throw budget();restoreAncestors.add(cursor.id);
+    cursor=cursor.parent_folder_id?rows.get(cursor.parent_folder_id):undefined;
+  }}
+  const restoreBeforeGraph=options?.restoring?{...graph,folders:graph.folders.map(f=>restoreAncestors.has(f.id)?{...f,trashed_at:null}:f)}:graph;
+  const restoreBeforeCache=new Map<string,State>();
+  const breadcrumbCache=new Map<string,State>();let evaluationWork=0;
   let profileWork=0;
   const profileTick=()=>{if(++profileWork>2_000_000)throw budget();};
   const profileCache=new Map<State,Map<string,Profile[]>>();
@@ -99,7 +122,10 @@ export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:
     }
     return cache.get(id)!;
   };
-  const before=(id:string)=>evaluate(graph,id,beforeCache),sourceRights=before(source.id);
+  const initialCache=new Map<string,State>();
+  const before=(id:string)=>evaluate(graph,id,initialCache),sourceRights=options?.restoring?evaluate(restoreBeforeGraph,source.id,restoreBeforeCache):before(source.id);
+  const liveSourceRights=options?.restoring?sourceRights:evaluateTreeAccess(graph,actorId,source.id);
+  if(!liveSourceRights.capabilities.includes('consulter'))throw unavailable();
   if(!sourceRights.capabilities.includes('consulter'))throw unavailable();
   const dto:MovePreview={previewToken:null,source:{id:input.sourceId,kind:input.kind,name:input.kind==='folder'?source.name:sourceDocument!.title!},
     destination:{id:input.destinationId,name:input.destinationId?'Dossier indisponible':'Mes dossiers'},allowed:false,groups:[]};
@@ -111,39 +137,53 @@ export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:
     if(code==='NAME_UNAVAILABLE')dto.collision=true;
     return {dto,fingerprint:null as string|null};
   };
-  if(!sourceRights.capabilities.includes('modifier'))return refuse();
+  if(!liveSourceRights.capabilities.includes('modifier'))return refuse();
   const destination=input.destinationId?rows.get(input.destinationId):undefined;
   if(input.destinationId&&(!destination||destination.trashed_at))return refuse();
   if(destination){
+    const liveDestinationRights=evaluateTreeAccess(graph,actorId,destination.id);
+    if(!liveDestinationRights.capabilities.includes('consulter'))return refuse();
     const rights=before(destination.id);
     if(!rights.capabilities.includes('consulter'))return refuse();
     dto.destination={id:destination.id,name:destination.name,breadcrumbs:[]};
     let cursor:MoveFolder|undefined=destination;const seen=new Set<string>();
-    while(cursor&&before(cursor.id).capabilities.includes('consulter')){
+    while(cursor&&evaluate(graph,cursor.id,breadcrumbCache).capabilities.includes('consulter')){
       if(seen.has(cursor.id))throw budget();seen.add(cursor.id);
       dto.destination.breadcrumbs!.unshift({id:cursor.id,name:cursor.name});cursor=cursor.parent_folder_id?rows.get(cursor.parent_folder_id):undefined;
     }
-    if(!rights.capabilities.includes('modifier')||(input.kind==='document'&&!rights.capabilities.includes('déposer')))return refuse();
+    if(!liveDestinationRights.capabilities.includes('modifier')||(input.kind==='document'&&!liveDestinationRights.capabilities.includes('déposer')))return refuse();
   }else if(input.kind==='document')return refuse('INVALID_DESTINATION');
   if((input.kind==='folder'?source.parent_folder_id:source.id)===input.destinationId)return refuse('INVALID_DESTINATION');
   const affected=input.kind==='folder'?descendants(folders,source.id):new Set<string>();
   if(input.kind==='folder'&&input.destinationId&&affected.has(input.destinationId))return refuse('INVALID_DESTINATION');
-  // Folder groups are a separate delivery. Fail closed if one is encountered;
-  // never reinterpret deleted folders as active while assessing a move.
-  if(folders.some(f=>affected.has(f.id)&&f.trashed_at))return refuse();
-  const afterGraph:AccessGraph=input.kind==='folder'?{...graph,folders:graph.folders.map(f=>f.id===source.id?{...f,parent_folder_id:input.destinationId}:f)}:graph;
-  const after=(id:string)=>evaluate(afterGraph,id,afterCache);
+  const liveBeforeCache=new Map<string,State>(),liveAfterCache=new Map<string,State>();
+  const liveAfterGraph=input.kind==='folder'?{...graph,folders:graph.folders.map(f=>f.id===source.id?{...f,parent_folder_id:input.destinationId}:f)}:graph;
+  const trashBeforeCache=new Map<string,State>(),trashAfterCache=new Map<string,State>();
+  const trashBeforeGraphs=new Map<string,AccessGraph>(),trashAfterGraphs=new Map<string,AccessGraph>();
+  function trashState(id:string,groupId:string|null|undefined,afterMove:boolean){
+    const cache=afterMove?trashAfterCache:trashBeforeCache,graphs=afterMove?trashAfterGraphs:trashBeforeGraphs;
+    const key=JSON.stringify([id,groupId??null]),scope=groupId??`folder:${id}`;
+    if(!graphs.has(scope))graphs.set(scope,currentTrashPolicy(afterMove?liveAfterGraph:graph,new Set(groupId?folders.filter(f=>f.trash_group_id===groupId).map(f=>f.id):[id])));
+    if(!cache.has(key)){const g=graphs.get(scope)!;evaluationWork+=g.folders.length+g.grants.length+g.restrictions.length+(g.cuts?.length??0)+1;
+      if(evaluationWork>2_000_000)throw budget();cache.set(key,evaluateTreeAccess(g,actorId,id));}
+    return cache.get(key)!;
+  }
   const elements:Element[]=[];
-  if(input.kind==='folder')for(const f of folders)if(affected.has(f.id))elements.push({id:f.id,folderId:f.id,afterFolderId:f.id,name:f.name,trashed:false,folder:true});
+  if(input.kind==='folder')for(const f of folders)if(affected.has(f.id)&&(!f.trashed_at||graph.now<f.trashed_at.getTime()+RETENTION))elements.push({id:f.id,folderId:f.id,afterFolderId:f.id,name:f.name,trashed:Boolean(f.trashed_at),folder:true,groupId:f.trash_group_id});
   for(const d of documents)if((input.kind==='folder'?affected.has(d.folder_id):d.id===input.sourceId)&&!d.purged_at
     &&(!d.trashed_at||graph.now<d.trashed_at.getTime()+RETENTION))elements.push({id:d.id,folderId:d.folder_id,
-      afterFolderId:input.kind==='document'?input.destinationId!:d.folder_id,name:d.title!,trashed:Boolean(d.trashed_at),folder:false});
+      afterFolderId:input.kind==='document'?input.destinationId!:d.folder_id,name:d.title!,trashed:Boolean(d.trashed_at),folder:false,groupId:d.trash_group_id});
   if((elements.length+folders.length)*graph.members.length*CAPABILITIES.length>1_000_000)throw budget();
   const effects:Effect[]=[],matrix:{element:string;cells:Cell[]}[]=[];
   let unauthorized=false,noManagement=false;
   for(const element of elements){
-    const old=before(element.folderId),next=after(element.afterFolderId);
-    if(!old.capabilities.includes('consulter')||(element.trashed&&!old.capabilities.includes('supprimer')))unauthorized=true;
+    // Compare actual active rights, and current recoverable-trash policy only
+    // for trash elements. Restore starts from current group policy (not an
+    // artificial empty state) and ends with the exact restored live graph.
+    const old=element.trashed?trashState(element.folderId,element.groupId,false):options?.restoring?evaluate(restoreBeforeGraph,element.folderId,restoreBeforeCache):evaluate(graph,element.folderId,liveBeforeCache);
+    const next=element.trashed?trashState(element.afterFolderId,element.groupId,true):evaluate(liveAfterGraph,element.afterFolderId,liveAfterCache);
+    const authorityOld=old,authorityNext=next;
+    if(!authorityOld.capabilities.includes('consulter')||(element.trashed&&!old.capabilities.includes('supprimer')))unauthorized=true;
     if(element.folder){
       // The nearest original management reference must survive. A destination
       // reference cannot silently replace an inherited source reference.
@@ -161,13 +201,14 @@ export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:
       if(!gains.length&&!losses.length)continue;
       // Knowledge and power are checked on every element before exposing even
       // one person's name. A refused plan always has an empty impact projection.
-      if(!old.canShare&&!old.canAdminister)unauthorized=true;
+      if(!authorityOld.canShare&&!authorityOld.canAdminister)unauthorized=true;
       if(gains.length){
         const gainedProfiles=gains.flatMap(c=>c.after.filter(p=>!c.before.some(q=>dominates(q,p))));
         const required=[...new Set([...gains.map(c=>c.capability),...gainedProfiles.flatMap(p=>p.transmit)])];
-        if(!authority(next,required,false,member.user_id,gainedProfiles,[old,...(destination?[before(destination.id)]:[])]))unauthorized=true;
+        const destinationAuthority=destination?evaluate(graph,destination.id,liveBeforeCache):undefined;
+        if(!authority(authorityNext,required,false,member.user_id,gainedProfiles,[authorityOld,...(destinationAuthority?[destinationAuthority]:[])]))unauthorized=true;
       }
-      if(losses.length&&!authority(old,losses.map(c=>c.capability),true,member.user_id))unauthorized=true;
+      if(losses.length&&!authority(authorityOld,losses.map(c=>c.capability),true,member.user_id))unauthorized=true;
       const descriptions:string[]=[];
       for(const c of gains)descriptions.push(!c.before.length?`Gagne : ${c.capability}`
         :c.after.some(p=>!c.before.some(q=>p.transmit.every(cap=>q.transmit.includes(cap))))?`Capacités transmissibles étendues : ${c.capability}`:`Durée étendue : ${c.capability}`);
@@ -180,8 +221,9 @@ export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:
   // Immutable delegation edges can reach outside the placement subtree. Such
   // collateral effects are not an implicit authorization to alter another tree.
   if(input.kind==='folder')for(const folder of folders){
-    if(affected.has(folder.id)||folder.trashed_at)continue;
-    const old=before(folder.id),next=after(folder.id);
+    if(affected.has(folder.id)||(folder.trashed_at&&graph.now>=folder.trashed_at.getTime()+RETENTION))continue;
+    const old=folder.trashed_at?trashState(folder.id,folder.trash_group_id,false):evaluate(graph,folder.id,liveBeforeCache);
+    const next=folder.trashed_at?trashState(folder.id,folder.trash_group_id,true):evaluate(liveAfterGraph,folder.id,liveAfterCache);
     for(const member of graph.members)for(const cap of CAPABILITIES)
       if(JSON.stringify(profiles(old,member.user_id,cap))!==JSON.stringify(profiles(next,member.user_id,cap)))unauthorized=true;
   }
@@ -197,7 +239,9 @@ export function planFolderMove(graph:AccessGraph,folders:MoveFolder[],documents:
   const relative=(element:Element)=>{
     if(input.kind==='document')return element.name;
     const names:string[]=element.folder?[]:[element.name];let f=rows.get(element.folderId);const seen=new Set<string>();
-    while(f&&f.id!==source.id){if(seen.has(f.id))throw budget();seen.add(f.id);names.unshift(f.name);f=f.parent_folder_id?rows.get(f.parent_folder_id):undefined;}
+    while(f&&f.id!==source.id){if(seen.has(f.id))throw budget();seen.add(f.id);
+      if(!f.trashed_at||graph.now<f.trashed_at.getTime()+RETENTION)names.unshift(f.name);
+      f=f.parent_folder_id?rows.get(f.parent_folder_id):undefined;}
     return names.join(' / ')||source.name;
   };
   for(const member of graph.members){
@@ -235,7 +279,7 @@ export function createFolderMoves(access:Access,dependencies?:{now?:()=>Date}) {
     const ids=input.kind==='folder'?[...descendants(folders,input.sourceId)]:[];
     const documents=(await client.query<MoveDocument>(`SELECT * FROM hestia_document WHERE ${input.kind==='folder'?'folder_id=ANY($1::uuid[])':'id=$1::uuid'} ORDER BY id LIMIT 10001`,[input.kind==='folder'?ids:input.sourceId])).rows;
     const plan=planFolderMove(graph,folders,documents,actor.id,input);
-    const deadlines=[...graph.grants.map(g=>g.expires_at?.getTime()),...documents.map(d=>d.trashed_at?d.trashed_at.getTime()+RETENTION:undefined)]
+    const deadlines=[...graph.grants.map(g=>g.expires_at?.getTime()),...folders.map(f=>f.trashed_at?f.trashed_at.getTime()+RETENTION:undefined),...documents.map(d=>d.trashed_at?d.trashed_at.getTime()+RETENTION:undefined)]
       .filter((value):value is number=>value!==undefined&&value>graph.now);
     return {...plan,now:graph.now,validUntil:Math.min(graph.now+PREVIEW_LIFETIME,...deadlines)};
   }

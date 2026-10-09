@@ -17,8 +17,8 @@ export async function familyRequest<T>(path: string, method = "GET", body?: unkn
 export const familyError = (error: unknown) => error instanceof Error ? error.message : "Impossible de joindre Hestia.";
 export const familyUncertain = (error: unknown) => !(error instanceof FamilyRequestError) || error.status >= 500;
 export const roleLabel = (role: string) => role === "owner" ? "Propriétaire" : role === "admin" ? "Administrateur" : "Membre";
-export function StatusPill({ children, dashed = false }: { children: ReactNode; dashed?: boolean }) {
-  return <span className={`hf-status ${dashed ? "hf-dashed" : ""}`}><Icon name={dashed ? "clock" : "check"} size={14}/><span>{children}</span></span>;
+export function StatusPill({ children, dashed = false, icon }: { children: ReactNode; dashed?: boolean; icon?: string }) {
+  return <span className={`hf-status ${dashed ? "hf-dashed" : ""}`}><Icon name={icon ?? (dashed ? "clock" : "check")} size={14}/><span>{children}</span></span>;
 }
 export function PersonRow({ name, sub, status, selected, onClick }: { name: string; sub: string; status: string; selected?: boolean; onClick: () => void }) {
   return <button className="cdv-focus hf-person" aria-current={selected || undefined} onClick={onClick}><Avatar name={name}/><span className="hf-person-text"><strong>{name}</strong><span>{sub}</span><span className="hf-mobile-status"><StatusPill>{status}</StatusPill></span></span><span className="hf-desktop-status"><StatusPill>{status}</StatusPill></span><Icon name="chevron-right"/></button>;

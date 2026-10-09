@@ -37,6 +37,9 @@ describe("persistent member admission and private folders", () => {
     await migrateDatabase(pool, config); // replay is non-destructive
     userId = await provisionSyntheticMember(pool, { email, name: "Camille Synthétique", password });
     outsiderId = await provisionSyntheticMember(pool, { email: outsiderEmail, name: "Admin Synthétique", password, role: "admin" });
+    // Suites share this synthetic database and the persisted sign-in bucket.
+    // Isolate initial fixtures too: beforeEach runs only after these logins.
+    await pool.query('UPDATE "rateLimit" SET "lastRequest"=0');
     cookie = (await login()).cookie;
     outsiderCookie = (await login(outsiderEmail)).cookie;
   }, 30000);

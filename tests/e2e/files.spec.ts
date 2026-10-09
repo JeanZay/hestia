@@ -169,6 +169,9 @@ test("aperçu sans Exporter, révocation et purge des URLs privées", async ({pa
   await panel(page).getByRole("button",{name:"Terminé",exact:true}).click();
   // UI capability projection only; server authorization is separately covered by integration tests.
   await page.route(/\/api\/hestia\/documents\/[^/?]+$/, async route => { const response=await route.fetch(); const body=await response.json(); body.document.capabilities=["consulter"]; await route.fulfill({response,json:body}); });
+  // Background inventory refresh must use the same synthetic capability
+  // projection as the detail endpoint throughout this UI-only scenario.
+  await page.route(/\/api\/hestia\/documents\?/, async route => { const response=await route.fetch(); const body=await response.json(); body.documents=body.documents.map((document:Record<string,unknown>)=>({...document,capabilities:["consulter"]})); await route.fulfill({response,json:body}); });
   await page.getByRole("main").getByRole("button",{name:/synthetic/}).click();
   const detail=page.getByRole("complementary",{name:"Document",exact:true});
   await expect(detail.getByRole("img",{name:"Aperçu de synthetic"})).toBeVisible();

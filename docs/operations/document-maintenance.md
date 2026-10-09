@@ -12,7 +12,7 @@ donne aucun accès à cette opération. Ne jamais inscrire ce secret dans une UR
 les logs ou le dépôt. La configuration et son application sont propres à chaque
 environnement, après autorisation de son déploiement.
 
-Chaque appel traite au plus vingt documents et cent objets temporaires. Les
+Chaque appel traite au plus vingt documents, vingt groupes de dossiers échus et cent objets temporaires. Les
 échecs conservent le registre de reprise et renvoient 503 ; ne pas présenter une
 suppression distante incertaine comme confirmée. Les appels concurrents partagent
 les verrous des opérations d'envoi. Un nouveau passage est sans effet sur un
@@ -35,3 +35,13 @@ ressusciter le document. Les empreintes et tailles des objets confirmés supprim
 sont retirées du registre ; les objets dont la suppression reste incertaine y
 restent pour permettre la reprise. Aucune suppression immédiate des sauvegardes
 n'est promise.
+
+Les groupes de dossiers conservent leurs membres et leur échéance propres :
+purger un parent ne reporte jamais la purge d’un ancien groupe. Les noms des
+dossiers échus sont retirés ; les lignes techniques opaques nécessaires aux
+références de gestion, parentés, reçus et groupes indépendants restent fermées à
+la navigation et à la restauration. Une restauration de sauvegarde doit inclure
+les tables de groupes, leurs membres et les reçus, en plus des politiques et du
+registre d’objets. Elle recalcule les accès à l’heure courante et ne réactive ni
+session ni accès expiré. Le test synthétique de roundtrip SQL et objets couvre
+cette cohérence ; il ne constitue pas une sauvegarde des données d’un foyer.
