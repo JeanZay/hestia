@@ -28,7 +28,7 @@ const date = (value: string) => new Date(value).toLocaleString("fr-FR", {dateSty
 const labels: Record<string,string> = {consulter:"Consulter",déposer:"Déposer",modifier:"Modifier",supprimer:"Supprimer",exporter:"Exporter",partager:"Partager",administrer:"Administrer"};
 const descriptions: Record<string,string> = {déposer:"Ajouter des documents.",modifier:"Renommer, ranger, créer des sous-dossiers.",supprimer:"Mettre à la corbeille et restaurer.",exporter:"Télécharger les fichiers."};
 
-export function FolderWorkspace({userId, folder, folders, host, onAccessLost, onUpdated, initialCapture, onCaptureConsumed, actions, onFolder, onRename, onMove}: {userId: string; folder: TreeFolder; folders: TreeFolder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; initialCapture?: CaptureResult | null; onCaptureConsumed?: () => void; actions?: ReactNode; onFolder: (id:string)=>void; onRename?:()=>void; onMove?:(source:MoveSource)=>void}) {
+export function FolderWorkspace({userId, folder, folders, host, onAccessLost, onUpdated, initialCapture, onCaptureConsumed, actions, onFolder, onRename, onMove, onTrash}: {userId: string; folder: TreeFolder; folders: TreeFolder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; initialCapture?: CaptureResult | null; onCaptureConsumed?: () => void; actions?: ReactNode; onFolder: (id:string)=>void; onRename?:()=>void; onMove?:(source:MoveSource)=>void; onTrash?:()=>void}) {
   const [tab, setTab] = useState("docs");
   const [panel, setPanel] = useState<"share" | "person" | "restrict" | null>(null);
   const [fileGeneration, setFileGeneration] = useState(0);
@@ -104,7 +104,7 @@ export function FolderWorkspace({userId, folder, folders, host, onAccessLost, on
   const personGrants=grants.filter(g=>g.memberId===personId),personRestrictions=restrictions.filter(r=>r.memberId===personId);
   const panelTitle=showShare?`Donner accès à « ${folder.name} »`:panel==="restrict"?`Restreindre ${person?.name??"cette personne"} ici`:person?.name??"Accès d’une personne";
   return <>
-    <div className="h-actions">{actions}<FolderActions onMove={onMove&&folder.capabilities.includes("modifier")?()=>{setPanel(null);onMove({kind:"folder",id:folder.id,name:folder.name,folderId:folder.id,parentId:folder.visibleParentId});}:undefined} onRename={onRename} onAccess={canAccess?()=>{setTab("access");setPanel(null);}:undefined}/></div>
+    <div className="h-actions">{actions}<FolderActions onTrash={canTrash?onTrash:undefined} onMove={onMove&&folder.capabilities.includes("modifier")?()=>{setPanel(null);onMove({kind:"folder",id:folder.id,name:folder.name,folderId:folder.id,parentId:folder.visibleParentId});}:undefined} onRename={onRename} onAccess={canAccess?()=>{setTab("access");setPanel(null);}:undefined}/></div>
     {tabs.length>1&&<Tabs items={tabs} active={activeTab} onChange={value=>{setTab(value);setPanel(null);setNotice(null);}}/>}
     {!panel&&banner}
     {activeTab==="docs"&&<FileWorkspace onMove={onMove} key={fileGeneration} suppressPanel={!!panel} onOpenPanel={()=>{setPanel(null);setNotice(null);}} userId={userId} folder={folder} folders={folders} onFolder={onFolder} host={host} onAccessLost={onAccessLost} onUpdated={onUpdated} initialCapture={initialCapture} onCaptureConsumed={onCaptureConsumed}/>}

@@ -9,6 +9,7 @@ import { folderNameKey } from "./db/folder-name";
 import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, isUuid, type Actor } from "./access";
 import { createDocuments, type DocumentDependencies } from "./documents/service";
 import { createFolderMoves } from "./documents/moves";
+import { createFolderTrash } from "./documents/folder-trash";
 import { createIdentity, revokeIdentityArtifacts } from "./identity";
 import { createMembership } from "./membership/service";
 const folderName = (value: unknown) => textField(value, 120);
@@ -210,9 +211,16 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       }));
     });
   }
+  const documents=createDocuments(pool, access, dependencies);
+  const folderTrash=createFolderTrash(access, { now: dependencies?.now });
   return { handleAuth, handleSession, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
-    ...createDocuments(pool, access, dependencies), ...createIdentity(pool, config, access),
+    ...documents, ...folderTrash,
+    async cleanupTrash(limit:number) {
+      const result=await documents.cleanupTrash(limit);
+      await folderTrash.cleanupFolderTrash(limit);
+      return result;
+    }, ...createIdentity(pool, config, access),
     ...createMembership(access, { revokeIdentityArtifacts }) };
 }
 

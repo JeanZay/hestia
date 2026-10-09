@@ -3,7 +3,9 @@ import type { Pool, PoolClient } from "pg";
 import { type Access, type Actor, HttpError, bodyBytes, guarded, invalid, isUuid, json, privateHeaders, response, textField, unavailable } from "../access";
 import type { ObjectStore } from "../storage";
 import { validateOriginal } from "../formats";
-import { getFolderAccess, getFolderAccessEvaluator } from "../permissions/service";
+import { getFolderAccess, getFolderAccessEvaluator, loadFolderAccessGraph } from "../permissions/service";
+import {evaluateTreeAccess} from '../permissions/tree';
+import {trashPolicyGraph} from './folder-trash';
 
 export const CHUNK_SIZE = 2 * 1024 * 1024;
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -25,6 +27,7 @@ type StoredDocument = {
   size: number; sha256: string; source: string; version: number; created_at: Date;
   uploaded_by_name: string; preview_supported: boolean; object_key: string;
   trashed_at: Date | null; purged_at: Date | null; trashed_by_name: string | null;
+  trash_group_id: string | null;
   last_lifecycle_action: string | null; last_lifecycle_version: number | null;
 };
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
@@ -275,16 +278,21 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     return guarded(async () => {
       const url = new URL(request.url), folderId = url.searchParams.get("folderId"), q = url.searchParams.get("q") ?? "";
       const trash = url.searchParams.get("trash");
-      if ((folderId && !isUuid(folderId)) || q.length>200 || (trash !== null && trash !== "true") || (trash && !folderId)) throw invalid();
+      if ((folderId && !isUuid(folderId)) || q.length>200 || (trash !== null && trash !== "true")) throw invalid();
       const listing = await withActor(request,async (client,actor) => {
         const required = trash ? ["consulter", "supprimer"] : ["consulter"];
-        if (folderId) await permissions(client,actor,folderId,required);
+        const trashGraph=trash?await loadFolderAccessGraph(client):null;
+        if (trashGraph&&dependencies?.now)trashGraph.now=dependencies.now().getTime();
+        if (folderId) {
+          if(trashGraph){if(required.some(c=>!evaluateTreeAccess(trashPolicyGraph(trashGraph,new Set([folderId])),actor.id,folderId).capabilities.includes(c)))throw unavailable();}
+          else await permissions(client,actor,folderId,required);
+        }
         const now = await clock(client);
         const rows = (await client.query<StoredDocument>(`SELECT d.* FROM hestia_document d WHERE d.purged_at IS NULL
-          AND (CASE WHEN $2::boolean THEN d.trashed_at IS NOT NULL AND d.trashed_at > $3::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
+          AND (CASE WHEN $2::boolean THEN d.trash_group_id IS NULL AND d.trashed_at IS NOT NULL AND d.trashed_at > $3::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
           AND ($1::uuid IS NULL OR d.folder_id=$1) ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`, [folderId,Boolean(trash),now])).rows;
         if (rows.length>10000) throw new HttpError(503,"RESOURCE_LIMIT","Cette recherche est trop importante. Précisez le dossier recherché.");
-        const evaluate=await getFolderAccessEvaluator(client,actor.id);
+        const evaluate=trashGraph?(id:string)=>evaluateTreeAccess(trashPolicyGraph(trashGraph,new Set([id])),actor.id,id):await getFolderAccessEvaluator(client,actor.id);
         const rightsByFolder=new Map<string,ReturnType<typeof evaluate>>();
         const result = [];
         for (const row of rows) {
@@ -308,7 +316,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
       if (!Number.isSafeInteger(input.version) || Number(input.version)<1 || Number(input.version)>=2147483647) throw invalid();
       const result = await withActor(request,async (client,actor) => {
         const found = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1",[id])).rows[0];
-        if (!found || found.purged_at) throw unavailable();
+        if (!found || found.purged_at || found.trash_group_id) throw unavailable();
         const rights = await permissions(client,actor,found.folder_id,["consulter","supprimer"]);
         const row = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1 FOR UPDATE",[id])).rows[0];
         const now = await clock(client);

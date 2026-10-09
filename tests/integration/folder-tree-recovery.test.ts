@@ -80,8 +80,21 @@ describe('folder tree historical migration and synthetic recovery',()=>{
       await c.query("INSERT INTO hestia_move_preview(token,actor_id,actor_epoch,request_sha256,state_sha256,expires_at) VALUES($1,'owner',0,$2,$3,clock_timestamp()+interval '15 minutes')",[randomUUID(),'d'.repeat(64),'e'.repeat(64)]);
       await c.query("UPDATE hestia_grant SET expires_at=clock_timestamp()+interval '300 milliseconds' WHERE id=$1",[expired]);
       expect((await getFolderAccess(c,'expired',child)).capabilities).toEqual(['consulter']);
+      // Group membership, retention and historical operation receipts survive
+      // the same credential-free SQL + object restore as the active tree.
+      await c.query('SET CONSTRAINTS ALL IMMEDIATE');
+      await c.query(await sql('010-folder-trash'));
+      await c.query('SET CONSTRAINTS ALL DEFERRED');
+      const trashFolder=randomUUID(),trashGroup=randomUUID();
+      await c.query("INSERT INTO hestia_folder(id,name,name_key,created_by,parent_folder_id) VALUES($1,'Archive synthétique','archive synthétique','owner',$2)",[trashFolder,destination]);
+      await c.query("INSERT INTO hestia_trash_group(id,root_folder_id,original_parent_id,trashed_at,expires_at,trashed_by_name,status) VALUES($1,$2,$3,now(),now()+interval '168 hours','Auteur synthétique','trashed')",[trashGroup,trashFolder,destination]);
+      await c.query('INSERT INTO hestia_trash_folder_member VALUES($1,$2)',[trashGroup,trashFolder]);
+      await c.query('INSERT INTO hestia_trash_document_member VALUES($1,$2)',[trashGroup,document]);
+      await c.query('UPDATE hestia_folder SET trashed_at=now(),trash_group_id=$2 WHERE id=$1',[trashFolder,trashGroup]);
+      await c.query('UPDATE hestia_document SET folder_id=$2,trashed_at=now(),trash_group_id=$3 WHERE id=$1',[document,trashFolder,trashGroup]);
+      await c.query("INSERT INTO hestia_trash_receipt(actor_id,idempotency_key,actor_epoch,request_sha256) VALUES('owner',$1,0,$2)",[randomUUID(),'f'.repeat(64)]);
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');await c.query('SET CONSTRAINTS ALL DEFERRED');
-      const tables=['user','hestia_member','hestia_folder','hestia_grant','hestia_folder_restriction','hestia_management_cut','hestia_folder_receipt','hestia_move_receipt','hestia_move_preview','hestia_upload','hestia_upload_object','hestia_document'];
+      const tables=['user','hestia_member','hestia_folder','hestia_grant','hestia_folder_restriction','hestia_management_cut','hestia_folder_receipt','hestia_move_receipt','hestia_move_preview','hestia_upload','hestia_upload_object','hestia_document','hestia_trash_group','hestia_trash_folder_member','hestia_trash_document_member','hestia_trash_receipt'];
       const snapshot:Record<string,Record<string,unknown>[]>={};
       for(const table of tables)snapshot[table]=(await c.query(`SELECT * FROM "${table}" ORDER BY 1,2`)).rows;
       await c.query('COMMIT');
@@ -103,6 +116,7 @@ describe('folder tree historical migration and synthetic recovery',()=>{
       expect((await getFolderAccess(c,'expired',child)).capabilities).toEqual([]);
       expect((await getFolderAccess(c,'reader',child)).capabilities.sort()).toEqual(['administrer','consulter']);
       expect((await getFolderAccess(c,'delegate',leaf)).capabilities).toEqual(['consulter']);
+      expect((await getFolderAccess(c,'reader',trashFolder)).capabilities).toEqual([]);
       for(const table of tables)expect((await c.query(`SELECT * FROM "${table}" ORDER BY 1,2`)).rows).toEqual(snapshot[table]);
       expect((await c.query('SELECT count(*) FROM session')).rows[0].count).toBe('0');
       const restoredBytes=await restoredStore.getRange(key,0,bytes.length-1);expect(createHash('sha256').update(restoredBytes).digest('hex')).toBe(digest);
