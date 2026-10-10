@@ -114,6 +114,32 @@ describe("classification SQL budget, admission and write-only configuration", ()
     const denied = await analyze(randomUUID(), secondService); expect(denied.status).toBe(409); expect((await denied.json()).error.code).toBe("CLASSIFICATION_BUDGET");
     release(); expect((await first).status).toBe(200); expect(calls).toBe(1);
   });
+  it("enforces the server ceiling against existing high settings, concurrent analysis and explicit checks", async () => {
+    await save({ monthlyLimitMicros: 1000 });
+    const capped = createClassificationService(pool, access, { ...deps, deploymentLimitMicros: 100 });
+    expect((await (await capped.handleClassificationSettings(request())).json()).settings.monthlyLimitMicros).toBe(100);
+    let release!: () => void, entered!: () => void;
+    const inCall = new Promise<void>(resolve => { entered = resolve; });
+    outcome = async () => { entered(); await new Promise<void>(resolve => { release = resolve; }); return { value: { existing: [], created: [] }, actualMicros: 20 }; };
+    const first = analyze(randomUUID(), capped); await inCall;
+    expect((await analyze(randomUUID(), capped)).status).toBe(409);
+    const current = (await (await capped.handleClassificationSettings(request())).json()).settings;
+    expect((await capped.handleClassificationCheck(request({ version: current.version, idempotencyKey: randomUUID() }))).status).toBe(409);
+    release(); await first;
+    expect(calls).toBe(1); expect(checks).toBe(0);
+  });
+  it("refuses a manager raising the deployment ceiling and retains a lower household cap", async () => {
+    await save({ monthlyLimitMicros: 200 });
+    const capped = createClassificationService(pool, access, { ...deps, deploymentLimitMicros: 100 });
+    const current = (await (await capped.handleClassificationSettings(request())).json()).settings;
+    const input = { version: current.version, provider: "synthetic", model: "fixture-v1", monthlyLimitMicros: 101, enabled: true };
+    const denied = await capped.handleClassificationSettings(request(input, "PUT"));
+    expect(denied.status).toBe(400); expect((await denied.json()).error.code).toBe("CLASSIFICATION_LIMIT");
+    expect((await pool.query("SELECT monthly_limit_micros FROM hestia_classification_config")).rows[0].monthly_limit_micros).toBe("200");
+    expect((await capped.handleClassificationSettings(request({ ...input, monthlyLimitMicros: 50 }, "PUT"))).status).toBe(200);
+    expect((await analyze(randomUUID(), capped)).status).toBe(409);
+    expect(calls).toBe(0);
+  });
   it("keeps unknown debt over timeout, rotation, deletion and the month boundary", async () => {
     await save({ monthlyLimitMicros: 100 }); outcome = async () => { throw new Error("Synthetic ambiguous failure"); };
     const key = randomUUID(); expect((await (await analyze(key)).json()).status).toBe("failed");

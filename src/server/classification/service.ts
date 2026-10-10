@@ -20,6 +20,8 @@ const configured = (row: ConfigRow): ClassificationConfiguration => ({ version: 
 
 export function createClassificationService(_pool: Pool, access: Access, deps: ClassificationDependencies) {
   if (![deps.requestTimeoutMs, deps.maxResultBytes, deps.maxSuggestions].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("Invalid classification limits");
+  const deploymentLimit = deps.deploymentLimitMicros === undefined ? 1_000_000_000_000 : micros(deps.deploymentLimitMicros, true);
+  const effectiveLimit = (row: ConfigRow) => Math.min(micros(Number(row.monthly_limit_micros)), deploymentLimit);
   async function config(client: PoolClient) {
     const row = (await client.query<ConfigRow>("SELECT * FROM hestia_classification_config WHERE id=1 FOR UPDATE")).rows[0];
     if (!row) throw disabled(); return row;
@@ -43,7 +45,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
   async function settings(client: PoolClient, row: ConfigRow): Promise<ClassificationSettingsDto> {
     const availableProviders = deps.providers.filter(item => item.mode !== "remote" || deps.allowRemote)
       .filter(item => item.models?.length).map(item => ({ id: item.id, label: item.label ?? item.id, models: [...item.models!] }));
-    return { ...configured(row), currency: "EUR", keyPresent: !!row.credential_sealed, keySetAt: row.key_set_at?.toISOString() ?? null, availableProviders, ...await usage(client, await deps.clock(client)) };
+    return { ...configured(row), monthlyLimitMicros: effectiveLimit(row), currency: "EUR", keyPresent: !!row.credential_sealed, keySetAt: row.key_set_at?.toISOString() ?? null, availableProviders, ...await usage(client, await deps.clock(client)) };
   }
   function provider(row: ConfigRow) {
     const found = deps.providers.find(item => item.id === row.provider);
@@ -61,7 +63,8 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
     if (!quote || quote.currency !== "EUR") throw disabled();
     const maximum = micros(quote.maximumMicros), now = await deps.clock(client), budget = await usage(client, now);
     const committed = BigInt(budget.spentMicros) + BigInt(budget.reservedMicros);
-    if (committed >= BigInt(row.monthly_limit_micros) || committed + BigInt(maximum) > BigInt(row.monthly_limit_micros)) throw new HttpError(409, "CLASSIFICATION_BUDGET", "Le plafond mensuel est atteint. Le classement manuel reste disponible.");
+    const limit = BigInt(effectiveLimit(row));
+    if (committed >= limit || committed + BigInt(maximum) > limit) throw new HttpError(409, "CLASSIFICATION_BUDGET", "Le plafond mensuel est atteint. Le classement manuel reste disponible.");
     const inserted = (await client.query<RequestRow>(`INSERT INTO hestia_classification_request
       (id,actor_id,actor_epoch,idempotency_key,kind,identity_hash,identity,config_version,month_start,reserved_micros,created_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -120,6 +123,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
             row = (await client.query<ConfigRow>("UPDATE hestia_classification_config SET credential_sealed=NULL,key_set_at=NULL,enabled=false,version=version+1 WHERE id=1 RETURNING *")).rows[0];
           } else {
             const name = textField(body.provider, 80), model = textField(body.model, 160), limit = micros(body.monthlyLimitMicros, true);
+            if (limit > deploymentLimit) throw new HttpError(400, "CLASSIFICATION_LIMIT", "Le plafond demandé dépasse le maximum autorisé pour cet environnement.");
             if (!/^[a-z0-9][a-z0-9._-]*$/u.test(name) || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u.test(model) || typeof body.enabled !== "boolean") throw invalid();
             let sealed = row.credential_sealed, setAt = row.key_set_at;
             if (body.apiKey !== undefined) {
