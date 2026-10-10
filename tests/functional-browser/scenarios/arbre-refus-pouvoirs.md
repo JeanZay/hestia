@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -45,26 +45,25 @@
     "Aucun effet métier attendu dans les trois fixtures. Les contrôles UI complètent des tests serveur séparés des refus et de leur atomicité."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md",
+    "docs/adr/0007-folder-move.md",
+    "docs/adr/0008-folder-trash.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:56.816Z",
-    "proposalSha256": "df1ca76a50c27ea57379b8f7e6da71a17d712070ebed8561252196b36499fdb5",
-    "decisionSha256": "9a18bee7d66175dcbc3f033f93fba2501f2ce10ffb1fe422fef6c6a302d255b3",
-    "contentSha256": "d645c54c6770e3f2a27e9b3cece721b99bba53e701e310f7de9f7ceea4f8b8a4",
-    "contractSha256": "792e55c8800ddc7337e500e97bcf2c495219fb65817d2006a1a88fbb43ba2b47"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:43.263Z",
+    "proposalSha256": "f2be3e50559e8f5b22d3bcc8fbce9c186fbe2c6164e3065b098dfd7037c3ea20",
+    "decisionSha256": "a14b9a781e4ede2e214a5edafe5047e0d1a0d8d13c72ca10537598afc9f4b1fb",
+    "contentSha256": "17901a0b509da3cd84e0f8f0da79a775a12bb116b3b8d9cffe8e5ef7c5d88167",
+    "contractSha256": "79f12778788e06ea69158d7cec979944b98902cb575305141f2d32cc9b3759cd"
   }
 }
 ```
 
 # Refuser intégralement les opérations sans pouvoirs suffisants
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -115,8 +114,8 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
+- docs/adr/0006-folder-tree-base.md
+- docs/adr/0007-folder-move.md
+- docs/adr/0008-folder-trash.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

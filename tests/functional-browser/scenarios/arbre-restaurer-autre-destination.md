@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 2,
+  "revision": 3,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -47,26 +47,25 @@
     "Lot et son sous-arbre restaurés dans Destination selon les accès actuels ; révocation antérieure conservée."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md",
+    "docs/adr/0007-folder-move.md",
+    "docs/adr/0008-folder-trash.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:57.076Z",
-    "proposalSha256": "b74f8e3fd524d343c6e876853e7af4b6b4e4080eedffc0030e746ab0d4644cb7",
-    "decisionSha256": "0cfb255cf64943954e8eae36423d314de5777657144d6ccd46a27a0ce252341d",
-    "contentSha256": "e1fc2cc768f17266dc3aa5d9a91c0edcbe847933713af7aa82915cb62cd169c7",
-    "contractSha256": "5ee058fc3cd0b2cc8379367096d118bfedc1e87e21b958fe423f08736c1e6044"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:43.581Z",
+    "proposalSha256": "44ab2af51c8527ecca580f257f88c76951ee7603851b3f08384aba71fbe945c9",
+    "decisionSha256": "ae24971b76464188142c7dfd69cd4536dbe980ff6709589efda82d82b28d120c",
+    "contentSha256": "9331a22da9217a2de84d51111119c6feceeff4a299f6c7134c367e606540461b",
+    "contractSha256": "e2264fde46d2ce1f5a3ecc67d48f773548fd63b284826c0cea71b587c984f24a"
   }
 }
 ```
 
 # Restaurer vers un autre parent accessible sans rétablir un accès révoqué
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -119,8 +118,8 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
+- docs/adr/0006-folder-tree-base.md
+- docs/adr/0007-folder-move.md
+- docs/adr/0008-folder-trash.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

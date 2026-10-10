@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -43,26 +43,23 @@
     "Partage Voir explicite d’Enfant au Destinataire ; ancêtres et frère restent privés."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:56.559Z",
-    "proposalSha256": "0227277a57bc635071877863f6116281a0e530968ea698b9a1662ed7c8eed178",
-    "decisionSha256": "35e1885f5df11735ec46274789f8e29dc98873d4307d996fc07db2003f320ba0",
-    "contentSha256": "09bdd335882c1f77e9d610e734793cf1f6ab2e323b555fba9215c9abc257932b",
-    "contractSha256": "701ff7646fd2ad0dd7ae21a3480bcdb0f62cc538fe7dc07ce2296a5aab36cad2"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:42.939Z",
+    "proposalSha256": "7d3e5b7f8035261d81b3e55821f123aa9a7dcd6a41a7934e413cbbf08b85de2d",
+    "decisionSha256": "2915e88d91608648af0414b7d3104a8ce1e714dd52d2c1dfd7f10c267ae11145",
+    "contentSha256": "e9c82d17fb4d1d7435f638fc0d7641d254b0f90bd8af7feb831560199ec22023",
+    "contractSha256": "d4b7d61b33b24b0696b9cdc9c0f54d35f1cc3014d1df3c1b480213eb031d727e"
   }
 }
 ```
 
 # Accéder à un sous-dossier partagé sans découvrir ses ancêtres privés
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -111,8 +108,6 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
+- docs/adr/0006-folder-tree-base.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

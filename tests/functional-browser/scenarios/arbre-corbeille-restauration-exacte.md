@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 2,
+  "revision": 3,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -48,27 +48,24 @@
     "Sous-arbre restauré sous Lot-restaure ; dossier homonyme témoin conservé ; document précédemment supprimé reste à la corbeille selon son échéance initiale."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md",
+    "docs/adr/0008-folder-trash.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:53.633Z",
-    "proposalSha256": "c90564a06b268c00d5ce0c74c5f62fe447ee528f12ff25bcca1d8ee5586cf47c",
-    "decisionSha256": "757dd2e03783ab7b4084ce60e10c7fbe03f7371d68b6899e70158a5d581cccdf",
-    "contentSha256": "e700de94f0cbe343c7d9a7802281497d40f642089e742809ffcea869c41c2d7b",
-    "contractSha256": "5d3a96161feb2024b6484afa26bab638da15a9cb77997167150ca2018c98127c"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:40.227Z",
+    "proposalSha256": "d285c139219186eb5f2807ada90a997fdc061f1e2b4eb7bcdb3da9d0d739beb7",
+    "decisionSha256": "14b425a013c59ca5053b259b9e4e119f33f84d87ff913c1f7360cac178c98496",
+    "contentSha256": "c8c3555000094998dd143cd54c15271d3cfd81be4805222590b1b862384465f5",
+    "contractSha256": "65f7c31202643ab4d482b3da91a1888ea24dd18582eedce1925dbf3db96caad5"
   }
 }
 ```
 
 # Restaurer uniquement la suppression du dossier, sans écraser un homonyme
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -122,9 +119,7 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json
+- docs/adr/0006-folder-tree-base.md
+- docs/adr/0008-folder-trash.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

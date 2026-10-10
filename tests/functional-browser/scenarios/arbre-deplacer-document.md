@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -44,27 +44,24 @@
     "document.pdf déplacé dans Destination avec les droits de cette destination."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md",
+    "docs/adr/0007-folder-move.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:54.830Z",
-    "proposalSha256": "b119d55e549aed0a01f65425121baa02d6fcfa5290b57321add311d59765fe0a",
-    "decisionSha256": "681d4c4b0f35b51e39e72c195f46a0791ecfff6643d0b988081a6fedf77e6a4d",
-    "contentSha256": "1925264805df7f51d9f80d337e31d9385d5d77769dd1b26e982332d81615eb42",
-    "contractSha256": "08eefb8a148f8e0d2436d6a8c2185a5b575e880440a402d9134f36ad4559d632"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:41.975Z",
+    "proposalSha256": "63982e7ba48239bead68d7954c893e59c55e533d51239b31dd29edf13c8348d0",
+    "decisionSha256": "d6db1063bc58ab652bf2a9eddf1fbf19f2cf860df8393269bd2b13737606d24c",
+    "contentSha256": "44bf9ba5ade54cb6f4b189105a0e40c487da89d6b43a07acf3ac2588b41c2bab",
+    "contractSha256": "4c98c8d0837068f7f33019c624ae1d39240f80a1c191baca8e2d846aa4b89873"
   }
 }
 ```
 
 # Un document déplacé prend les accès du dossier de destination
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -114,9 +111,7 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
+- docs/adr/0006-folder-tree-base.md
+- docs/adr/0007-folder-move.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

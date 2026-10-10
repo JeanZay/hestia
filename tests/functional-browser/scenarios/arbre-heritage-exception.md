@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -45,27 +45,23 @@
     "Exception de restriction d’Alex sur Enfant conservée ; droit de Sam sur Parent revenu à son état initial par les gestes UI."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:56.184Z",
-    "proposalSha256": "652039461f66f2fecf96030748f74292ffc81094df192af72e13b93aab5a62f7",
-    "decisionSha256": "f9f1471c58444642fdc59ee66d4f94c55cdf9ef60b63e7e93c9042103c8fe8de",
-    "contentSha256": "c4427e599204ea1cef30c9c4d900054a55ab007d9f0986623181c122e94af950",
-    "contractSha256": "76f4453a96bcff141986765687d058359867ee751723cadc7f2e022a5e4a8329"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:42.609Z",
+    "proposalSha256": "24948548c397ba90ce96f575a501c4e95aa135e525dfbf8bf3f8b1673a5978d7",
+    "decisionSha256": "9be74dc0b7b01229c89484fbb49659d669386c06bf53596fe5be98f88e7e4179",
+    "contentSha256": "5dfda9554953a3f2726343791ccd00c4e79879a71d65e7931f394adbd9f8546c",
+    "contractSha256": "b2bd44aad20af3866462c4d7a5fa4145d249efdd425929a004baac95745a0c20"
   }
 }
 ```
 
 # Une exception ciblée laisse les autres droits hériter
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -116,9 +112,6 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
+- docs/adr/0006-folder-tree-base.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

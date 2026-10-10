@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -45,26 +45,23 @@
     "N11, N12 et deux Notes sont créés uniquement dans les branches de la fiche ; aucun doublon ni changement des accès demandé."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:54.211Z",
-    "proposalSha256": "983b4c88f78e5125a338377285725b79ed78f8f9a8155c1b8581bb6123c5ca1c",
-    "decisionSha256": "38554b92070d06da929960fafda0939fb240cdae7a9b3908a247acc6a9477045",
-    "contentSha256": "45107409ad2c941cdce209d263a672e14548581f7f2523bb5924bc60b38dd3f7",
-    "contractSha256": "527a3417a346494f9523d76e9a3b6e427ebab9964ef31042fe54c476299ad6ae"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:41.403Z",
+    "proposalSha256": "739fbc5442f7a3fa92812fcd23fd13ce6e5b331b0f28d78b7b9df630ccdc4933",
+    "decisionSha256": "6a52946abe0ab04d20d3153452201121ce80051ddd05d056b04a659ca220b3b2",
+    "contentSha256": "a81154d6c67153fbaf959d422135f6cc7e60149e5288abac6aaf3f32837e5107",
+    "contractSha256": "8957a640d85245a1385f0bb0fe04a9fb502e025ecd49d3cdd860816367b39840"
   }
 }
 ```
 
 # Créer une branche profonde et traiter les homonymes
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -115,8 +112,6 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json
+- docs/adr/0006-folder-tree-base.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.

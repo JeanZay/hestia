@@ -1,7 +1,7 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Arborescence et récupération",
   "actor": "Membres synthétiques de la campagne Dev, désignés par leurs seuls alias dans chaque fiche",
@@ -45,28 +45,24 @@
     "Dossier et sous-arbre déplacés sous Mobilier-deplace ; accès hérités de Destination et exception d’Alex conservée."
   ],
   "references": [
-    "artifacts/refinement/folder-tree-2026-10-08/dossier.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json",
-    "artifacts/refinement/folder-tree-2026-10-08/brief-v1.md"
+    "docs/adr/0006-folder-tree-base.md",
+    "docs/adr/0007-folder-move.md"
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-09T17:03:55.619Z",
-    "proposalSha256": "dc27966d64732f459850292b7969e9ac0d41489938b61299ea8551440a5e6aed",
-    "decisionSha256": "a4e6914c9984de2c363f7891530dc30033461e51a95b9a6ba24275a175b8482f",
-    "contentSha256": "f28331e7137277ca544a3e7c25d58e581a2ffa9d156ba71bd8e902385292b03e",
-    "contractSha256": "3489f15df03b57f8fe1cb060a7e641882adb0f12ede9b69779a5522fd13a1830"
+    "kind": "editorial",
+    "actor": "recipe_completion_review",
+    "approvedAt": "2026-10-10T09:42:42.290Z",
+    "proposalSha256": "a536ce0a374fafff602ef203cdaf9297825e3f84056c28fbfac8f6cc9541b3a8",
+    "decisionSha256": "22bf69fa19b0adc5ed90de42c46f3c65f122dd887415e7eda1d2946e02602392",
+    "contentSha256": "e6eb29e45c74360ab3607ac208aa1df8a5f6c4799376f4f4d69596a05428e1e4",
+    "contractSha256": "be220687cfd4947d6e2777dafa555e406c5eaadadb52d3074bee9db61ee18664"
   }
 }
 ```
 
 # Déplacer un dossier : conflit de nom, accès annoncés et exceptions conservées
 
-Proposition non approuvée et non exécutée. La valeur technique status=active indique une fiche non retirée ; elle ne vaut pas admission au catalogue.
+L’admission au catalogue est attestée par les métadonnées d’approbation. Elle ne prouve aucune exécution ; chaque nouvelle révision doit être qualifiée sur son déploiement exact.
 
 ## Situation et objectif
 
@@ -117,10 +113,7 @@ La rétention exacte et les bornes serveur de sept jours sont à contrôler par 
 
 ## Sources
 
-- artifacts/refinement/folder-tree-2026-10-08/dossier.json
-- artifacts/refinement/folder-tree-2026-10-08/round-1-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-2-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-3-answer.json
-- artifacts/refinement/folder-tree-2026-10-08/round-4-answer.json
+- docs/adr/0006-folder-tree-base.md
+- docs/adr/0007-folder-move.md
 
-Brief candidat v1 : artifacts/refinement/folder-tree-2026-10-08/brief-v1.md ; non approuvé. Les précisions nouvelles proposées dans le brief restent à valider ; cette fiche candidate ne les transforme pas en décisions.
+Ces références publiques documentent les règles attendues. Les sources détaillées des accords restent privées ; cette correction ne change ni le parcours approuvé ni ses assertions et ne transfère aucun résultat historique.
