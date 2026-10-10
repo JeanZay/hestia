@@ -1,12 +1,11 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 2,
+  "revision": 3,
   "status": "active",
   "theme": "Capture et classement",
   "actor": "Membres synthétiques autorisés, désignés par alias ; aucune création de compte dans la fiche",
   "references": [
-    "artifacts/refinement/capture-classification-2026-10-10/execution-ready-v5/refinement.json",
     "docs/adr/0009-capture-classification.md",
     "docs/browser-recipe.md"
   ],
@@ -52,20 +51,20 @@
     "Une analyse externe facturable seulement après future autorisation, un chemin de dossiers hérités et un document synthétique durables."
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-10T21:25:00.000Z",
-    "proposalSha256": "c4d55c84b730cb8dfaaa31a70a318bbc2e767ed40ea8dd58ae514140ac33497a",
-    "decisionSha256": "a34b834ea7dff3e10e164af9636fa42d20257dc55482be596982e05093344e0b",
-    "contentSha256": "fcdf7c819a0e2cb5dd9b5e3b072e563e211375d8aa696bd2f853b4275879c655",
-    "contractSha256": "ceb7dbf873ea8802a024bbdc8f0c6ee0184dcee5929bcbb36f8613a305a4d434"
+    "kind": "editorial",
+    "actor": "haiku_candidate_review",
+    "approvedAt": "2026-10-10T22:50:12.473Z",
+    "proposalSha256": "0e4172abda3006a28668aabdc56ed5338f8985d500b116694f3da2c369cdd691",
+    "decisionSha256": "9d7ccf32984e1b7d063367546faf29d4560c025e3a9932eca40a6f4783d4e3fa",
+    "contentSha256": "58630edd4fd37cf952572e0d6d5e47d1befd128998328e7b2ee7d248c3f0661d",
+    "contractSha256": "2d3cd3c73170dbae42c4a7fd3301b33fbbc4ef4b02a5670678bf48c5a46f448e"
   }
 }
 ```
 
 # Choisir une suggestion puis confirmer un nouveau chemin sans automatisme
 
-Proposition v2 non approuvée, non admise et non exécutée (NOT_RUN).
+Fiche admise ; révision éditoriale des références publiques. Aucun parcours exécuté ni résultat antérieur repris (NOT_RUN).
 
 Critères : ANALYZE, DESTINATION, RIGHTS, ADJUST.
 

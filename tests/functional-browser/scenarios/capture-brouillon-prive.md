@@ -1,12 +1,11 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Capture et classement",
   "actor": "Membres synthétiques autorisés, désignés par alias ; aucune création de compte dans la fiche",
   "references": [
-    "artifacts/refinement/capture-classification-2026-10-10/execution-ready-v5/refinement.json",
     "docs/adr/0009-capture-classification.md",
     "docs/browser-recipe.md"
   ],
@@ -49,20 +48,20 @@
     "Brouillon non expiré conservé sans finalisation ; sessions authentifiées utilisées puis fermées au terme de la campagne."
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-10T21:25:00.000Z",
-    "proposalSha256": "67bd243c0c60023e990c5decf1425b0887b3087b7b9640915a8aec654dc74ab9",
-    "decisionSha256": "57022bb7fd7470d7c0635d0a9a94c3f27da09a529576b62cea9698d4db539b68",
-    "contentSha256": "34589c796393572c365c881cde67841a45fb59cb50e471041eb2cbe4e58db5de",
-    "contractSha256": "1589aacbff497fabd1cade16a926fdfabd1ad696d286d5477b3179be5bc6aff8"
+    "kind": "editorial",
+    "actor": "haiku_candidate_review",
+    "approvedAt": "2026-10-10T22:50:12.717Z",
+    "proposalSha256": "4fb4135e8451ea4aa73b8aacfa72f20de9c3e4c843e93ccdce4f589b631cd82f",
+    "decisionSha256": "88d826cf4bb3c1dfc2b793c273d2926c88090cae8883260c6e0d0988cfc80b1a",
+    "contentSha256": "d0b832f74f56491b37ed3b28a622abbc3c2c80bf327f6180ec9a2a0cd1e9bc41",
+    "contractSha256": "535383e5486c69865e5fa75a8dde8f0eb7019ebad69dc87e3f7a57b0ac03f994"
   }
 }
 ```
 
 # Reprendre les pages confirmées sans exposer le brouillon à un autre membre
 
-Proposition v1 non approuvée, non admise et non exécutée (NOT_RUN).
+Fiche admise ; révision éditoriale des références publiques. Aucun parcours exécuté ni résultat antérieur repris (NOT_RUN).
 
 Critères : DRAFT, RETENTION, RIGHTS.
 

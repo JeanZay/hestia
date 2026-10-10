@@ -1,12 +1,11 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Capture et classement",
   "actor": "Membres synthétiques autorisés, désignés par alias ; aucune création de compte dans la fiche",
   "references": [
-    "artifacts/refinement/capture-classification-2026-10-10/execution-ready-v5/refinement.json",
     "docs/adr/0009-capture-classification.md",
     "docs/browser-recipe.md"
   ],
@@ -50,20 +49,20 @@
     "Un document PDF synthétique durable, un brouillon finalisé et des temporaires à purger."
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-10T21:25:00.000Z",
-    "proposalSha256": "718d12481150060566ffa8635058ce0be5ffed6663094f7e5bb48076ea9e9de7",
-    "decisionSha256": "6ba351b5356888ee19cb1537d88b70728fb7b58e810a33eaee003762f39c9b7e",
-    "contentSha256": "4ab8143abfcbf716f89b4558c89cda3a5225822df191fb1402a87daff43534cd",
-    "contractSha256": "569bb625ec9ab5d9deb35020603e5c3eea0c027dde375d53f239bdbaef07700b"
+    "kind": "editorial",
+    "actor": "haiku_candidate_review",
+    "approvedAt": "2026-10-10T22:50:13.394Z",
+    "proposalSha256": "05fe0d186f00ca445e6981710d0842e10ef8f8489312747ca5d089b07c9eb382",
+    "decisionSha256": "027129713bf28c5009e80a829f1a824b99b99953e351ac0d3cd6f6f608b9c901",
+    "contentSha256": "9ccd3cca20d23c17afc3c74a0c548068e59ea4e7658a485639168fb6177ea817",
+    "contractSha256": "eae08fd147500adb9b9075001cf92880cc816980449289a0773478a0c454c916"
   }
 }
 ```
 
 # Ajuster des pages sauvegardées et produire le PDF retenu
 
-Proposition v1 non approuvée, non admise et non exécutée (NOT_RUN).
+Fiche admise ; révision éditoriale des références publiques. Aucun parcours exécuté ni résultat antérieur repris (NOT_RUN).
 
 Critères : ADJUST, CAPTURE, IMMUTABLE, DESIGN.
 

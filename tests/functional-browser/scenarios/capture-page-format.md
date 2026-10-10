@@ -1,12 +1,11 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Capture et classement",
   "actor": "Membres synthétiques autorisés, désignés par alias ; aucune création de compte dans la fiche",
   "references": [
-    "artifacts/refinement/capture-classification-2026-10-10/execution-ready-v5/refinement.json",
     "docs/adr/0009-capture-classification.md",
     "docs/browser-recipe.md"
   ],
@@ -50,20 +49,20 @@
     "Deux documents synthétiques durables et leurs originaux ; brouillons finalisés et temporaires soumis au nettoyage normal."
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-10T21:25:00.000Z",
-    "proposalSha256": "d15654916052995d9e38b588aad3714fd881a8094fa6bdbbfddc6153b29eedfe",
-    "decisionSha256": "f784d1ece55509764b8f4e1d8fc807613baf5cee4dce7d7b62677a2e8dbd73ac",
-    "contentSha256": "e78c4067801afd15bf96db2c3315e13fe4587efc169d7db955bcb642f12f0bbc",
-    "contractSha256": "2f835e3c53ecfbb34fb420129176572e5ca7c0a10fe5d254738c25fde629b73e"
+    "kind": "editorial",
+    "actor": "haiku_candidate_review",
+    "approvedAt": "2026-10-10T22:50:13.616Z",
+    "proposalSha256": "29d8b40e347d7076e1350286681b7ad3fe5c3fc872fee274444ff3602d6e10ca",
+    "decisionSha256": "1476f5d077c8ca48f79c9ee98a071b6d10701088ed74a4cd4d5c36a637f199d0",
+    "contentSha256": "f13ff414d054b4066388c86ee7a6458eb5e6bc5a7989392cada508a39a5a4ccc",
+    "contractSha256": "eb0d723bdf55411bf3c60adad40cd4e89f20f135ab37a7eef8e60076d94a186a"
   }
 }
 ```
 
 # Finaliser une page sauvegardée en image puis en PDF
 
-Proposition v1 non approuvée, non admise et non exécutée (NOT_RUN).
+Fiche admise ; révision éditoriale des références publiques. Aucun parcours exécuté ni résultat antérieur repris (NOT_RUN).
 
 Critères : CAPTURE, IMMUTABLE, DESTINATION, RIGHTS.
 

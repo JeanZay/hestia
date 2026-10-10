@@ -1,12 +1,11 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "status": "active",
   "theme": "Capture et classement",
   "actor": "Membres synthétiques autorisés, désignés par alias ; aucune création de compte dans la fiche",
   "references": [
-    "artifacts/refinement/capture-classification-2026-10-10/execution-ready-v5/refinement.json",
     "docs/adr/0009-capture-classification.md",
     "docs/browser-recipe.md"
   ],
@@ -50,20 +49,20 @@
     "Un original PDF et ses métadonnées durables ; copie transitoire d’import traitée par le cycle normal du produit."
   ],
   "approval": {
-    "kind": "human",
-    "actor": "Amaury",
-    "approvedAt": "2026-10-10T21:25:00.000Z",
-    "proposalSha256": "e6007b7783dc14f182d97b017e1509f1a26d867caec75af67bc46d47c3f7cac9",
-    "decisionSha256": "35ced10bf8d4d762a1ea87f54d5dc93b81321368665ddb3f1373c169cb9e43fd",
-    "contentSha256": "4dff8fc7eb3667ed1f7889c0e41e1f9f5c3e4e16f59eba93f8e0ec69d47f3248",
-    "contractSha256": "940766374c90a7e0f385f32694921987259863420eb6d802d6da5a1bd1bd4310"
+    "kind": "editorial",
+    "actor": "haiku_candidate_review",
+    "approvedAt": "2026-10-10T22:50:13.162Z",
+    "proposalSha256": "d70a82e518ce1104d00ca31f8dc0fc7bc5f46e535bceb676a66c5488a97102ba",
+    "decisionSha256": "4c04fc9257102e29697d6963c1d60602bdec021b2e6e3444603a327bff48f435",
+    "contentSha256": "b2f38a553fda6feb72f822858a6cb05ec59ab0b39b6f0cde24f92b3ea564231f",
+    "contractSha256": "bd88faa2c01b5bd7a4b2c87e84598339b2d3d782349960d4cb5264bf2599789b"
   }
 }
 ```
 
 # Importer un nouveau fichier intact et le classer malgré une IA indisponible
 
-Proposition v1 non approuvée, non admise et non exécutée (NOT_RUN).
+Fiche admise ; révision éditoriale des références publiques. Aucun parcours exécuté ni résultat antérieur repris (NOT_RUN).
 
 Critères : IMMUTABLE, ANALYZE, DESTINATION, RIGHTS.
 
