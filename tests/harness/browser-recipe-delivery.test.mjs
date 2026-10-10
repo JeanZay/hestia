@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseScenario } from '../../scripts/lib/browser-recipe.mjs';
+import { discoverRecipeRepository, parseScenario } from '../../scripts/lib/browser-recipe.mjs';
 import { recipeDeliveryChoiceDigest } from '../../scripts/lib/browser-recipe-delivery.mjs';
 import { buildRecipeDeliveryFixture, write, load, time, scenario, rescope, check, choose, admit, campaign, override } from './fixtures/browser-recipe-delivery-synthetic.mjs';
 
@@ -15,6 +16,24 @@ function fixture(t, options = {}) {
   write(root, 'README.md', 'Synthetic behavior.');
   for (const args of [['add', '.'], ['commit', '-m', 'synthetic']]) execFileSync('git', args, { cwd: root, stdio: 'pipe' });
   return buildRecipeDeliveryFixture(root, options);
+}
+
+function assertCapturedCampaign(f, c, result) {
+  const folder = `artifacts/functional-browser/campaigns/${c.id}`;
+  const report = load(f.root, `${folder}/finish.json`);
+  const expected = [
+    `${folder}/attempts/${report.selection[0].history[0].id}/result.json`,
+    `${folder}/finish.json`,
+    'artifacts/impact-review.txt',
+  ];
+  // A primary-root reference can be absolute on Windows even for the same
+  // checkout (drive casing or an expanded short path). Compare the actual file.
+  for (const relative of expected) {
+    const absolute = realpathSync.native(path.resolve(f.root, relative));
+    const captured = result.references.filter(item => realpathSync.native(path.resolve(f.root, item.path)) === absolute);
+    assert.equal(captured.length, 1, `Expected exactly one captured reference for ${relative}`);
+    assert.equal(captured[0].sha256, createHash('sha256').update(readFileSync(absolute)).digest('hex'), `Captured bytes differ for ${relative}`);
+  }
 }
 
 test('silence requires choice and no recipe is implicitly admitted or run', t => {
@@ -57,8 +76,21 @@ test('changed source hashes, invalid actor, absent quote and future decision do 
 test('actual exact final PASS permits manual handoff and captures supporting files', t => {
   const f = fixture(t); choose(f); admit(f); const c = campaign(f); const result = check(f);
   assert.equal(result.state, 'READY_FOR_MANUAL', result.diagnostics.join(',')); assert.equal(result.selection[0].outcome, 'PASS');
-  assert.ok(result.references.some(item => item.path.endsWith('/result.json'))); assert.ok(result.references.some(item => item.path === 'artifacts/impact-review.txt'));
-  assert.ok(result.references.some(item => item.path === `artifacts/functional-browser/campaigns/${c.id}/finish.json`));
+  assertCapturedCampaign(f, c, result);
+});
+
+test('Windows drive-case aliases retain exact absolute campaign evidence', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t); choose(f); admit(f); const c = campaign(f);
+  const primary = discoverRecipeRepository(f.root).primaryRoot;
+  assert.match(primary, /^[A-Za-z]:/);
+  const drive = primary[0] === primary[0].toUpperCase() ? primary[0].toLowerCase() : primary[0].toUpperCase();
+  const aliased = { ...f, root: `${drive}${primary.slice(1)}` };
+  assert.notEqual(path.resolve(aliased.root), path.resolve(primary));
+  assert.equal(realpathSync.native(aliased.root), realpathSync.native(primary));
+  const result = check(aliased);
+  assert.equal(result.state, 'READY_FOR_MANUAL', result.diagnostics.join(',')); assert.equal(result.selection[0].outcome, 'PASS');
+  assert.ok(result.references.some(item => path.isAbsolute(item.path) && path.basename(item.path) === 'result.json'));
+  assertCapturedCampaign(aliased, c, result);
 });
 test('FAIL BLOCKED NOT_RUN and interrupted campaigns require a new explicit decision', t => {
   for (const outcome of ['FAIL', 'BLOCKED', 'NOT_RUN', 'INTERRUPTED']) {
