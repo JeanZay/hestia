@@ -39,7 +39,7 @@ Selon la décision EXP-07 du 13 septembre 2026, Claude Design réalise la concep
 | ID | Décision validée |
 | --- | --- |
 | DOC-01 | Une inbox accepte les documents en vrac. Les canaux cibles sont le dépôt de fichier, la photo ou le scan mobile, puis les pièces jointes reçues par une adresse e-mail dédiée. |
-| DOC-02 | L'original est conservé intact. L'OCR, la lecture et l'extraction portent sur une copie. Le classement organise des références et métadonnées ; il ne réécrit jamais les octets de l'original. |
+| DOC-02 | L'original est conservé intact. Pour un import, il s'agit des octets du fichier reçu. Pour une capture caméra, il s'agit de l'image ou du PDF final explicitement validé après ajustements ; les photos sources sont temporaires et supprimées après conservation durable du final. L'OCR, la lecture et l'extraction portent sur une copie. Le classement organise des références et métadonnées ; il ne réécrit jamais les octets de l'original. |
 | DOC-03 | Chaque document conserve un identifiant, sa provenance, sa date d'ajout, son type, son intégrité et le lien vers son original. Une nouvelle version est un nouvel objet relié à l'ancien. |
 | DOC-04 | Le classement propose une arborescence logique. L'extraction produit les informations importantes, un résumé et une fiche Markdown contenant un lien vers l'original. Les faits précis sont structurés dans SQL selon DATA-02. |
 | DOC-05 | Si un classement ou une valeur est incertain, une file légère présente la proposition, l'extrait source et l'action de validation ou correction. Une proposition non validée ne devient pas un fait confirmé. |

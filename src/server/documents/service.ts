@@ -6,6 +6,7 @@ import { validateOriginal } from "../formats";
 import { getFolderAccess, getFolderAccessEvaluator, loadFolderAccessGraph } from "../permissions/service";
 import {evaluateTreeAccess} from '../permissions/tree';
 import {trashPolicyGraph} from './folder-trash';
+import { createStorageBudget, type StorageBudget } from '../storage/quota';
 
 export const CHUNK_SIZE = 2 * 1024 * 1024;
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -15,6 +16,7 @@ export type DocumentDependencies = {
   limits?: { memberBytes?: number; globalBytes?: number; fileBytes?: number };
   /** Server clock injection for expiry tests; never accepted from an HTTP client. */
   now?: () => Date;
+  budget?: StorageBudget;
 };
 type Upload = {
   id: string; actor_id: string; folder_id: string; owner_id: string; identity_sha: string;
@@ -48,6 +50,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   const memberBytes = dependencies?.limits?.memberBytes ?? 1024 ** 3;
   const globalBytes = dependencies?.limits?.globalBytes ?? 4 * 1024 ** 3;
   const fileBytes = dependencies?.limits?.fileBytes ?? MAX_FILE_SIZE;
+  const storageBudget = dependencies?.budget ?? createStorageBudget(memberBytes, globalBytes);
   for (const n of [memberBytes, globalBytes, fileBytes]) if (!Number.isSafeInteger(n) || n < 1) throw new Error("Invalid document limits");
   if (fileBytes > MAX_FILE_SIZE) throw new Error("File limit exceeds bounded protocol");
   const store = () => { if (!dependencies?.store) throw new Error("Object storage is not configured"); return dependencies.store; };
@@ -55,7 +58,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   async function clock(client: PoolClient) {
     return dependencies?.now?.() ?? (await client.query<{ now: Date }>("SELECT clock_timestamp() AS now")).rows[0].now;
   }
-  async function budget(client: PoolClient) { await client.query("SELECT id FROM hestia_storage_budget WHERE id=1 FOR UPDATE"); }
+  async function budget(client: PoolClient) { await storageBudget.lock(client); }
   // Grant rows are locked through the effect. Revocation/expiry is re-evaluated
   // after every remote I/O, never inferred from the initial browser request.
   async function permissions(client: PoolClient, actor: Actor, folderId: string, required: string[]) {
@@ -64,13 +67,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     return { capabilities, ownerId };
   }
   async function quota(client: PoolClient, owner: string, additional: number) {
-    const result = await client.query(`SELECT COALESCE(sum(size),0)::text AS total,
-      COALESCE(sum(size) FILTER(WHERE owner_id=$1),0)::text AS member FROM (
-        SELECT d.owner_id,d.size FROM hestia_document d JOIN hestia_upload_object o ON o.object_key=d.object_key WHERE o.deleted_at IS NULL
-        UNION ALL SELECT owner_id,size FROM hestia_upload WHERE status<>'completed' AND NOT reservation_released
-      ) all_bytes`, [owner]);
-    if (Number(result.rows[0].member)+additional > memberBytes || Number(result.rows[0].total)+additional > globalBytes)
-      throw new HttpError(413, "QUOTA_EXCEEDED", "L’espace disponible est insuffisant pour ce fichier.");
+    await storageBudget.assertAdditional(client, [{ ownerId: owner, bytes: additional }]);
   }
   async function upload(client: PoolClient, actor: Actor, id: string, requireDeposit = true) {
     const row = (await client.query<Upload>("SELECT * FROM hestia_upload WHERE id=$1 AND actor_id=$2 FOR UPDATE", [id,actor.id])).rows[0];

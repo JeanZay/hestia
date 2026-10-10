@@ -25,6 +25,9 @@ test("suppression groupée puis restauration entière au clavier sans reprendre 
   await page.screenshot({path:test.info().outputPath("folder-trash-confirm.png"),fullPage:true});await dialog.getByRole("button",{name:"Mettre à la corbeille",exact:true}).focus();await page.keyboard.press("Enter");await expect(page.getByRole("heading",{name:"Corbeille",exact:true})).toBeVisible();
   const row=page.getByRole("listitem").filter({has:page.getByText(source.name,{exact:true})});await expect(row.getByText(/Dossier et son contenu/)).toBeVisible();await expect(row.getByText(/sous-dossier/)).toHaveCount(0);
   const panel=await restore(page,source);await expect(panel.getByText(/Sera restauré.*1 sous-dossier/)).toBeVisible();await page.screenshot({path:test.info().outputPath("folder-restore-review.png"),fullPage:true});await panel.getByRole("button",{name:"Restaurer ici",exact:true}).click();
+  // On mobile the list is hidden while the restore panel is open. Its absent
+  // row therefore cannot establish that the restore transaction has finished.
+  await expect(panel).toHaveCount(0);
   await expect(page.getByRole("button",{name:`Restaurer « ${source.name} »`,exact:true})).toHaveCount(0);
   const listing=await(await page.request.get("/api/hestia/folders")).json();expect(listing.folders.some((f:Folder)=>f.id===child.id)).toBe(true);expect(listing.folders.some((f:Folder)=>f.id===old.id)).toBe(false);
   const after=await(await page.request.get("/api/hestia/trash")).json();expect(after.groups.find((g:{id:string})=>g.id===oldGroup.id).restorableUntil).toBe(oldGroup.restorableUntil);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
