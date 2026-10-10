@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Choix de recette avant remise manuelle",
+  "$ref": "#/$defs/input",
+  "$defs": {
+    "text": {"type":"string","minLength":1,"maxLength":20000,"pattern":"\\S"},
+    "digest": {"type":"string","pattern":"^[a-f0-9]{64}$"},
+    "id": {"type":"string","pattern":"^[a-z0-9][a-z0-9-]{0,79}$"},
+    "date": {"type":"string","format":"date-time"},
+    "file": {"type":"object","additionalProperties":false,"required":["path","sha256"],"properties":{"path":{"$ref":"#/$defs/text"},"sha256":{"$ref":"#/$defs/digest"}}},
+    "nullableFile": {"anyOf":[{"type":"null"},{"$ref":"#/$defs/file"}]},
+    "deployment": {
+      "type":"object","additionalProperties":false,"required":["environment","id","commit","url","observedAt","source"],
+      "properties":{"environment":{"const":"Dev"},"id":{"$ref":"#/$defs/text"},"commit":{"type":"string","pattern":"^[a-f0-9]{40}(?:[a-f0-9]{24})?$"},"url":{"$ref":"#/$defs/text"},"observedAt":{"$ref":"#/$defs/date"},"source":{"$ref":"#/$defs/file"}}
+    },
+    "input": {
+      "type":"object","additionalProperties":false,"required":["schemaVersion","kind","recordedAtUtc","deployment","qa","scope","decision","campaigns","manualOverride"],
+      "properties":{
+        "schemaVersion":{"const":1},"kind":{"const":"browser-recipe-delivery"},"recordedAtUtc":{"$ref":"#/$defs/date"},"deployment":{"$ref":"#/$defs/deployment"},
+        "qa":{"type":"object","additionalProperties":false,"required":["status","completedAt","source"],"properties":{"status":{"enum":["PASS","FAIL","BLOCKED","NOT_RUN"]},"completedAt":{"$ref":"#/$defs/date"},"source":{"$ref":"#/$defs/file"}}},
+        "scope":{"$ref":"#/$defs/file"},"decision":{"$ref":"#/$defs/nullableFile"},"manualOverride":{"$ref":"#/$defs/nullableFile"},
+        "campaigns":{"type":"array","maxItems":100,"items":{"type":"object","additionalProperties":false,"required":["id","report"],"properties":{"id":{"$ref":"#/$defs/id"},"report":{"$ref":"#/$defs/file"},"observedAt":{"$ref":"#/$defs/date"}}}}
+      }
+    },
+    "scope": {
+      "type":"object","additionalProperties":false,"required":["schemaVersion","kind","recordedAtUtc","authors","baseline","proposals","impacts","review"],
+      "properties":{
+        "schemaVersion":{"const":1},"kind":{"const":"browser-recipe-delivery-scope"},"recordedAtUtc":{"$ref":"#/$defs/date"},
+        "authors":{"type":"array","minItems":1,"maxItems":50,"items":{"$ref":"#/$defs/text"}},
+        "baseline":{"type":"array","maxItems":500,"items":{"type":"object","additionalProperties":false,"required":["id","revision","sha256"],"properties":{"id":{"$ref":"#/$defs/id"},"revision":{"type":"integer"},"sha256":{"$ref":"#/$defs/digest"}}}},
+        "proposals":{"type":"array","maxItems":500,"items":{"$ref":"#/$defs/file"}},"impacts":{"type":"array","minItems":1,"maxItems":100,"items":{"$ref":"#/$defs/file"}},"review":{"$ref":"#/$defs/file"}
+      }
+    },
+    "review": {
+      "type":"object","additionalProperties":false,"required":["scopeDigest","status","reviewer","cleanContext","recordedAtUtc","evidence"],
+      "properties":{"scopeDigest":{"$ref":"#/$defs/digest"},"status":{"enum":["PASS","CHANGES_REQUIRED","BLOCKED","NOT_PERFORMED"]},"reviewer":{"$ref":"#/$defs/text"},"cleanContext":{"const":true},"recordedAtUtc":{"$ref":"#/$defs/date"},"evidence":{"$ref":"#/$defs/file"}}
+    },
+    "choice": {
+      "type":"object","additionalProperties":false,"required":["schemaVersion","kind","mode","scopeDigest","actor","decidedAt","source","quote"],
+      "properties":{"schemaVersion":{"const":1},"kind":{"const":"browser-recipe-delivery-choice"},"mode":{"enum":["manual","browser"]},"scopeDigest":{"$ref":"#/$defs/digest"},"actor":{"const":"Amaury"},"decidedAt":{"$ref":"#/$defs/date"},"source":{"$ref":"#/$defs/file"},"quote":{"$ref":"#/$defs/text"}}
+    },
+    "override": {
+      "type":"object","additionalProperties":false,"required":["schemaVersion","kind","mode","scopeDigest","actor","decidedAt","source","quote","reports","reservations"],
+      "properties":{"schemaVersion":{"const":1},"kind":{"const":"browser-recipe-delivery-choice"},"mode":{"const":"manual"},"scopeDigest":{"$ref":"#/$defs/digest"},"actor":{"const":"Amaury"},"decidedAt":{"$ref":"#/$defs/date"},"source":{"$ref":"#/$defs/file"},"quote":{"$ref":"#/$defs/text"},"reports":{"type":"array","minItems":1,"maxItems":100,"items":{"$ref":"#/$defs/file"}},"reservations":{"type":"array","minItems":1,"maxItems":500,"items":{"$ref":"#/$defs/text"}}}
+    }
+  }
+}

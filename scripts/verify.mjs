@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstatSync } from 'node:fs';
-import { beginRun, containedPath } from './lib/verification-evidence.mjs';
+import { beginRun, containedPath, recipeVerificationInputs } from './lib/verification-evidence.mjs';
 
 const root = process.cwd();
 const argumentsList = process.argv.slice(2);
@@ -46,6 +46,7 @@ try {
   const { runVerification } = await import('./lib/verification-run.mjs');
   const { closureInputs } = await import('./lib/closure-state.mjs');
   const { checkRecipeImpact } = await import('./lib/browser-recipe-impact.mjs');
+  const { checkRecipeDelivery } = await import('./lib/browser-recipe-delivery.mjs');
   const closureState = () => closureInputs(root);
   if (process.env.GITHUB_ACTIONS === 'true' && !closureState().present) {
     Object.assign(steps.find(step => step.name === 'closure'), { required: false, skipReason: 'clone-registry-absent-in-ci' });
@@ -64,6 +65,11 @@ try {
         if (!referencedFiles) throw new Error('checkpoint-reader-unavailable');
         const active = readJsonSafe(containedPath(root, checkpoint));
         inputs.push(checkpoint, ...referencedFiles(active));
+        if (active.recipeDelivery) {
+          const delivery = checkRecipeDelivery({ root, inputPath: active.recipeDelivery.path });
+          if (delivery.state === 'BLOCKED') throw new Error('recipe-delivery-inputs-unavailable');
+          inputs.push(...recipeVerificationInputs(root, delivery.references));
+        }
       }
       if (recipeImpact) inputs.push(...checkRecipeImpact({ root, impactPath: recipeImpact }).references.map(item => item.path));
       return [...new Set(inputs)];

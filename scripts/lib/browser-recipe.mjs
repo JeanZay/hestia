@@ -79,6 +79,12 @@ function bodyIdentity(metadata, markdown) { const copy = { ...metadata }; delete
 function contractIdentity(metadata) {
   const copy = { ...metadata }; for (const key of ['title', 'revision', 'approval']) delete copy[key]; return hash(canonical(copy));
 }
+// Keep the historical approval hash intact, including references. Only the
+// editorial comparison may change supporting sources; their validity and the
+// exact before/after diff still require independent review during promotion.
+function editorialBusinessIdentity(metadata) {
+  const copy = { ...metadata }; delete copy.references; return contractIdentity(copy);
+}
 
 /** JSON metadata contains the complete business contract; prose must remain consistent with it. */
 export function parseScenario(text, { root, requireApproval = true } = {}) {
@@ -168,7 +174,7 @@ export function promote({ root, input }) {
     const existing = existsSync(containedPath(repo.currentRoot, target, true)) ? parseScenario(bytes(repo.currentRoot, target).toString('utf8'), { root: repo.currentRoot }) : null;
     if (existing) need(p.scenario.metadata.revision > existing.metadata.revision, 'revision-not-increased');
     if (decision.kind === 'editorial') {
-      need(existing && existing.contractSha256 === p.scenario.contractSha256, 'editorial-business-change');
+      need(existing && editorialBusinessIdentity(existing.metadata) === editorialBusinessIdentity(p.scenario.metadata), 'editorial-business-change');
       const reviewPath = `${STORE}/decisions/${input.decisionId}/review.json`;
       const diffPath = `${STORE}/decisions/${input.decisionId}/diff.txt`;
       const review = read(repo.primaryRoot, reviewPath);

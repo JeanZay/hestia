@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { computeCoverageDigest, computeLocalHandoffDigest, inspectCheckpoint, ownershipConflicts, referencedFiles, validateLifecycle } from '../../scripts/lifecycle-check.mjs';
 import { computeDigests, validateRefinement } from '../../scripts/refinement-check.mjs';
 import { handoff, ready, refreshMutations, signBrief } from './fixtures/refinement-synthetic.mjs';
+import { buildRecipeDeliveryFixture, choose as chooseRecipe, save as saveRecipe } from './fixtures/browser-recipe-delivery-synthetic.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const entry = path.join(root, 'scripts/lifecycle-check.mjs');
@@ -101,6 +102,52 @@ function withFixture(run) {
 
 function check(fixture, action = 'execute') { return validateLifecycle(fixture.checkpoint, { root: fixture.directory, now, action }); }
 function has(result, code) { assert.ok(result.diagnostics.some((item) => item.code === code), JSON.stringify(result.diagnostics)); }
+
+test('legacy checkpoints remain resumable but do not authorize a manual recipe handoff', () => withFixture((fixture) => {
+  assert.equal(check(fixture, 'resume').valid, true);
+  const result = check(fixture, 'manual-recipe');
+  assert.equal(result.valid, false);
+  assert.equal(result.manualRecipeReadiness, false);
+  has(result, 'recipe-choice-before-manual');
+}));
+
+test('a manual next action cannot bypass a missing or invalid recipe choice dossier', () => withFixture((fixture) => {
+  fixture.checkpoint.nextAction.kind = 'manual-recipe';
+  has(check(fixture, 'resume'), 'recipe-delivery-required');
+  fixture.checkpoint.recipeDelivery = put(fixture.directory, 'artifacts/continuity/delivery.json', { status: 'PASS' });
+  const result = check(fixture, 'resume');
+  assert.equal(result.valid, false);
+  has(result, 'recipe-delivery-blocked');
+  assert.ok(referencedFiles(fixture.checkpoint).includes(fixture.checkpoint.recipeDelivery.path));
+}));
+
+test('recipe choice waits resumably, direct manual passes without admission, and changed Dev invalidates handoff', () => withFixture((fixture) => {
+  const recipe = buildRecipeDeliveryFixture(fixture.directory);
+  // The recipe fixture adds its own synthetic sources; this test exercises
+  // handoff readiness, independently of the product source manifest.
+  fixture.checkpoint.candidate = null;
+  fixture.checkpoint.nextAction.kind = 'recipe-choice';
+  const bind = () => {
+    saveRecipe(recipe);
+    fixture.checkpoint.recipeDelivery = put(fixture.directory, 'artifacts/continuity/recipe-delivery.json', recipe.input);
+  };
+  const inspect = (action) => validateLifecycle(fixture.checkpoint, { root: fixture.directory, now, action });
+  bind();
+  assert.equal(inspect('resume').valid, true);
+  assert.equal(inspect('manual-recipe').valid, false);
+  assert.equal(inspect('resume').recipeDelivery.state, 'CHOICE_REQUIRED');
+  chooseRecipe(recipe, 'manual'); bind();
+  fixture.checkpoint.nextAction.kind = 'manual-recipe';
+  const ready = inspect('manual-recipe');
+  assert.equal(ready.valid, true, JSON.stringify(ready.diagnostics));
+  assert.deepEqual(ready.recipeDelivery.selection.map(item => item.outcome), ['NOT_RUN']);
+  delete fixture.checkpoint.nextAction.kind;
+  has(inspect('resume'), 'recipe-action-kind-required');
+  fixture.checkpoint.nextAction.kind = 'manual-recipe';
+  recipe.input.deployment.commit = 'f'.repeat(40); bind();
+  assert.equal(inspect('manual-recipe').valid, false);
+  assert.equal(inspect('resume').nextAction, null, 'Do not hand over an unapproved manual next action.');
+}));
 
 // A bounded local lot reuses an observed Issue, without fabricating publication
 // receipts, a published story plan or consent for a remote write.

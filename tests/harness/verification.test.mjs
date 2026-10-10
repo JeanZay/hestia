@@ -227,7 +227,7 @@ test('real CLI startup failures cannot reuse a previous PASS, including an unpar
     for (const failure of ['missing', 'invalid']) {
       await t.test(`${modulePath}: ${failure}`, child => {
         const root = fixture(child);
-        for (const relative of ['scripts/verify.mjs', 'scripts/ci-summary.mjs', 'scripts/guard.mjs', 'scripts/refinement-check.mjs', 'scripts/lib/verification-evidence.mjs', 'scripts/lib/verification-run.mjs']) {
+        for (const relative of ['scripts/verify.mjs', 'scripts/ci-summary.mjs', 'scripts/guard.mjs', 'scripts/refinement-check.mjs', 'scripts/lib/verification-evidence.mjs', 'scripts/lib/verification-run.mjs', 'scripts/lib/browser-recipe-paths.mjs']) {
           mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
           copyFileSync(path.join(sourceRoot, relative), path.join(root, relative));
         }

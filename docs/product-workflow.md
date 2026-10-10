@@ -63,6 +63,8 @@ Pour chaque US : critères reliés aux contrôles réellement exécutés, candid
 
 Les agents préparent une recette courte : support/version à ouvrir, gestes à essayer, résultats attendus et points de décision. Amaury juge l'usage, pas la qualité du code par procuration. Une dépendance à Dev doit être prouvée en Dev, pas par un test local.
 
+Après déploiement Dev et QA technique, avant de remettre cette recette manuelle, appliquer le [choix de livraison](delivery-governance.md#choix-avant-les-tests-manuels-sur-dev) : proposer systématiquement les nouvelles fiches Browser Use ou le manuel direct. Un choix Browser Use conduit à la sélection exacte, aux validations nécessaires et aux résultats de campagne ; le manuel direct garde `NOT_RUN` sans admission forcée. Ni le GO Dev ni le silence ne tranche. Réutiliser une décision toujours exacte, et demander un choix explicite avec réserves après échec, blocage ou interruption.
+
 Avant de rendre la main, suivre [la reprise et continuité](continuity.md) et donner une prochaine action prioritaire explicite : qui agit, sur quel support/version, quel retour est attendu et ce qu'il débloque. Continuer soi-même les étapes autorisées ; attendre seulement une décision ou une autorisation réellement manquante, et respecter une pause.
 
 La [clôture technique des lots](lot-closure.md) empêche de confondre cette livraison avec une accumulation de branches. Les agents demandent les accords d'intégration au moment utile, exécutent les merges autorisés et vérifient leur résultat. Un lot sans intégration ni disposition explicite bloque le démarrage encadré d'un autre ; le parallélisme réservé dans le même lot reste possible. Cette mécanique ne crée pas une seconde planification produit.

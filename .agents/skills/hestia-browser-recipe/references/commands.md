@@ -38,6 +38,29 @@ node scripts/browser-recipe.mjs campaigns report --input artifacts/rapport-campa
 
 Avant chaque action mutante, rapprocher les identifiants retournés et les fichiers déjà créés. Ne pas recommencer aveuglément après une réponse ambiguë. Un rapport finalisé ne s'écrase pas ; un nouveau passage a sa propre identité. La couverture exige la correspondance de la fiche figée et du déploiement.
 
+## Choix avant les tests manuels
+
+```text
+node scripts/browser-recipe.mjs delivery check --input artifacts/choix-recette.json
+```
+
+Cette porte interne en lecture seule contrôle le dossier de [choix de livraison](../../../../docs/delivery-governance.md#choix-avant-les-tests-manuels-sur-dev) avant la remise officielle des tests manuels. Le dossier relie la cible Dev, les nouvelles fiches/versions exactes, la source du choix et, le cas échéant, les résultats de campagne et la décision après incident. L'agent prépare ce dossier et relit les sources ; Amaury ne remplit aucun JSON. Aucun navigateur, admission de fiche, hook ou écriture distante n'est déclenché.
+
+Le [schéma du dossier](../../../../harness/schemas/browser-recipe-delivery.schema.json) définit `deployment` (Dev, identifiant, commit, URL, observation datée et source), `qa` sourcée (un `PASS` est requis), la référence de périmètre `scope`, la référence `decision` ou `null`, `campaigns` et la référence `manualOverride` ou `null`. Le périmètre conserve le catalogue de départ, les propositions, les analyses d'impact et sa revue indépendante pour distinguer ajouts et anciennes fiches. Le checkpoint peut référencer le dossier par `recipeDelivery: {path, sha256}` avec `nextAction.kind` égal à `recipe-choice` ou `manual-recipe`. `node scripts/lifecycle-check.mjs --checkpoint <checkpoint.json> --action manual-recipe` contrôle alors la remise.
+
+`qa.completedAt` désigne la qualification initiale de ce Dev et `scope.recordedAtUtc` le gel initial de la sélection. Conserver ces dates lors d'un simple rafraîchissement de preuve ou de revue : une nouvelle revue technique sans changement du contenu ne périme pas la décision applicable au même périmètre. Une campagne interrompue peut être représentée par un snapshot exact de `reportCampaign`, encore non finalisé, avec `observedAt` ; conserver son empreinte et les résultats réels. La décision de manuel après incident référence les empreintes exactes des rapports examinés, y compris ce snapshot ; une nouvelle observation exige de vérifier à nouveau sa portée.
+
+| État | Suite attendue |
+| --- | --- |
+| `BLOCKED` | Corriger le dossier invalide ou ses prérequis ; aucune remise manuelle. |
+| `CHOICE_REQUIRED` | Présenter les nouvelles fiches et demander Browser Use ou manuel direct ; sans réponse, attendre. |
+| `ADMISSION_REQUIRED` | Après choix Browser Use, obtenir les validations nécessaires et admettre les fiches exactes avant campagne. |
+| `CAMPAIGN_REQUIRED` | Conduire la campagne autorisée sur la sélection exacte admise. |
+| `REDECISION_REQUIRED` | Présenter les résultats et réserves, puis obtenir le choix de traitement ou de manuel explicite. |
+| `READY_FOR_MANUAL` | Remettre les tests manuels sur le Dev identifié avec résultats et réserves ; le manuel direct conserve `NOT_RUN`. |
+
+Le code de sortie vaut `1` pour `BLOCKED` et `0` pour les autres états, y compris ceux en attente : seul `manualReady: true`, associé à `READY_FOR_MANUAL`, permet la remise. Un état favorable atteste la cohérence du dossier, pas l'authenticité du consentement ni une réussite UI. Cette porte ne bloque pas tous les messages libres ; son emploi est une obligation de delivery. Réutiliser une décision couvrant exactement le même déploiement et les mêmes fiches ; sinon, demander le choix actualisé.
+
 ## Analyse d'impact pendant la livraison
 
 ```text

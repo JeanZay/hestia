@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditCatalog, beginAttempt, catalogReport, decide, finishCampaign, promote, propose, readRecipeInput, recordAttempt, reportCampaign, startCampaign } from './lib/browser-recipe.mjs';
+import { checkRecipeDelivery } from './lib/browser-recipe-delivery.mjs';
 
 export function main(args = process.argv.slice(2), cwd = process.cwd(), write = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)) {
   try {
@@ -13,6 +14,10 @@ export function main(args = process.argv.slice(2), cwd = process.cwd(), write = 
     let result;
     if (['audit', 'catalog check'].includes(command)) { const audit = auditCatalog({ root }); result = { status: audit.status, count: audit.scenarios.length, themes: audit.themes, limitations: audit.limitations }; }
     else if (command === 'catalog list') result = catalogReport({ root, ...(options.input ? readRecipeInput(root, options.input) : {}) });
+    else if (command === 'delivery check') {
+      result = checkRecipeDelivery({ root, inputPath: options.input });
+      write(result); return result.state === 'BLOCKED' ? 1 : 0;
+    }
     else if (command === 'propose') result = propose({ root, input: options.input });
     else {
       const operations = { decision: decide, promote, 'campaigns start': startCampaign, 'campaigns begin-attempt': beginAttempt, 'campaigns record': recordAttempt, 'campaigns finish': finishCampaign };

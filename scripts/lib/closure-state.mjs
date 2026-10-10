@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectFile } from '../guard.mjs';
 import { readJsonSafe, validateJsonSchema } from '../refinement-check.mjs';
-import { captureCandidate } from './verification-evidence.mjs';
+import { captureCandidate, primaryRecipeInputPath } from './verification-evidence.mjs';
 import { checkRecipeImpact, recipePolicyPath, validateRecipePolicy } from './browser-recipe-impact.mjs';
 
 const REGISTRY = 'artifacts/closure/registry.json';
@@ -127,7 +127,7 @@ function validateEvidence(proof, load, currentInputs, primaryRoot) {
   }
   if (manifests.before.identityDigest !== manifests.after.identityDigest) fail('validation-candidate-changed');
   if (!report.activeCheckpoint || !(report.activeCheckpoint.path === null || typeof report.activeCheckpoint.path === 'string') || (report.activeCheckpoint.path !== null && (report.activeCheckpoint.status !== 'PASS' || !manifests.after.activeInputs.some((item) => item.path === report.activeCheckpoint.path)))) fail('validation-checkpoint-unverified');
-  if (currentInputs) for (const reference of manifests.after.activeInputs) load({ path: `${evidenceRoot}${reference.path}`, sha256: reference.sha256 });
+  if (currentInputs) for (const reference of manifests.after.activeInputs) load({ path: primaryRecipeInputPath(reference.path) ?? `${evidenceRoot}${reference.path}`, sha256: reference.sha256 });
   if (currentInputs && report.activeCheckpoint.path === null) {
     try { noLinks(path.resolve(primaryRoot, `${evidenceRoot}artifacts/active-work.json`)); fail('validation-active-checkpoint-unverified'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { inspectFile } from '../guard.mjs';
+import { discoverRecipeRepository } from './browser-recipe-paths.mjs';
 
 const runPattern = /^\d{13}-[a-f0-9-]{36}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -50,7 +51,35 @@ function git(root, args) {
   }).trimEnd();
 }
 
+const primaryRecipePrefix = '@primary/artifacts/functional-browser/campaigns/';
+
+/** A shared campaign is an explicit input, never an arbitrary external file. */
+export function primaryRecipeInputPath(relative) {
+  if (typeof relative !== 'string' || !relative.startsWith('@primary/')) return null;
+  requireCondition(relative.startsWith(primaryRecipePrefix) && !/[\\:\0*?]/.test(relative)
+    && relative.split('/').every(part => part && part !== '.' && part !== '..' && !/[. ]$/.test(part)), 'invalid-primary-recipe-input');
+  return relative.slice('@primary/'.length);
+}
+
+export function recipeVerificationInputs(root, references) {
+  let primary;
+  return references.map(reference => {
+    if (!path.isAbsolute(reference.path)) return reference.path;
+    primary ??= discoverRecipeRepository(root).primaryRoot;
+    const relative = path.relative(primary, reference.path).split(path.sep).join('/');
+    const input = `@primary/${relative}`;
+    primaryRecipeInputPath(input);
+    return input;
+  });
+}
+
 function fileEntry(root, relative, scan = false) {
+  const primaryPath = scan ? primaryRecipeInputPath(relative) : null;
+  if (primaryPath) {
+    const primary = discoverRecipeRepository(root).primaryRoot;
+    const entry = fileEntry(primary, primaryPath, true);
+    return { path: `@primary/${entry.path}`, sha256: entry.sha256 };
+  }
   const normalized = path.relative(path.resolve(root), containedPath(root, relative)).split(path.sep).join('/');
   // Hashes never retain source contents; names are scanned too before persistence.
   requireCondition(inspectFile('', normalized).findings.length === 0 && inspectFile(normalized, '').findings.length === 0, 'unsafe-evidence-path');

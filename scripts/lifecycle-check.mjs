@@ -4,12 +4,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectFile } from './guard.mjs';
 import { captureCandidate } from './lib/verification-evidence.mjs';
+import { checkRecipeDelivery } from './lib/browser-recipe-delivery.mjs';
 import { computeDigests, readJsonSafe, validateJsonSchema, validateRefinement, validateTaskContract } from './refinement-check.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const MAX_BYTES = 1024 * 1024;
 const domains = ['product', 'ux', 'security', 'architecture'];
-const actions = ['resume', 'plan', 'execute'];
+const actions = ['resume', 'plan', 'execute', 'manual-recipe'];
 const limits = [
   'Contrôle local en lecture seule ; aucun accord humain authentifié, aucune permission accordée et aucun accès réseau.',
   'GitHub reste le seul backlog. Une capture datée ne constitue jamais une relecture distante en direct.',
@@ -109,7 +110,7 @@ function parseJson(text) {
 }
 
 function fileReferences(checkpoint) {
-  return [checkpoint?.refinement, checkpoint?.contract, ...(checkpoint?.sources ?? []).map((source) => source.file), checkpoint?.qualification?.review, checkpoint?.candidate?.manifest, ...(checkpoint?.observations ?? []).map((observation) => observation.file)].filter(Boolean);
+  return [checkpoint?.refinement, checkpoint?.contract, checkpoint?.recipeDelivery, ...(checkpoint?.sources ?? []).map((source) => source.file), checkpoint?.qualification?.review, checkpoint?.candidate?.manifest, ...(checkpoint?.observations ?? []).map((observation) => observation.file)].filter(Boolean);
 }
 
 /** Fixed inventory of this checkpoint's inputs, never a scan or a second backlog. */
@@ -133,6 +134,7 @@ export function ownershipConflicts(ownership) {
 /** Diagnostics are scope-specific. No successful result authenticates consent or performs an action. */
 export function validateLifecycle(checkpoint, { root = process.cwd(), action = 'resume', now = new Date() } = {}) {
   const diagnostics = [];
+  let recipeDelivery = null;
   const add = (level, code, location = '$') => {
     if (!diagnostics.some((item) => item.level === level && item.code === code && item.path === location)) diagnostics.push({ level, code, path: location });
   };
@@ -141,7 +143,8 @@ export function validateLifecycle(checkpoint, { root = process.cwd(), action = '
     const resumable = structuralValid && !diagnostics.some((item) => item.level === 'resume');
     const planningReadiness = resumable && !diagnostics.some((item) => item.level === 'plan');
     const executionReadiness = planningReadiness && !diagnostics.some((item) => item.level === 'execute');
-    return { valid: { resume: resumable, plan: planningReadiness, execute: executionReadiness }[action] ?? false, action, structuralValid, resumable, planningReadiness, executionReadiness, humanConsentAuthenticated: false, remoteStateVerified: false, diagnostics, nextAction: resumable ? checkpoint.nextAction : null, limits };
+    const manualRecipeReadiness = resumable && recipeDelivery?.manualReady === true;
+    return { valid: { resume: resumable, plan: planningReadiness, execute: executionReadiness, 'manual-recipe': manualRecipeReadiness }[action] ?? false, action, structuralValid, resumable, planningReadiness, executionReadiness, manualRecipeReadiness, recipeDelivery, humanConsentAuthenticated: false, remoteStateVerified: false, diagnostics, nextAction: resumable ? checkpoint.nextAction : null, limits };
   };
   if (!actions.includes(action)) { add('structure', 'unknown-action'); return result(); }
   const timestamp = now instanceof Date ? now.getTime() : Date.parse(now);
@@ -183,6 +186,14 @@ export function validateLifecycle(checkpoint, { root = process.cwd(), action = '
     try { return parseJson(verified.get(file.path).text); }
     catch (error) { add('resume', error.code, location); return null; }
   };
+  if (checkpoint.recipeDelivery && verified.has(checkpoint.recipeDelivery.path)) {
+    recipeDelivery = checkRecipeDelivery({ root, inputPath: checkpoint.recipeDelivery.path, now });
+    if (recipeDelivery.state === 'BLOCKED') add('resume', 'recipe-delivery-blocked', '$/recipeDelivery');
+    if (!checkpoint.nextAction.kind) add('resume', 'recipe-action-kind-required', '$/nextAction');
+  }
+  if (['recipe-choice', 'manual-recipe'].includes(checkpoint.nextAction.kind) && !checkpoint.recipeDelivery) add('resume', 'recipe-delivery-required', '$/recipeDelivery');
+  if (checkpoint.nextAction.kind === 'manual-recipe' && !recipeDelivery?.manualReady) add('resume', 'recipe-choice-before-manual', '$/nextAction');
+  if (action === 'manual-recipe' && !recipeDelivery?.manualReady) add('manual-recipe', 'recipe-choice-before-manual', '$/recipeDelivery');
   const record = readReferencedJson(checkpoint.refinement, '$/refinement');
   const contract = readReferencedJson(checkpoint.contract, '$/contract');
   if (record) for (const error of validateRefinement(record).errors) add('resume', `refinement-${error.code}`, `$/refinement${error.path.slice(1)}`);
@@ -396,7 +407,7 @@ export function main(args = process.argv.slice(2), cwd = process.cwd(), write = 
   const result = inspectCheckpoint(file, { root: path.resolve(cwd, options.get('--root') ?? '.'), action });
   write(JSON.stringify(result));
   return result.valid ? 0 : 1;
-  function usage() { write('Usage: node scripts/lifecycle-check.mjs --checkpoint <json> [--root <repo>] [--action resume|plan|execute]'); return 2; }
+  function usage() { write('Usage: node scripts/lifecycle-check.mjs --checkpoint <json> [--root <repo>] [--action resume|plan|execute|manual-recipe]'); return 2; }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = main();

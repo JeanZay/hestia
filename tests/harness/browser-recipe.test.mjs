@@ -28,6 +28,15 @@ function approval(root, raw, overrides = {}) {
   const d = decide({ root, input: { schemaVersion: 1, proposalId: p.id, proposalSha256: p.proposalSha256, verdict: 'approved', kind: 'human', actor: 'Amaury', author: 'author', decidedAt: time(0), source, quote: 'Approve this exact synthetic recipe.', review: null, diff: null, ...overrides } });
   promote({ root, input: { proposalId: p.id, decisionId: d.id } }); return p;
 }
+function editorialDecision(root, raw, reviewChanges = {}) {
+  const previous = readFileSync(path.join(root, 'tests/functional-browser/scenarios/folder-create.md'), 'utf8');
+  write(root, 'editorial-draft.md', raw); const proposal = propose({ root, input: 'editorial-draft.md' });
+  const diff = write(root, 'editorial-diff.txt', `--- previous\n+++ proposed\n${previous.split('\n').map((line) => `-${line}`).join('\n')}\n${raw.split('\n').map((line) => `+${line}`).join('\n')}\n`);
+  const source = write(root, 'editorial-review-source.txt', 'Reviewed exact source correction.');
+  const review = write(root, 'editorial-review.json', { verdict: 'PASS', reviewer: 'reviewer', proposalSha256: proposal.proposalSha256, previousSha256: hash(previous), contractUnchanged: true, justification: 'Same synthetic behavior, replacement source inspected.', diffSha256: diff.sha256, ...reviewChanges });
+  const decision = decide({ root, input: { schemaVersion: 1, proposalId: proposal.id, proposalSha256: proposal.proposalSha256, verdict: 'approved', kind: 'editorial', actor: 'reviewer', author: 'author', decidedAt: time(0), source, quote: 'Reviewed exact source correction.', review, diff } });
+  return { proposalId: proposal.id, decisionId: decision.id };
+}
 function target(root, id = 'dev-synthetic-1') { return { environment: 'Dev', url: 'https://dev.example.invalid', id, commit: 'a'.repeat(40), source: write(root, `deployment-${id}.txt`, `Synthetic deployment ${id}`), observedAt: time(0) }; }
 function start(root, selection = ['folder-create'], extra = {}) {
   const deployment = target(root); const authorization = { ...write(root, 'campaign-approval.txt', 'Run selected recipes.'), quote: 'Run selected recipes.' };
@@ -137,6 +146,48 @@ test('editorial path cannot change business contract or bypass review attachment
   const decision = decide({ root, input: { ...data, review, diff } });
   assert.throws(() => promote({ root, input: { proposalId: p.id, decisionId: decision.id } }), /editorial-business-change/);
 });
+test('editorial source replacement preserves old approval hashes and never transfers historical PASS', (t) => {
+  const root = fixture(t); approval(root, scenario());
+  const previous = auditCatalog({ root }).scenarios[0];
+  const campaign = start(root); const attempt = begin(root, campaign.id); result(root, campaign.id, attempt.id);
+  write(root, 'docs/public-source.md', 'Same synthetic requirement in a durable public source.');
+  const raw = scenario('folder-create', { revision: 2, references: ['docs/public-source.md'] });
+  const input = editorialDecision(root, raw); const promotion = promote({ root, input });
+  const current = auditCatalog({ root }).scenarios[0];
+  assert.equal(promotion.qualification, 'NOT_RUN');
+  assert.notEqual(current.contractSha256, previous.contractSha256);
+  assert.notEqual(current.sha256, previous.sha256);
+  assert.equal(parseScenario(previous.text).contractSha256, previous.metadata.approval.contractSha256);
+  assert.equal(current.contractSha256, current.metadata.approval.contractSha256);
+  const coverage = catalogReport({ root, deployment: target(root) }).scenarios[0];
+  assert.equal(coverage.applicableLatest, null); assert.equal(coverage.history[0].status, 'PASS');
+});
+test('editorial source replacements still reject missing references at proposal and promotion', (t) => {
+  const root = fixture(t); approval(root, scenario());
+  const raw = scenario('folder-create', { revision: 2, references: ['docs/public-source.md'] });
+  write(root, 'draft.md', raw); assert.throws(() => propose({ root, input: 'draft.md' }), /ENOENT/);
+  write(root, 'docs/public-source.md', 'Synthetic source.'); const input = editorialDecision(root, raw);
+  rmSync(path.join(root, 'docs/public-source.md'));
+  assert.throws(() => promote({ root, input }), /ENOENT/);
+  assert.equal(auditCatalog({ root }).scenarios[0].metadata.revision, 1);
+});
+for (const [field, changed] of Object.entries({ actor: 'Other member', rights: ['Other right'], preconditions: ['Other precondition'], syntheticData: ['Other fixture'], objective: 'Other outcome', actions: ['Other action'], assertions: ['Other assertion'], persistentEffects: ['Other effect'], cleanup: ['Other cleanup'], stopConditions: ['Other stop condition'], dependencies: ['other-recipe'], status: 'retired', theme: 'Other theme', id: 'other-recipe' })) {
+  test(`editorial source replacement cannot conceal a change to ${field}`, (t) => {
+    const root = fixture(t); approval(root, scenario()); write(root, 'public.md', 'Synthetic source.');
+    const raw = scenario('folder-create', { revision: 2, references: ['public.md'], [field]: changed });
+    const input = editorialDecision(root, raw);
+    assert.throws(() => promote({ root, input }), /editorial-business-change/);
+    assert.equal(auditCatalog({ root }).scenarios[0].metadata.revision, 1);
+  });
+}
+for (const reviewChanges of [{ contractUnchanged: false }, { previousSha256: 'a'.repeat(64) }, { proposalSha256: 'a'.repeat(64) }, { diffSha256: 'a'.repeat(64) }, { reviewer: 'author' }]) {
+  test(`source correction requires exact independent review: ${Object.keys(reviewChanges)[0]}=${Object.values(reviewChanges)[0]}`, (t) => {
+    const root = fixture(t); approval(root, scenario()); write(root, 'public.md', 'Synthetic source.');
+    const input = editorialDecision(root, scenario('folder-create', { revision: 2, references: ['public.md'] }), reviewChanges);
+    assert.throws(() => promote({ root, input }), /editorial-review-required|editorial-diff-required/);
+    assert.equal(auditCatalog({ root }).scenarios[0].metadata.revision, 1);
+  });
+}
 test('retired recipes cannot be selected and model identity requires explicit provenance', (t) => {
   const root = fixture(t); approval(root, scenario());
   assert.throws(() => start(root, ['folder-create'], { model: { value: 'Known model' } }), /source-required/);
