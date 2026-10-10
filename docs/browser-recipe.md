@@ -42,7 +42,9 @@ Une sélection de parcours ne donne aucun droit implicite de créer un compte, d
 
 Toutes les actions métier et assertions de la recette se font dans l'interface, par l'outil Browser Use disponible et ses API documentées. Aucun SQL, appel direct à une API Hestia, interception réseau ou lecture d'état interne ne remplace une étape UI. Un contrôle d'intégrité d'un fichier synthétique réellement téléchargé peut être une preuve complémentaire déclarée ; il ne remplace pas le geste de téléchargement et son observation.
 
-Ne jamais afficher ou enregistrer mot de passe, OTP, cookie, lien d'activation, URL signée ou secret dans une fiche, un rapport, une capture ou un log. Utiliser les mécanismes autorisés de saisie privée ; s'ils sont indisponibles, déclarer le blocage. Les captures sont facultatives et réservées aux écrans vérifiés sans informations sensibles. Les protections automatiques de contenu restent partielles.
+Ne jamais afficher ou enregistrer mot de passe, OTP, cookie, lien d'activation, URL signée ou secret dans une fiche, un rapport, une capture ou un log. Utiliser les mécanismes autorisés de saisie privée ; s'ils sont indisponibles et qu'aucun secours n'est autorisé ci-dessous, déclarer le blocage. Les captures sont facultatives et réservées aux écrans vérifiés sans informations sensibles. Les protections automatiques de contenu restent partielles.
+
+Pour les comptes synthétiques de test Dev, Browser Use peut copier et utiliser directement les identifiants et mots de passe autorisés, sans imposer leur ressaisie au responsable du foyer. Si le transfert privé ne fonctionne pas de manière fiable, un accord humain explicite peut autoriser leur passage dans la conversation pour réaliser l'authentification. Conserver cet accord avec les preuves de la campagne, sans y recopier les valeurs. Dans ce cas, l'indisponibilité du transfert privé ne bloque pas la recette ; les fiches, rapports, captures et logs restent exempts de secrets.
 
 ## Pendant et après l'exécution
 

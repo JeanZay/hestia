@@ -16,7 +16,7 @@ Au passage depuis delivery, appliquer le [choix avant les tests manuels](../../.
 
 ## Conduire une recette autorisée
 
-1. Établir la cible Dev et sa version effective, les prérequis synthétiques et les capacités du navigateur. La référence au code local n'est pas une identité de déploiement. Une identité inconnue ou un accès privé indisponible bloque.
+1. Établir la cible Dev et sa version effective, les prérequis synthétiques et les capacités du navigateur. La référence au code local n'est pas une identité de déploiement. Une identité inconnue ou une authentification indisponible selon les modalités autorisées bloque. Pour les comptes de test Dev, appliquer les modalités de copie et le secours par conversation explicitement autorisé décrits dans la procédure ; ne pas imposer une ressaisie humaine parce que le transfert privé échoue.
 2. Ouvrir une campagne et figer les fiches du worktree appelant dans les preuves de la racine primaire. Les commandes locales documentées dans [la référence des commandes](references/commands.md) n'ouvrent pas le navigateur et ne font aucun appel modèle.
 3. Exécuter séquentiellement avec Browser Use, en suivant les API réellement documentées de l'outil disponible. Actions métier et assertions sont UI ; ne pas substituer des appels API, SQL ou lectures d'état interne. Séparer les préparations autorisées et les preuves techniques complémentaires.
 4. Conserver une tentative par passage : horaires, durée, modèle/effort effectifs ou non disponibles, version, assertions, observations et limites. Protéger secrets et captures. Ne pas prétendre avoir effectué une étape non observée.
