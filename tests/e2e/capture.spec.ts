@@ -50,6 +50,14 @@ test("Capture mobile : pages ajustées, reprise privée, PDF multipage et classe
   await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();await expect(page.getByRole("heading",{name:"Où ranger ce document ?",exact:true})).toBeVisible({timeout:30_000});
   await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();await expect(page.getByText("Suggestions indisponibles.",{exact:true})).toBeVisible();
   await choose(page,folder.name);await page.screenshot({path:test.info().outputPath("capture-review-mobile.png"),fullPage:true});
+  // Capture uses an internal scroller. Check that its last disclosure can be
+  // read above the sticky confirmation bar, not merely present in the DOM.
+  await page.getByRole("main").evaluate(element=>{element.scrollTop=element.scrollHeight;});
+  const disclosure=page.locator(".hc-note");await expect(disclosure).toBeInViewport();
+  const disclosureBox=await disclosure.boundingBox(),footerBox=await page.locator(".hc-footer").boundingBox();
+  expect(disclosureBox).not.toBeNull();expect(footerBox).not.toBeNull();
+  expect(disclosureBox!.y+disclosureBox!.height).toBeLessThanOrEqual(footerBox!.y);
+  await page.screenshot({path:test.info().outputPath("capture-review-mobile-scrolled.png"),fullPage:true});
   await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible({timeout:30_000});
   const docs=(await (await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json()).documents;
   expect(docs).toHaveLength(1);expect(docs[0].mediaType).toBe("application/pdf");
