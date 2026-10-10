@@ -151,7 +151,7 @@ export function createOpenRouterClassificationProvider(
   function requestBody(found: QualifiedOpenRouterProfile, messages: unknown[], pdf = false) {
     const prices = maximumPrices(found);
     return { model: found.model, stream: false, max_tokens: found.maxOutputTokens, reasoning: { enabled: false },
-      provider: { only: [found.providerSlug], order: [found.providerSlug], allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true,
+      provider: { only: [found.providerSlug], order: [found.providerSlug], allow_fallbacks: false, require_parameters: true, data_collection: "deny",
         max_price: { prompt: Number(prices.prompt) / Number(scale), completion: Number(prices.completion) / Number(scale) } },
       plugins: pdf ? [{ id: "file-parser", pdf: { engine: "native" } }] : [],
       tools: [], tool_choice: "none", response_format: { type: "json_schema", json_schema: { name: "classification", strict: true, schema } }, messages };

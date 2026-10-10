@@ -100,7 +100,7 @@ describe("OpenRouter fixed one-call multimodal transport, entirely synthetic", (
     expect(options).toMatchObject({ method: "POST", redirect: "error", signal: requestSignal, headers: { Authorization: "Bearer synthetic-credential-only", "Content-Type": "application/json" } });
     const request = JSON.parse(String(options?.body));
     expect(request.model).toBe(OPENROUTER_CLASSIFICATION_MODEL); expect(request.models).toBeUndefined();
-    expect(request.provider).toEqual({ only: ["anthropic"], order: ["anthropic"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", zdr: true, max_price: { prompt: 0.5, completion: 2.5 } });
+    expect(request.provider).toEqual({ only: ["anthropic"], order: ["anthropic"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", max_price: { prompt: 0.5, completion: 2.5 } });
     expect(request.tools).toEqual([]); expect(request.tool_choice).toBe("none"); expect(request.reasoning).toEqual({ enabled: false });
     expect(request.max_tokens).toBe(2048); expect(request.stream).toBe(false); expect(request.response_format.json_schema.strict).toBe(true);
     expect(request.messages).toHaveLength(2); expect(request.messages[1].content).toHaveLength(2);
