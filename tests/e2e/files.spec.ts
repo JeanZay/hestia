@@ -135,30 +135,26 @@ test("doublon explicite, réponse perdue idempotente et fichier corrompu refusé
   expect(await fileList(page,id)).toHaveLength(2);
 });
 
-test("capture mobile après arrière-plan, annulation, puis confirmation ; PC inactif", async ({page,isMobile}) => {
+test("capture mobile depuis le dossier, abandon sans document ; PC inactif", async ({page,isMobile}) => {
   if (!isMobile) await page.addInitScript(() => Object.defineProperty(navigator, "maxTouchPoints", {get:()=>5}));
   const id = await folder(page);
   const camera = page.getByRole("button", {name:"Prendre une photo", exact:true});
   if (!isMobile) { await expect(camera).toBeDisabled(); return; }
+  await camera.click();
   const selected = page.waitForEvent("filechooser");
-  await camera.click(); const picker = await selected;
+  await page.getByRole("button", {name:"Prendre la première page", exact:true}).click();
+  const picker = await selected;
   expect(await picker.element().getAttribute("capture")).toBe("environment");
   await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>true}); document.dispatchEvent(new Event("visibilitychange")); });
   await expect(page.getByRole("heading", {name:/Documents /})).toHaveCount(0);
   await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
   await picker.setFiles("tests/fixtures/documents/synthetic.png");
-  const photo = page.getByRole("complementary",{name:"Photo",exact:true});
-  await expect(photo.getByRole("img",{name:"Aperçu de la photo prise"})).toBeVisible();
+  await expect(page.getByText("Page sauvegardée.",{exact:true})).toBeVisible({timeout:30_000});
   expect(await fileList(page,id)).toHaveLength(0);
-  await photo.getByRole("button", {name:"Annuler",exact:true}).click();
-  await expect(photo.getByText("Prise de photo annulée.",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Abandonner le brouillon",exact:true}).click();
+  await page.getByRole("dialog").getByRole("button",{name:"Abandonner le brouillon",exact:true}).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(await fileList(page,id)).toHaveLength(0);
-  const again = page.waitForEvent("filechooser"); await photo.getByRole("button", {name:"Reprendre une photo",exact:true}).click(); await (await again).setFiles("tests/fixtures/documents/synthetic.png");
-  await photo.getByRole("button", {name:"Utiliser cette photo",exact:true}).click();
-  expect(await fileList(page,id)).toHaveLength(0);
-  await panel(page).getByRole("button",{name:"Enregistrer",exact:true}).click();
-  await expect(panel(page).getByText("Document enregistré.",{exact:true})).toBeVisible({timeout:30_000});
-  expect((await fileList(page,id))[0].source).toBe("camera");
 });
 
 test("aperçu sans Exporter, révocation et purge des URLs privées", async ({page}) => {

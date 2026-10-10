@@ -4,6 +4,8 @@ import { guarded, HttpError, response } from "../access";
 type Maintenance = {
   cleanupTrash: (limit: number) => Promise<{purged:number;failed:number}>;
   cleanupUploads: (limit: number, maxObjects: number) => Promise<{cleaned:number}>;
+  cleanupCaptures: (limit: number, maxObjects: number) => Promise<{cleaned:number;failed:number}>;
+  cleanupClassification: (limit: number) => Promise<{cleaned:number}>;
 };
 /** Internal scheduler authentication is separate from family sessions. */
 export function handleMaintenance(request: Request, secret: string | undefined, application: () => Maintenance) {
@@ -17,6 +19,8 @@ export function handleMaintenance(request: Request, secret: string | undefined, 
     // Bounded work; a crash/retry resumes from the durable object ledger.
     const trash=await app.cleanupTrash(20);
     const uploads=await app.cleanupUploads(20,100);
-    return response({trash,uploads},trash.failed ? 503 : 200);
+    const captures=await app.cleanupCaptures(20,100);
+    const classification=await app.cleanupClassification(100);
+    return response({trash,uploads,captures,classification},trash.failed || captures.failed ? 503 : 200);
   });
 }

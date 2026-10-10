@@ -12,6 +12,12 @@ import { createFolderMoves } from "./documents/moves";
 import { createFolderTrash } from "./documents/folder-trash";
 import { createIdentity, revokeIdentityArtifacts } from "./identity";
 import { createMembership } from "./membership/service";
+import { createStorageBudget } from "./storage/quota";
+import { createCaptureService } from "./capture";
+import type { CaptureDependencies } from "./capture/types";
+import { createClassificationService } from "./classification/service";
+import { createClassificationCredentialCipher } from "./classification/cipher";
+import { DEFAULT_CLASSIFICATION_LIMITS, type ClassificationDependencies } from "./classification/types";
 const folderName = (value: unknown) => textField(value, 120);
 type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number; docCount:number;
   visibleParentId:string|null; breadcrumbs:{id:string;name:string}[]; childCount:number; canShare:boolean; canAdminister:boolean; createdAt:string; createdByName:string };
@@ -29,7 +35,11 @@ function renameOperation(id:string,input:Record<string,unknown>):FolderOperation
   return {kind:"rename",name:folderName(input.name),folderId:id.toLowerCase(),version:Number(input.version)};
 }
 
-export function createApplication(pool: Pool, config: ServerConfig, dependencies?: DocumentDependencies) {
+export type ApplicationDependencies = DocumentDependencies & {
+  capture?: Omit<CaptureDependencies, "store" | "budget">;
+  classification?: Partial<Omit<ClassificationDependencies, "capture">>;
+};
+export function createApplication(pool: Pool, config: ServerConfig, dependencies?: ApplicationDependencies) {
   const auth = createAuth(pool, config);
   const access = createAccess(pool, config, auth);
   const { origin, transaction, withActor } = access;
@@ -211,11 +221,28 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       }));
     });
   }
-  const documents=createDocuments(pool, access, dependencies);
+  const budget=dependencies?.budget ?? createStorageBudget(dependencies?.limits?.memberBytes, dependencies?.limits?.globalBytes);
+  const documents=createDocuments(pool, access, dependencies ? {...dependencies,budget} : undefined);
+  const missingStorage=async ():Promise<never> => { throw new Error("Object storage is not configured"); };
+  const clock=async (client:PoolClient) => dependencies?.now?.() ?? (await client.query<{now:Date}>("SELECT clock_timestamp() AS now")).rows[0].now;
+  const capture=createCaptureService(pool,access,{
+    store:dependencies?.store ?? {put:missingStorage,getRange:missingStorage,delete:missingStorage},
+    budget,clock,validateOriginal:dependencies?.validateOriginal,
+    ...dependencies?.capture,
+  });
+  const {analysis,...captureHandlers}=capture;
+  const classification=createClassificationService(pool,access,{
+    clock,capture:analysis,
+    readAuthorizedFolders:async(client,actor)=>(await foldersFor(client,actor))
+      .filter(folder=>folder.capabilities.includes("déposer"))
+      .map(folder=>({id:folder.id,name:folder.name,path:folder.breadcrumbs,canCreate:folder.capabilities.includes("modifier")})),
+    credentialCipher:createClassificationCredentialCipher(config.secret),
+    providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
+  });
   const folderTrash=createFolderTrash(access, { now: dependencies?.now });
   return { handleAuth, handleSession, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
-    ...documents, ...folderTrash,
+    ...documents, ...folderTrash, ...captureHandlers, ...classification,
     async cleanupTrash(limit:number) {
       const result=await documents.cleanupTrash(limit);
       await folderTrash.cleanupFolderTrash(limit);
