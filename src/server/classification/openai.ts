@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CAPTURE_PATH_MAX_LEVELS } from "../../shared/capture-path";
-import { CLASSIFICATION_REFERENCE, classificationContext, classificationInstructions } from "./reference-tree";
+import { CLASSIFICATION_REFERENCE, CLASSIFICATION_RELEVANCE_SCHEMA, classificationContext, classificationInstructions, normalizeClassificationSuggestions } from "./reference-tree";
 import type { CaptureMediaType } from "../../shared/capture-contract";
 import type { ClassificationConfiguration, ClassificationProvider, ProviderPayload } from "./types";
 import { micros } from "./validation";
@@ -16,8 +16,8 @@ export type QualifiedOpenAIProfile = Readonly<{
 }>;
 const schema = {
   type: "object", additionalProperties: false, required: ["existing", "created"], properties: {
-    existing: { type: "array", items: { type: "object", additionalProperties: false, required: ["folderId", "reason"], properties: { folderId: { type: "string" }, reason: { type: "string" } } } },
-    created: { type: "array", items: { type: "object", additionalProperties: false, required: ["parentId", "levels", "reason"], properties: { parentId: { type: ["string", "null"] }, levels: { type: "array", maxItems: CAPTURE_PATH_MAX_LEVELS, items: { type: "string" } }, reason: { type: "string" } } } },
+    existing: { type: "array", items: { type: "object", additionalProperties: false, required: ["folderId", "reason", "relevance"], properties: { folderId: { type: "string" }, reason: { type: "string" }, relevance: CLASSIFICATION_RELEVANCE_SCHEMA } } },
+    created: { type: "array", items: { type: "object", additionalProperties: false, required: ["parentId", "levels", "reason", "relevance"], properties: { parentId: { type: ["string", "null"] }, levels: { type: "array", maxItems: CAPTURE_PATH_MAX_LEVELS, items: { type: "string" } }, reason: { type: "string" }, relevance: CLASSIFICATION_RELEVANCE_SCHEMA } } },
   },
 };
 const instructions = classificationInstructions("existing", "created");
@@ -84,7 +84,7 @@ export function createOpenAIClassificationProvider(profiles: readonly QualifiedO
         if (!item || item.type !== "message" || !Array.isArray(item.content)) continue;
         for (const part of item.content) if (part?.type === "output_text" && typeof part.text === "string") texts.push(part.text);
       }
-      return { value: texts.length === 1 ? texts[0] : null, actualMicros: actual };
+      return { value: normalizeClassificationSuggestions(texts.length === 1 ? texts[0] : null, "existing", "created"), actualMicros: actual };
     },
     async check(config, credential, signal) {
       const found = profile(config); if (!found) throw new Error("Unqualified classification profile");

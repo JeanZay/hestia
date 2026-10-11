@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { CAPTURE_PATH_MAX_LEVELS } from "../../shared/capture-path";
-import { CLASSIFICATION_REFERENCE, classificationContext, classificationInstructions } from "./reference-tree";
+import { CLASSIFICATION_REFERENCE, CLASSIFICATION_RELEVANCE_SCHEMA, classificationContext, classificationInstructions, normalizeClassificationSuggestions } from "./reference-tree";
 import type { CaptureMediaType } from "../../shared/capture-contract";
 import type { ClassificationConfiguration, ClassificationProvider, ProviderPayload } from "./types";
 
@@ -119,9 +119,11 @@ const schema = {
         "additionalProperties": false,
         "required": [
           "folderId",
-          "reason"
+          "reason",
+          "relevance"
         ],
         "properties": {
+          "relevance": CLASSIFICATION_RELEVANCE_SCHEMA,
           "folderId": {
             "type": "string"
           },
@@ -140,9 +142,11 @@ const schema = {
         "required": [
           "parentId",
           "levels",
-          "reason"
+          "reason",
+          "relevance"
         ],
         "properties": {
+          "relevance": CLASSIFICATION_RELEVANCE_SCHEMA,
           "parentId": {
             "type": ["string", "null"],
             "description": "ID exact du parent existant avec canCreate=true, ou null pour une nouvelle racine privée si canCreateRoot=true."
@@ -204,18 +208,7 @@ function completion(body: Record<string, unknown>): string | null {
 /** Normalize only the explicit provider contract. Malformed output returns null
  * so the caller still records its known cost before common validation fails. */
 function normalizedSuggestions(text: string | null): string | null {
-  const shape = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
-    record(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
-  try {
-    if (typeof text !== "string" || Buffer.byteLength(text) > 16_384) return null;
-    const value: unknown = JSON.parse(text);
-    if (!shape(value, ["existingFolderSuggestions", "newFolderPathSuggestions"])
-      || !Array.isArray(value.existingFolderSuggestions) || !Array.isArray(value.newFolderPathSuggestions)) return null;
-    if (value.existingFolderSuggestions.some(row => !shape(row, ["folderId", "reason"]) || typeof row.folderId !== "string" || typeof row.reason !== "string")
-      || value.newFolderPathSuggestions.some(row => !shape(row, ["parentId", "levels", "reason"]) || (row.parentId !== null && typeof row.parentId !== "string")
-        || !Array.isArray(row.levels) || row.levels.some(name => typeof name !== "string") || typeof row.reason !== "string")) return null;
-    return JSON.stringify({ existing: value.existingFolderSuggestions, created: value.newFolderPathSuggestions });
-  } catch { return null; }
+  return normalizeClassificationSuggestions(text, "existingFolderSuggestions", "newFolderPathSuggestions");
 }
 /** Dormant unless explicitly configured and allowed by the common service.
  * Protocol: openrouter.ai/docs/guides/overview/multimodal/pdfs and
