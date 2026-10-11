@@ -13,7 +13,7 @@ const permitted = ['src/server/classification/reference-tree.ts', 'src/server/cl
 function load(file) {
   assert.ok(permitted.includes(file));
   if (cache.has(file)) return cache.get(file).exports;
-  const module = { exports: {} }; cache.set(file, module);
+  const compiledModule = { exports: {} }; cache.set(file, compiledModule);
   const source = fs.readFileSync(path.join(root, file), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const resolve = name => {
@@ -21,8 +21,8 @@ function load(file) {
     assert.ok(name.startsWith('.'));
     return load(path.posix.normalize(path.posix.join(path.posix.dirname(file), `${name}.ts`)));
   };
-  new Function('require', 'module', 'exports', code)(resolve, module, module.exports);
-  return module.exports;
+  new Function('require', 'module', 'exports', code)(resolve, compiledModule, compiledModule.exports);
+  return compiledModule.exports;
 }
 const normalize = load(permitted[0]).normalizeClassificationSuggestions;
 const validate = load(permitted[1]).parseClassificationResult;
