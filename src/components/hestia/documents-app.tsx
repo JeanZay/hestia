@@ -68,7 +68,13 @@ export function DocumentsApp() {
   const roots = folders.filter(folder => folder.visibleParentId === null).sort((a,b)=>a.name.localeCompare(b.name,"fr"));
   const canModify = selected?.capabilities.includes("consulter") && selected.capabilities.includes("modifier");
   const renaming=edit!==null;
-  useEffect(() => { const timer = setTimeout(() => { const target = heading.current?.querySelector<HTMLElement>(panel ? ".h-panel h2" : "main h1"); if (target) { target.tabIndex = -1; target.focus(); } }, 0); return () => clearTimeout(timer); }, [selectedId, panel, renaming, checking,trashView,captureView]);
+  useEffect(() => { const timer = setTimeout(() => {
+    // A deliberate search can close Capture/settings. Its result heading must
+    // not steal keyboard focus from the search field while the user is typing.
+    if (document.activeElement === heading.current?.querySelector("#hestia-document-search")) return;
+    const target = heading.current?.querySelector<HTMLElement>(panel ? ".h-panel h2" : "main h1");
+    if (target) { target.tabIndex = -1; target.focus(); }
+  }, 0); return () => clearTimeout(timer); }, [selectedId, panel, renaming, checking,trashView,captureView]);
   useEffect(() => { void Promise.resolve().then(() => setActivationLink(new URLSearchParams(window.location.search).has("flowId") && window.location.hash.includes("capability="))); }, []);
   const clearPrivate = useCallback((preservePicker = false) => {
     setCaptureView(null);setFlowCapture(null);

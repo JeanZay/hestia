@@ -120,13 +120,13 @@ test("Remplissage non focalisé : réglages et Capture restent ouverts, recherch
   await key.fill("synthetic-placeholder-not-a-credential");await key.press("Enter");
   await expect(heading).toBeVisible();await expect(key).toHaveValue("synthetic-placeholder-not-a-credential");
   await key.fill("");await expect(key).toHaveValue("");
-  await page.getByRole("button",{name:"Brouillons",exact:true}).click();await picker(page,"Importer un fichier");
+  await page.getByRole("main").getByRole("button",{name:"Moi",exact:true}).click();
+  await page.getByRole("button",{name:"Brouillons",exact:true}).last().click();await picker(page,"Importer un fichier");
   await unsolicitedFill();await expect(page.getByRole("heading",{name:"Titre et format",exact:true})).toBeVisible();
   expect(forbiddenRequests).toEqual([]);
-  await page.getByRole("button",{name:"Fermer",exact:true}).click();
   // The top-bar search is hidden on mobile; its unsolicited changes must still
   // be ignored, but only desktop exposes it for intentional keyboard input.
-  if(isMobile)return;
+  if(isMobile){await page.getByRole("button",{name:"Fermer",exact:true}).click();return;}
   await search.focus();await search.pressSequentially("recherche clavier");
   await expect(page.getByRole("heading",{name:"Recherche",exact:true})).toBeVisible();
   await expect(search).toHaveValue("recherche clavier");
