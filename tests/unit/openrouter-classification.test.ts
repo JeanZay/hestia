@@ -19,7 +19,8 @@ const payload = { bytes: Buffer.from("synthetic selected document"), mediaType: 
 const suggestions = { existing: [{ folderId: folder.id, reason: "Facture synthétique" }], created: [] };
 const signal = () => new AbortController().signal;
 function external(value: { existing: unknown[]; created: unknown[] }) {
-  return JSON.stringify({ existingFolderSuggestions: value.existing, newFolderPathSuggestions: value.created });
+  const assessments = (rows: unknown[]) => rows.map(row => ({ relevance: "relevant", ...(row as Record<string, unknown>) }));
+  return JSON.stringify({ existingFolderSuggestions: assessments(value.existing), newFolderPathSuggestions: assessments(value.created) });
 }
 function body(content = external(suggestions), usage: unknown = { cost: 0.000001, cost_details: { upstream_inference_cost: 90 } }) {
   return { model: OPENROUTER_CLASSIFICATION_MODEL, choices: [{ finish_reason: "stop", message: { role: "assistant", content } }], usage };
@@ -182,6 +183,51 @@ describe("OpenRouter fixed one-call multimodal transport, entirely synthetic", (
     const { provider, transport } = setup(body(external(empty)));
     const outcome = await provider.analyze(config, payload, "synthetic", signal());
     expect(parseClassificationResult(outcome.value, [folder], 16_384, 8)).toEqual(empty);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("excludes a rejected equipment assessment for a property deed and preserves relevant new paths", async () => {
+    const paths = [
+      { parentId: null, levels: ["Logements et immobilier", "Maison synthétique", "Acquisition et cession"], reason: "Acte d’acquisition de la maison synthétique." },
+      { parentId: null, levels: ["Logements et immobilier", "Maison synthétique", "Titres de propriété"], reason: "Le document établit la propriété de la maison synthétique." },
+    ];
+    const { provider, transport } = setup(body(external({
+      existing: [{ folderId: folder.id, relevance: "irrelevant", reason: "Équipements ne correspond pas au bien immobilier et n’est donc pas une destination pertinente." }],
+      created: paths,
+    })));
+    const outcome = await provider.analyze(config, { ...payload, canCreateRoot: true }, "synthetic", signal());
+    expect(parseClassificationResult(outcome.value, [folder], 16_384, 8, true)).toEqual({ existing: [], created: paths });
+    expect(outcome.actualMicros).toBe(2); expect(transport).toHaveBeenCalledTimes(1);
+    const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    for (const key of ["existingFolderSuggestions", "newFolderPathSuggestions"]) {
+      const item = request.response_format.json_schema.schema.properties[key].items;
+      expect(item.required).toContain("relevance"); expect(item.properties.relevance.enum).toEqual(["relevant", "irrelevant", "uncertain"]);
+    }
+  });
+  it("drops uncertain and irrelevant entries of both kinds without retrying or changing the public DTO", async () => {
+    const kept = { folderId: folder.id, reason: "Le reçu décrit cet équipement synthétique." };
+    const { provider, transport } = setup(body(external({ existing: [
+      { ...kept, relevance: "uncertain" }, kept, { ...kept, relevance: "irrelevant" },
+    ], created: [
+      { parentId: folder.id, levels: ["Douteux"], reason: "Lien non établi.", relevance: "uncertain" },
+      { parentId: null, levels: ["Inadapté"], reason: "Ne convient pas.", relevance: "irrelevant" },
+    ] })));
+    const outcome = await provider.analyze(config, payload, "synthetic", signal());
+    expect(JSON.parse(String(outcome.value))).toEqual({ existing: [kept], created: [] });
+    expect(outcome.actualMicros).toBe(2); expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, null, true, false, 1, "", "Relevant", "true", "other"])("fails closed on missing or invalid relevance %# while retaining known cost", async relevance => {
+    for (const key of ["existingFolderSuggestions", "newFolderPathSuggestions"]) {
+      const entry = key === "existingFolderSuggestions" ? { folderId: folder.id, reason: "Synthétique", relevance }
+        : { parentId: folder.id, levels: ["Sous-dossier"], reason: "Synthétique", relevance };
+      const { provider, transport } = setup(body(JSON.stringify({ existingFolderSuggestions: [], newFolderPathSuggestions: [], [key]: [entry] })));
+      const outcome = await provider.analyze(config, payload, "synthetic", signal());
+      expect(outcome).toEqual({ value: null, actualMicros: 2 }); expect(transport).toHaveBeenCalledTimes(1);
+    }
+  });
+  it("bounds all provider assessments before filtering and preserves unknown cost", async () => {
+    const entries = Array.from({ length: 9 }, () => ({ folderId: folder.id, reason: "Sans lien", relevance: "irrelevant" }));
+    const { provider, transport } = setup(body(external({ existing: entries, created: [] }), {}));
+    expect(await provider.analyze(config, payload, "synthetic", signal())).toEqual({ value: null, actualMicros: null });
     expect(transport).toHaveBeenCalledTimes(1);
   });
   it("keeps existing-only suggestions and filters paths without create permission", async () => {

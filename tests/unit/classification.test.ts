@@ -58,6 +58,10 @@ describe("classification boundaries", () => {
 });
 
 describe("dormant OpenAI adapter, transport replaced entirely", () => {
+  const external = (value: { existing: unknown[]; created: unknown[] }) => JSON.stringify({
+    existing: value.existing.map(row => ({ relevance: "relevant", ...(row as Record<string, unknown>) })),
+    created: value.created.map(row => ({ relevance: "relevant", ...(row as Record<string, unknown>) })),
+  });
   const config = { provider: "openai", model: "synthetic-model", enabled: true, version: 1, monthlyLimitMicros: 100, currency: "EUR" };
   const payload = { bytes: Buffer.from("synthetic selected bytes"), mediaType: "application/pdf" as const, folders: [folder] };
   const profile: QualifiedOpenAIProfile = { model: "synthetic-model", classificationContractSha256: OPENAI_CLASSIFICATION_CONTRACT_SHA256, qualificationRef: "synthetic-test-only", currency: "EUR", maximumMicros: 10, maxInputBytes: 1024, maxFolderBytes: 32768, maxOutputTokens: 256, mediaTypes: ["application/pdf", "image/png"], actualCost: () => 3 };
@@ -74,7 +78,7 @@ describe("dormant OpenAI adapter, transport replaced entirely", () => {
   });
   it("requires a new contract qualification and includes root capability without deriving rights from the guide", async () => {
     const root = { existing: [], created: [{ parentId: null, levels: ["Études", "Diplômes"], reason: "Diplôme synthétique" }] };
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(root) }] }] }));
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: external(root) }] }] }));
     expect(createOpenAIClassificationProvider([{ ...profile, classificationContractSha256: "old" }], transport).quote(config, payload)).toBeNull();
     const provider = createOpenAIClassificationProvider([profile], transport);
     const outcome = await provider.analyze(config, { ...payload, folders: [], canCreateRoot: true }, "synthetic", new AbortController().signal);
@@ -86,7 +90,7 @@ describe("dormant OpenAI adapter, transport replaced entirely", () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
   it.each(["application/pdf", "image/png"] as const)("sends only bounded selected %s and folders, no tools or stored response", async mediaType => {
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: { synthetic: true }, output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(result) }] }] }));
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: { synthetic: true }, output: [{ type: "message", content: [{ type: "output_text", text: external(result) }] }] }));
     const provider = createOpenAIClassificationProvider([profile], transport);
     expect(await provider.analyze(config, { ...payload, mediaType }, "synthetic-credential", new AbortController().signal)).toEqual({ value: JSON.stringify(result), actualMicros: 3 });
     expect(transport).toHaveBeenCalledTimes(1);
@@ -102,5 +106,36 @@ describe("dormant OpenAI adapter, transport replaced entirely", () => {
     expect(transport).toHaveBeenCalledTimes(1);
     transport.mockResolvedValue(new Response("x".repeat(65_537)));
     await expect(provider.analyze(config, payload, "synthetic", new AbortController().signal)).rejects.toThrow("too large");
+  });
+  it("filters provider assessments before the public DTO, with no prose matching", async () => {
+    const path = { parentId: null, levels: ["Logements", "Acquisitions"], reason: "Acte de propriété synthétique." };
+    const content = external({ existing: [
+      { folderId: folder.id, reason: "Not a suitable destination.", relevance: "irrelevant" },
+      { folderId: folder.id, reason: "Pertinence non établie.", relevance: "uncertain" },
+    ], created: [path] });
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: content }] }] }));
+    const provider = createOpenAIClassificationProvider([profile], transport);
+    const outcome = await provider.analyze(config, { ...payload, canCreateRoot: true }, "synthetic", new AbortController().signal);
+    expect(outcome).toEqual({ value: JSON.stringify({ existing: [], created: [path] }), actualMicros: 3 });
+    const body = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    for (const key of ["existing", "created"]) {
+      expect(body.text.format.schema.properties[key].items.required).toContain("relevance");
+      expect(body.text.format.schema.properties[key].items.properties.relevance.enum).toEqual(["relevant", "irrelevant", "uncertain"]);
+    }
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it.each([undefined, null, true, "true", "Relevant"])("rejects obsolete or invalid provider decisions %# without losing known cost", async relevance => {
+    const content = JSON.stringify({ existing: [{ folderId: folder.id, reason: "Synthétique", relevance }], created: [] });
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: content }] }] }));
+    const provider = createOpenAIClassificationProvider([profile], transport);
+    expect(await provider.analyze(config, payload, "synthetic", new AbortController().signal)).toEqual({ value: null, actualMicros: 3 });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("returns empty valid DTO when every assessment is excluded", async () => {
+    const content = external({ existing: [{ folderId: folder.id, reason: "Sans rapport", relevance: "irrelevant" }], created: [{ parentId: null, levels: ["À déterminer"], reason: "Incertain", relevance: "uncertain" }] });
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: content }] }] }));
+    const provider = createOpenAIClassificationProvider([profile], transport);
+    expect(await provider.analyze(config, payload, "synthetic", new AbortController().signal)).toEqual({ value: JSON.stringify({ existing: [], created: [] }), actualMicros: 3 });
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 });
