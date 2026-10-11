@@ -32,6 +32,18 @@ Depuis le 13 septembre 2026, la conception UI/UX passe exclusivement par Claude 
 
 QA est l'ensemble des contrôles et la recette sur Dev ; ce n'est pas un troisième environnement. Les identités, bases, stockages, sauvegardes et secrets de Dev et Production doivent être séparés. `main` est la branche publique par défaut du code ; sa mise à jour ne déploie aucune application. Le flux cible de développement utilise `develop` avant recette Dev, mais aucun environnement distant ni pipeline de déploiement n'est créé par la publication.
 
+### Nettoyage des temporaires synthétiques Dev
+
+Décision d'Amaury du 11 octobre 2026 : les agents peuvent nettoyer les objets temporaires issus des tests synthétiques Dev déjà autorisés, y compris ceux de tentatives précédentes dont la provenance est vérifiée, sans redemander un accord pour chaque nettoyage. Cette permission durable ne déclenche aucun nettoyage automatique et ne dispense ni des contrôles ni de la revue indépendante de l'opération exacte.
+
+Avant toute mutation, identifier le déploiement et les ressources Dev, l'opérateur et ses entrées, puis figer un inventaire borné des identifiants, objets, états et effets attendus. Rapprocher chaque cible des preuves de création du test synthétique et de son état actuel ; un nom, un préfixe, un propriétaire de test ou l'ancienneté seuls ne prouvent pas cette provenance. Vérifier l'éligibilité au nettoyage selon le cycle de vie du produit et l'absence de fixture encore nécessaire à une recette. Toute donnée réelle, inconnue, discordante ou tout élargissement du périmètre arrête la mutation concernée : instruire l'écart, puis obtenir l'accord spécifique nécessaire si la suite dépasse cette permission.
+
+Identifier et préserver les documents finalisés ou durables, leurs originaux, leurs liens et les preuves utiles, même lorsqu'ils sont synthétiques. Si un temporaire a été promu ou sert désormais un document durable, il sort du périmètre. Cette permission n'autorise ni suppression de ces données, ni changement des règles de rétention, ni effacement des résultats d'un test. Elle ne couvre pas la Production, les données réelles, un déploiement, une extension des accès ou une dépense supplémentaire.
+
+Privilégier une opération limitée aux cibles vérifiées. Si la route de maintenance agit globalement, établir avant son appel l'inventaire exhaustif de toutes les catégories qu'elle peut modifier et démontrer que tous les éléments susceptibles d'être traités restent dans le périmètre autorisé pendant l'opération. Une fenêtre Dev exclusive sans autre utilisateur, test ou processus susceptible d'écrire est alors requise ; un inventaire partiel, une pagination tronquée ou une fenêtre impossible à garantir interdit cet appel. Recontrôler la fraîcheur et la stabilité des préconditions immédiatement avant la mutation. Une réservation opérationnelle ne doit pas être présentée comme un verrou atomique si elle n'en est pas un.
+
+Conserver l'intention, les empreintes des entrées et de la revue, le résultat et la réconciliation avant/après, avec les originaux protégés et les limites réellement vérifiées, sans valeurs de secrets ni contenus privés. Un délai dépassé ou une réponse ambiguë laisse l'issue incertaine : arrêter, examiner les effets existants et réconcilier avant toute reprise, sans répétition aveugle. Le nettoyage ne transforme aucun échec, contrôle non exécuté ou résultat Browser Use en PASS.
+
 ## Contrats, délégation et preuves
 
 1. Inspecter le dépôt et préserver l'existant. Identifier le besoin, l'Issue GitHub lorsqu'elle existe, les chemins concernés et les risques. Chaque lot utilise une branche et un worktree isolés ; seule cette fondation initiale bénéficie de l'autorisation de travail dans le dossier local initial.
