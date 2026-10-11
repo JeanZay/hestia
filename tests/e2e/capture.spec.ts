@@ -91,6 +91,51 @@ test("Réglages IA : clé write-only, catalogue absent honnête et aucun appel i
   await page.screenshot({path:test.info().outputPath("capture-settings-inactive.png"),fullPage:true});
 });
 
+test("Remplissage non focalisé : réglages et Capture restent ouverts, recherche volontaire conservée",async({page,isMobile})=>{
+  await login(page,"alex@hestia.invalid");
+  await page.getByRole("button",{name:"Moi",exact:true}).click();
+  await page.getByRole("button",{name:"Suggestions de rangement (IA)",exact:true}).click();
+  const heading=page.getByRole("heading",{name:"Suggestions de rangement",exact:true});
+  const search=page.getByRole("searchbox",{name:"Rechercher un document ou un dossier",exact:true,includeHidden:true});
+  const key=page.getByLabel("Clé API",{exact:true});
+  await expect(key).toBeVisible();
+  const forbiddenRequests:string[]=[];
+  page.on("request",r=>{if(r.url().includes("autofill-witness")||r.url().endsWith("/classification-settings/check")||r.url().endsWith("/classification-settings")&&r.method()!=="GET")forbiddenRequests.push(r.url());});
+  // Reproduce input/change from a password manager without claiming a native
+  // password-manager simulation. The real saved-profile case is a Dev recipe.
+  async function unsolicitedFill(){
+    await expect(search).not.toBeFocused();
+    await search.evaluate(el=>{
+      const input=el as HTMLInputElement;
+      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!;
+      for(const type of ["input","change"]){
+        setter.call(input,"autofill-witness@example.invalid");
+        input.dispatchEvent(new Event(type,{bubbles:true}));
+      }
+    });
+    await expect(search).toHaveValue("");
+  }
+  await unsolicitedFill();await expect(heading).toBeVisible();
+  expect(await key.evaluate(el=>(el as HTMLInputElement).form===document.querySelector("form[role=search]"))).toBe(false);
+  await key.fill("synthetic-placeholder-not-a-credential");await key.press("Enter");
+  await expect(heading).toBeVisible();await expect(key).toHaveValue("synthetic-placeholder-not-a-credential");
+  await key.fill("");await expect(key).toHaveValue("");
+  await page.getByRole("button",{name:"Brouillons",exact:true}).click();await picker(page,"Importer un fichier");
+  await unsolicitedFill();await expect(page.getByRole("heading",{name:"Titre et format",exact:true})).toBeVisible();
+  expect(forbiddenRequests).toEqual([]);
+  await page.getByRole("button",{name:"Fermer",exact:true}).click();
+  // The top-bar search is hidden on mobile; its unsolicited changes must still
+  // be ignored, but only desktop exposes it for intentional keyboard input.
+  if(isMobile)return;
+  await search.focus();await search.pressSequentially("recherche clavier");
+  await expect(page.getByRole("heading",{name:"Recherche",exact:true})).toBeVisible();
+  await expect(search).toHaveValue("recherche clavier");
+  await search.fill("recherche collée");await search.press("Enter");
+  await expect(search).toHaveValue("recherche collée");
+  await search.fill("");await expect(search).toHaveValue("");
+  await expect(page.getByRole("heading",{name:"Recherche",exact:true})).toBeVisible();
+});
+
 test("Import assisté : confirmation de page perdue, reprise sans renvoyer les portions",async({page})=>{
   await login(page);await drafts(page);
   let completions=0,chunks=0;
