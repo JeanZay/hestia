@@ -11,7 +11,8 @@ import {createStorageBudget} from "../../src/server/storage/quota";
 import {createAccess} from "../../src/server/access";
 import {createAuth} from "../../src/server/auth/options";
 import {createCaptureService} from "../../src/server/capture";
-import type {CaptureDto,CaptureArtifactDto,CapturePreviewDto,CaptureFinalizeInput} from "../../src/shared/capture-contract";
+import {issueGrant} from "../../src/server/permissions/service";
+import type {CaptureDto,CaptureArtifactDto,CapturePreviewDto,CaptureFinalizeInput,CaptureDestination} from "../../src/shared/capture-contract";
 const hash=(b:Uint8Array)=>createHash("sha256").update(b).digest("hex");
 describe("Capture author-only drafts, physical objects and atomic publication",()=>{
  const config=readServerConfig();
@@ -38,7 +39,7 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
   return (await body<{capture:CaptureDto}>(await app.handleCapturePageComplete(req({version:reservation.captureVersion}),c.id,reservation.upload.id))).capture;
  }
  async function prepare(c:CaptureDto){return body<{capture:CaptureDto;artifact:CaptureArtifactDto}>(await app.handleCapturePrepare(req({version:c.version}),c.id));}
- async function preview(c:CaptureDto,a:CaptureArtifactDto,destination:{kind:"existing";folderId:string}|{kind:"create";parentId:string;levels:string[]}={kind:"existing",folderId},keepDuplicate=false){
+ async function preview(c:CaptureDto,a:CaptureArtifactDto,destination:CaptureDestination={kind:"existing",folderId},keepDuplicate=false){
   const input={version:c.version,artifactId:a.id,destination,keepDuplicate};const result=await body<{preview:CapturePreviewDto}>(await app.handleCapturePreview(req(input),c.id));
   return {...input,previewToken:result.preview.previewToken,idempotencyKey:randomUUID()};
  }
@@ -51,6 +52,18 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
  beforeEach(async()=>{const f=await body<{folder:{id:string}}>(await app.handleFolders(req({name:`Capture ${randomUUID()}`})),201);folderId=f.folder.id;});
  afterEach(async()=>{putHook=undefined;getHook=undefined;deleteHook=undefined;fixedNow=undefined;await pool.query("UPDATE hestia_member SET active=true,recovering=false WHERE user_id=ANY($1::text[])",[users.map(u=>u.id)]);for(let i=0;i<users.length;i++)await login(i);await pool.query("UPDATE hestia_capture SET state='abandoned' WHERE actor_id=ANY($1::text[]) AND state IN ('open','preparing')",[users.map(u=>u.id)]);await app.cleanupCaptures(100,1000);});
  afterAll(async()=>{await pool.end();});
+ it("distinguishes a pre-action capture lock refusal without reserving bytes or changing the draft",async()=>{
+  const c=await add(await make()),holder=await pool.connect();
+  const before=(await pool.query("SELECT object_key,charged_bytes FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows;
+  try{
+   await holder.query("SELECT pg_advisory_lock(hashtextextended($1,4819))",[c.id]);
+   const refused=await app.handleCapturePrepare(req({version:c.version}),c.id);
+   expect(refused.status).toBe(409);expect((await refused.json()).error.code).toBe("CAPTURE_OPERATION_BUSY");
+   expect((await pool.query("SELECT object_key,charged_bytes FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows).toEqual(before);
+   expect((await pool.query("SELECT state,version FROM hestia_capture WHERE id=$1",[c.id])).rows[0]).toEqual({state:"open",version:c.version});
+  }finally{await holder.query("SELECT pg_advisory_unlock(hashtextextended($1,4819))",[c.id]);holder.release();}
+  expect((await prepare(c)).artifact.pageCount).toBe(1);
+ });
  it("keeps empty and saved camera drafts private even from the household administrator",async()=>{
   let c=await make();expect(c.pages).toHaveLength(0);expect(new Date(c.expiresAt).getTime()-new Date(c.createdAt).getTime()).toBe(168*3600000);
   expect((await app.handleCapture(req(undefined,1),c.id)).status).toBe(404);expect((await body<{captures:CaptureDto[]}>(await app.handleCaptures(req(undefined,1)))).captures).toHaveLength(0);
@@ -80,6 +93,94 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
   expect(c.pages[0].version).toBe(p.version+1);expect((await app.handleCaptureFinalize(req(oldInput),c.id)).status).toBe(409);
   const result=await app.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&offset=0&length=2097152`),c.id);expect(result.status).toBe(206);const bytes=new Uint8Array(await result.arrayBuffer());expect(result.headers.get("content-range")).toBe(`bytes 0-${bytes.length-1}/${bytes.length}`);const metadata=await sharp(bytes).metadata();expect(metadata.width).toBe(80);expect(metadata.height).toBe(90);
   const generated=await prepare(c);const final=await finalize(c,await preview(c,generated.artifact));expect(final.document.sha256).toBe(hash(bytes));
+ });
+ it("creates a private root and suffix atomically for an ordinary member without sharing",async()=>{
+  const c=await add(await make("import")),{artifact}=await prepare(c),name=`Private ${randomUUID()}`;
+  const destination:CaptureDestination={kind:"create",parentId:null,levels:[name,"Nori","Soins"]};
+  const before=await body<{preview:CapturePreviewDto}>(await app.handleCapturePreview(req({version:c.version,artifactId:artifact.id,destination,keepDuplicate:false}),c.id));
+  expect(before.preview.path.map(p=>p.isNew)).toEqual([true,true,true]);
+  expect(before.preview.access.people?.map(p=>p.id)).toEqual([users[0].id]);
+  expect((await pool.query("SELECT 1 FROM hestia_folder WHERE created_by=$1 AND name=$2",[users[0].id,name])).rowCount).toBe(0);
+  const input={version:c.version,artifactId:artifact.id,destination,keepDuplicate:false,previewToken:before.preview.previewToken,idempotencyKey:randomUUID()};
+  const result=await finalize(c,input),again=await finalize(c,input);expect(again.document.id).toBe(result.document.id);
+  const root=(await pool.query("SELECT id,reference_grant_id FROM hestia_folder WHERE created_by=$1 AND parent_folder_id IS NULL AND name=$2",[users[0].id,name])).rows[0];
+  expect(root.reference_grant_id).toBeTruthy();
+  const grants=(await pool.query("SELECT user_id,capability,kind FROM hestia_grant WHERE folder_id=$1",[root.id])).rows;
+  expect(grants).toHaveLength(7);expect(grants.every(g=>g.user_id===users[0].id)).toBe(true);
+  expect(grants.find(g=>g.capability==="administrer").kind).toBe("reference");
+  expect((await pool.query("SELECT 1 FROM hestia_grant WHERE folder_id=$1",[result.document.folderId])).rowCount).toBe(0);
+  expect((await app.handleFolder(req(undefined,1),root.id)).status).toBe(404);
+  expect((await app.handleFolder(req(undefined,1),result.document.folderId)).status).toBe(404);
+ });
+ it("reuses an existing prefix and treats a complete path as deposit with duplicate protection",async()=>{
+  const child=(await body<{folder:{id:string}}>(await app.handleFolders(req({name:"Existing child",parentId:folderId})),201)).folder.id;
+  const c=await add(await make("import")),{artifact}=await prepare(c);
+  const input=await preview(c,artifact,{kind:"create",parentId:folderId,levels:["EXISTING CHILD","New suffix"]});
+  const result=await finalize(c,input);
+  expect((await pool.query("SELECT parent_folder_id FROM hestia_folder WHERE id=$1",[result.document.folderId])).rows[0].parent_folder_id).toBe(child);
+  expect((await pool.query("SELECT 1 FROM hestia_folder WHERE parent_folder_id=$1",[folderId])).rowCount).toBe(1);
+  await pool.query("UPDATE hestia_grant SET revoked_at=clock_timestamp() WHERE folder_id=$1 AND user_id=$2 AND capability='modifier'",[folderId,users[0].id]);
+  const next=await add(await make("import")),prepared=await prepare(next);
+  const existing=await preview(next,prepared.artifact,{kind:"create",parentId:folderId,levels:["Existing child","New suffix"]});
+  expect((await app.handleCaptureFinalize(req(existing),next.id)).status).toBe(409);
+  const accepted=await preview(next,prepared.artifact,{kind:"existing",folderId:result.document.folderId},true);
+  expect((await finalize(next,accepted)).document.folderId).toBe(result.document.folderId);
+ });
+ it("rolls back a new root including its grants and receipt when quota refuses publication",async()=>{
+  const c=await add(await make("import")),{artifact}=await prepare(c),name=`Rollback root ${randomUUID()}`;
+  const input=await preview(c,artifact,{kind:"create",parentId:null,levels:[name,"Child"]});
+  const grants=(await pool.query("SELECT count(*) FROM hestia_grant")).rows[0].count;
+  const limited=createApplication(pool,config,{store,limits:{memberBytes:1,globalBytes:1}});
+  expect((await limited.handleCaptureFinalize(req(input),c.id)).status).toBe(413);
+  expect((await pool.query("SELECT 1 FROM hestia_folder WHERE name=$1",[name])).rowCount).toBe(0);
+  expect((await pool.query("SELECT count(*) FROM hestia_grant")).rows[0].count).toBe(grants);
+  expect((await pool.query("SELECT 1 FROM hestia_capture_receipt WHERE capture_id=$1",[c.id])).rowCount).toBe(0);
+  expect((await body<{capture:CaptureDto}>(await app.handleCapture(req(),c.id))).capture.state).toBe("open");
+  expect((await finalize(c,input)).status).toBe("recorded");
+ });
+ it("reuses a shared isolated entry without exposing its private parent or adding creator grants",async()=>{
+  const hidden=(await body<{folder:{id:string}}>(await app.handleFolders(req({name:`PRIVATE ANCESTOR ${randomUUID()}`},1)),201)).folder.id;
+  const name=`Shared entry ${randomUUID()}`;
+  const leaf=(await body<{folder:{id:string}}>(await app.handleFolders(req({name,parentId:hidden},1)),201)).folder.id;
+  const authority=(await pool.query("SELECT reference_grant_id FROM hestia_folder WHERE id=$1",[hidden])).rows[0].reference_grant_id;
+  for(const capability of ["consulter","déposer","modifier"])await access.transaction(client=>issueGrant(client,users[1].id,leaf,{authorityId:authority,subject:users[0].id,capability}));
+  const c=await add(await make("import")),{artifact}=await prepare(c);
+  const destination:CaptureDestination={kind:"create",parentId:null,levels:[name,"Child"]};
+  const response=await body<{preview:CapturePreviewDto}>(await app.handleCapturePreview(req({version:c.version,artifactId:artifact.id,destination,keepDuplicate:false}),c.id));
+  expect(response.preview.path).toEqual([{id:leaf,name,isNew:false},{name:"Child",isNew:true}]);
+  expect(response.preview.access.people).toBeUndefined();expect(JSON.stringify(response)).not.toContain("PRIVATE ANCESTOR");
+  const result=await finalize(c,{version:c.version,artifactId:artifact.id,destination,keepDuplicate:false,previewToken:response.preview.previewToken,idempotencyKey:randomUUID()});
+  expect((await pool.query("SELECT parent_folder_id FROM hestia_folder WHERE id=$1",[result.document.folderId])).rows[0].parent_folder_id).toBe(leaf);
+  expect((await pool.query("SELECT 1 FROM hestia_grant WHERE folder_id=$1",[result.document.folderId])).rowCount).toBe(0);
+ });
+ it("requires an anchored choice when authorized root names are ambiguous",async()=>{
+  const name=`Homonym ${randomUUID()}`;
+  const own=(await body<{folder:{id:string}}>(await app.handleFolders(req({name})),201)).folder.id;
+  const other=(await body<{folder:{id:string}}>(await app.handleFolders(req({name},1)),201)).folder.id;
+  const authority=(await pool.query("SELECT reference_grant_id FROM hestia_folder WHERE id=$1",[other])).rows[0].reference_grant_id;
+  for(const capability of ["consulter","déposer","modifier"])await access.transaction(client=>issueGrant(client,users[1].id,other,{authorityId:authority,subject:users[0].id,capability}));
+  const c=await add(await make("import")),{artifact}=await prepare(c);
+  const denied=await body<{error:{code:string}}>(await app.handleCapturePreview(req({version:c.version,artifactId:artifact.id,destination:{kind:"create",parentId:null,levels:[name,"Child"]},keepDuplicate:false}),c.id),409);
+  expect(denied.error.code).toBe("AMBIGUOUS_PATH");
+  const input=await preview(c,artifact,{kind:"create",parentId:other,levels:["Child"]});
+  const result=await finalize(c,input);
+  expect((await pool.query("SELECT parent_folder_id FROM hestia_folder WHERE id=$1",[result.document.folderId])).rows[0].parent_folder_id).toBe(other);
+  expect((await pool.query("SELECT 1 FROM hestia_folder WHERE parent_folder_id=$1",[own])).rowCount).toBe(0);
+ });
+ it("refuses rename and move round trips after preview even when the visible path returns unchanged",async()=>{
+  const child=(await body<{folder:{id:string}}>(await app.handleFolders(req({name:"Stable",parentId:folderId})),201)).folder.id;
+  const other=(await body<{folder:{id:string}}>(await app.handleFolders(req({name:`Other ${randomUUID()}`})),201)).folder.id;
+  const c=await add(await make("import")),{artifact}=await prepare(c);
+  const renamed=await preview(c,artifact,{kind:"create",parentId:child,levels:["Never created"]});
+  await pool.query("UPDATE hestia_folder SET name='Temporary',version=version+1 WHERE id=$1",[child]);
+  await pool.query("UPDATE hestia_folder SET name='Stable',version=version+1 WHERE id=$1",[child]);
+  expect((await app.handleCaptureFinalize(req(renamed),c.id)).status).toBe(409);
+  const moved=await preview(c,artifact,{kind:"create",parentId:child,levels:["Never created"]});
+  await pool.query("UPDATE hestia_folder SET parent_folder_id=$2,version=version+1 WHERE id=$1",[child,other]);
+  await pool.query("UPDATE hestia_folder SET parent_folder_id=$2,version=version+1 WHERE id=$1",[child,folderId]);
+  expect((await app.handleCaptureFinalize(req(moved),c.id)).status).toBe(409);
+  expect((await pool.query("SELECT 1 FROM hestia_folder WHERE parent_folder_id=$1",[child])).rowCount).toBe(0);
+  expect((await body<{capture:CaptureDto}>(await app.handleCapture(req(),c.id))).capture.state).toBe("open");
  });
  it("rejects two editors rather than overwriting saved adjustments",async()=>{
   const c=await add(await make()),p=c.pages[0];const input={version:c.version,title:"Premier",format:"pdf",pages:[{id:p.id,rotation:0,crop:p.crop}]};
@@ -163,6 +264,18 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
   const next=await add(await make()),prepared=await prepare(next),name=`Collision ${randomUUID()}`,second=await preview(next,prepared.artifact,{kind:"create",parentId:folderId,levels:[name,"Never created"]});
   expect((await app.handleFolders(req({name,parentId:folderId}))).status).toBe(201);expect((await app.handleCaptureFinalize(req(second),next.id)).status).toBe(409);
   expect((await pool.query("SELECT 1 FROM hestia_folder WHERE name='Never created'",[])).rowCount).toBe(0);
+ });
+ it("previews, records and reconciles a maximum-depth Unicode path above the ordinary JSON limit",async()=>{
+  const c=await add(await make("import")),{artifact}=await prepare(c);
+  const levels=Array.from({length:20},(_,i)=>i===0?randomUUID()+"é".repeat(84):String(i).padStart(2,"0")+"é".repeat(118));
+  const target={kind:"create" as const,parentId:null,levels};
+  expect(Buffer.byteLength(JSON.stringify({destination:target}))).toBeGreaterThan(4096);
+  const input=await preview(c,artifact,target),saved=await finalize(c,input);
+  const reconciled=await body<{status:string;document:{id:string}}>(await app.handleCaptureOperation(req({captureId:c.id,...input}),input.idempotencyKey));
+  expect(reconciled.status).toBe("recorded");expect(reconciled.document.id).toBe(saved.document.id);
+  let parent:string|null=null;
+  for(const name of levels){const rows:{id:string}[]=(await pool.query<{id:string}>("SELECT id FROM hestia_folder WHERE name=$1 AND parent_folder_id IS NOT DISTINCT FROM $2::uuid AND created_by=$3",[name,parent,users[0].id])).rows;expect(rows).toHaveLength(1);parent=rows[0].id;}
+  expect(parent).toBe(saved.document.folderId);expect(saved.document.sha256).toBe(hash(image));
  });
  it("imports exactly 20 MiB through ten Capture chunks and publishes unchanged bytes",async()=>{
   const max=20*1024*1024,chunk=2*1024*1024;

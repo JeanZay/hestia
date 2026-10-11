@@ -7,6 +7,7 @@ function deferred<T>() { let resolve!: (value:T)=>void; const promise=new Promis
 const signal=()=>new AbortController().signal;
 const pixels=()=>new Response(new Uint8Array([1,2,3]),{status:206,headers:{"Content-Range":"bytes 0-2/3","Content-Type":"image/jpeg"}});
 const json=(body:unknown={})=>Response.json(body);
+const busy=()=>Response.json({error:{code:"CAPTURE_OPERATION_BUSY",message:"Capture locked before action"}},{status:409});
 afterEach(()=>vi.unstubAllGlobals());
 
 describe("Native camera platform entry",()=>{
@@ -22,6 +23,46 @@ describe("Native camera platform entry",()=>{
 });
 
 describe("Capture client operation ordering",()=>{
+  it("waits for the server lock left by an aborted preview before PATCH and prepare",async()=>{
+    const abort=new AbortController();let calls=0;
+    const fetcher=vi.fn().mockImplementation((_url:string,options:RequestInit)=>{
+      calls++;
+      if(calls===1)return new Promise<Response>((_resolve,reject)=>options.signal!.addEventListener("abort",()=>reject(options.signal!.reason),{once:true}));
+      return Promise.resolve(calls===2||calls===4?busy():json({ok:true}));
+    });vi.stubGlobal("fetch",fetcher);
+    const preview=captureBlob("queue-server-abort",{pageId:"page"},abort.signal);
+    const rejected=expect(preview).rejects.toMatchObject({name:"AbortError"});abort.abort();await rejected;
+    const body={version:3,title:"Synthetic"};const update=captureRequest("/capture/queue-server-abort",signal(),"PATCH",body);
+    body.title="Changed while queued";
+    await expect(update).resolves.toEqual({ok:true});
+    await expect(captureRequest("/capture/queue-server-abort/prepare",signal(),"POST",{version:4})).resolves.toEqual({ok:true});
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[2][1].body);
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({version:3,title:"Synthetic"});
+  });
+  it("retries refused pixel reads without duplicating bytes",async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(busy()).mockResolvedValueOnce(pixels());vi.stubGlobal("fetch",fetcher);
+    const blob=await captureBlob("queue-pixel-busy",{pageId:"page"},signal());
+    expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual([1,2,3]);expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0][0]).toBe(fetcher.mock.calls[1][0]);
+  });
+  it.each(["CAPTURE_BUSY","VERSION_CONFLICT","ACCESS_CHANGED"])("never retries %s which may follow effects or changed input",async(code)=>{
+    const fetcher=vi.fn().mockResolvedValue(Response.json({error:{code}},{status:409}));vi.stubGlobal("fetch",fetcher);
+    await expect(captureRequest(`/capture/queue-no-retry-${code}/prepare`,signal(),"POST",{version:1})).rejects.toMatchObject({code});expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("never retries a provider analysis even if it returns the pre-action busy code",async()=>{
+    const fetcher=vi.fn().mockResolvedValue(busy());vi.stubGlobal("fetch",fetcher);
+    await expect(captureRequest("/capture/queue-provider-busy/analyze",signal(),"POST",{})).rejects.toMatchObject({code:"CAPTURE_OPERATION_BUSY"});expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("bounds persistent pre-action refusals instead of waiting indefinitely",async()=>{
+    const fetcher=vi.fn().mockImplementation(async()=>busy());vi.stubGlobal("fetch",fetcher);
+    await expect(captureRequest("/capture/queue-bounded-busy",signal(),"PATCH",{version:1})).rejects.toMatchObject({code:"CAPTURE_OPERATION_BUSY"});
+    expect(fetcher.mock.calls.length).toBeGreaterThan(1);expect(fetcher.mock.calls.length).toBeLessThanOrEqual(8);
+  },10_000);
+  it("aborts a busy wait without sending another request",async()=>{
+    const abort=new AbortController();const fetcher=vi.fn().mockImplementation(async()=>{queueMicrotask(()=>abort.abort());return busy();});vi.stubGlobal("fetch",fetcher);
+    await expect(captureRequest("/capture/queue-busy-abort",abort.signal,"PATCH",{})).rejects.toMatchObject({name:"AbortError"});expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it("waits for active pixels before emitting one mutation",async()=>{
     const active=deferred<Response>();const fetcher=vi.fn().mockReturnValueOnce(active.promise).mockResolvedValueOnce(json({capture:{version:2}}));vi.stubGlobal("fetch",fetcher);
     const preview=captureBlob("queue-active",{pageId:"page"},signal());

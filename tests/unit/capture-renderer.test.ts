@@ -8,7 +8,7 @@ const page=(id:string,extra:Partial<RenderPage>={}):RenderPage=>({id,version:1,m
 describe("bounded Capture rendering and identities",()=>{
  it("rejects noncanonical crop and destinations before authority lookup",()=>{
   expect(()=>crop({t:5,r:0,b:0,l:0,extra:1})).toThrow();expect(()=>crop({t:2,r:0,b:0,l:0})).toThrow();
-  expect(()=>destination({kind:"create",parentId:null,levels:["Dossier"]})).toThrow();
+  expect(()=>destination({kind:"create",parentId:"invalid-parent",levels:["Dossier"]})).toThrow();
   expect(()=>destination({kind:"existing",folderId:"../"})).toThrow();
   expect(destination({kind:"create",parentId:randomUUID(),levels:[" Factures "]}).kind).toBe("create");
  });

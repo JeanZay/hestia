@@ -3,12 +3,14 @@ import type { Pool, PoolClient } from "pg";
 import { type Access,type Actor,HttpError,bodyBytes,guarded,invalid,isUuid,json,privateHeaders,response,textField,unavailable } from "../access";
 import { validateOriginal } from "../formats";
 import { folderNameKey } from "../db/folder-name";
-import { getFolderAccess, loadFolderAccessGraph } from "../permissions/service";
+import { getFolderAccess, loadFolderAccessGraph, assertPolicyCapacity } from "../permissions/service";
 import { evaluateTreeAccess } from "../permissions/tree";
+import { CAPABILITIES } from "../permissions/capabilities";
+import { planCaptureDestination, type DestinationFolder } from "./destination-plan";
 import type { CaptureDto,CapturePageDto,CaptureArtifactDto,CaptureMediaType,CaptureRotation,CaptureCrop,CapturePreviewInput,CapturePreviewDto,CaptureDocumentDto,CaptureFinalizeInput,CaptureOperationDto } from "../../shared/capture-contract";
 import type { CaptureDependencies,CaptureService,CaptureLimits,AnalysisIdentity,AnalysisSelection,RenderPage } from "./types";
 import { createCaptureRenderer,inspectCaptureImage } from "./renderer";
-import { digest,conflict,integer,uuid,crop,previewInput,finalInput,previewHash,finalHash } from "./model";
+import { digest,conflict,integer,uuid,crop,previewInput,finalInput,previewHash,finalHash,destinationJson } from "./model";
 export type {CaptureDependencies,CaptureService,CaptureAnalysisBridge,AnalysisIdentity,AnalysisSelection} from "./types";
 const CHUNK=2*1024*1024, MAX=20*1024*1024;
 const TYPES:CaptureMediaType[]=["application/pdf","image/jpeg","image/png","image/webp","image/heic","image/heif"];
@@ -42,7 +44,7 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
  async function operation<T>(id:string,action:()=>Promise<T>,skip=false):Promise<T|undefined>{
   const client=await pool.connect();let locked=false;
   try{locked=(await client.query("SELECT pg_try_advisory_lock(hashtextextended($1,4819)) AS locked",[id])).rows[0].locked;
-   if(!locked){if(skip)return;throw conflict("CAPTURE_BUSY","Ce brouillon est en cours de traitement. Réessayez dans un instant.");}
+   if(!locked){if(skip)return;throw conflict("CAPTURE_OPERATION_BUSY","Ce brouillon est en cours de traitement. Réessayez dans un instant.");}
    return await access.usingClient(client,action);
   }finally{try{if(locked)await client.query("SELECT pg_advisory_unlock(hashtextextended($1,4819))",[id]);}finally{client.release();}}
  }
@@ -188,30 +190,29 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
    return withActor(request,async(client,actor)=>{version(await owned(client,actor,id),selected.c.version);const headers=privateHeaders();headers.set("Content-Type",object.type);headers.set("Content-Length",String(bytes.length));headers.set("Content-Range",`bytes ${offset}-${end}/${object.size}`);headers.set("Content-Security-Policy","sandbox; default-src 'none'");return new Response(new Uint8Array(bytes),{status:206,headers});});
   }))!;
  });}
- type Plan={preview:Omit<CapturePreviewDto,"previewToken">;policy:string;ownerId:string;folderId:string};
+ type Plan={preview:Omit<CapturePreviewDto,"previewToken">;policy:string;ownerId:string;folderId:string|null;missing:string[]};
  async function plan(client:PoolClient,actor:Actor,c:CaptureRow,input:CapturePreviewInput):Promise<Plan>{
-  const a=await artifact(client,c,input.artifactId),destination=input.destination;const folderId=destination.kind==="existing"?destination.folderId:destination.parentId;
-  const graph=await loadFolderAccessGraph(client);graph.now=(await clock(client)).getTime();const rights=evaluateTreeAccess(graph,actor.id,folderId);
-  const required=destination.kind==="existing"?["consulter","déposer"]:["consulter","déposer","modifier"];
-  if(required.some(cap=>!rights.capabilities.includes(cap)))throw unavailable();
-  const names=(await client.query<{id:string;name:string;parent_folder_id:string|null}>("SELECT id,name,parent_folder_id FROM hestia_folder WHERE trashed_at IS NULL ORDER BY id LIMIT 10001")).rows;
-  if(names.length>10000)throw new HttpError(503,"RESOURCE_LIMIT","Trop de dossiers pour cette opération.");
-  const path:CapturePreviewDto["path"]=[];let current=names.find(f=>f.id===folderId);const seen=new Set<string>();
-  while(current){if(seen.has(current.id))throw invalid();seen.add(current.id);if(!evaluateTreeAccess(graph,actor.id,current.id).capabilities.includes("consulter"))break;path.unshift({id:current.id,name:current.name,isNew:false});current=names.find(f=>f.id===current!.parent_folder_id);}
-  if(destination.kind==="create"){
-   const exists=await client.query("SELECT 1 FROM hestia_folder WHERE parent_folder_id=$1 AND name_key=$2 AND trashed_at IS NULL LIMIT 1",[folderId,folderNameKey(destination.levels[0])]);if(exists.rowCount)throw conflict("NAME_UNAVAILABLE","Ce nom n’est pas disponible ici. Choisissez un autre nom.");
-   if(names.length+destination.levels.length>10000)throw new HttpError(503,"RESOURCE_LIMIT","Trop de dossiers pour cette opération.");
-   path.push(...destination.levels.map(name=>({name,isNew:true})));
+  const a=await artifact(client,c,input.artifactId);
+  const graph=await loadFolderAccessGraph(client);graph.now=(await clock(client)).getTime();
+  const names=(await client.query<DestinationFolder>("SELECT id,name,parent_folder_id,version FROM hestia_folder WHERE trashed_at IS NULL ORDER BY id LIMIT 10001")).rows;
+  const resolved=planCaptureDestination(input.destination,names,id=>evaluateTreeAccess(graph,actor.id,id).capabilities);
+  const {baseId:folderId,missing,path}=resolved;
+  const rights=folderId?evaluateTreeAccess(graph,actor.id,folderId):null;
+  if(missing.length){
+   const exists=await client.query("SELECT 1 FROM hestia_folder WHERE (parent_folder_id=$1::uuid OR ($1::uuid IS NULL AND parent_folder_id IS NULL AND created_by=$3)) AND name_key=$2 AND trashed_at IS NULL LIMIT 1",[folderId,folderNameKey(missing[0]),actor.id]);
+   if(exists.rowCount)throw conflict("NAME_UNAVAILABLE","Ce nom n’est pas disponible ici. Choisissez un autre nom.");
+   if(!folderId)assertPolicyCapacity(graph.grants.length,CAPABILITIES.length);
   }
-  const profiles=graph.members.filter(m=>m.active).map(m=>({id:m.user_id,name:m.name,capabilities:evaluateTreeAccess(graph,m.user_id,folderId).capabilities}));
-  const projection:CapturePreviewDto["access"]={capabilities:rights.capabilities,message:"Les accès du dossier choisi s’appliqueront à ce document."};
-  if(rights.canShare||rights.canAdminister)projection.people=profiles.map(p=>({...p,capabilities:p.capabilities.filter(cap=>p.id===actor.id||Boolean(rights.authorityFor([cap],p.id)))})).filter(p=>p.capabilities.includes("consulter"));
-  const duplicate=destination.kind==="existing"&&Boolean((await client.query("SELECT 1 FROM hestia_document WHERE folder_id=$1 AND sha256=$2 AND trashed_at IS NULL AND purged_at IS NULL LIMIT 1",[folderId,a.sha256])).rowCount);
-  const policy=digest(JSON.stringify([folderId,path,rights.ownerId,profiles,graph.grants.filter(g=>graph.folders.some(f=>f.id===g.folder_id)),graph.restrictions,graph.cuts]));
-  return {preview:{artifact:artifactDto(a),title:c.title,path,access:projection,duplicate},policy,ownerId:destination.kind==="create"?actor.id:rights.ownerId,folderId};
+  const profiles=folderId?graph.members.filter(m=>m.active).map(m=>({id:m.user_id,name:m.name,capabilities:evaluateTreeAccess(graph,m.user_id,folderId).capabilities})):[{id:actor.id,name:actor.name,capabilities:[...CAPABILITIES]}];
+  const projection:CapturePreviewDto["access"]={capabilities:rights?[...rights.capabilities]:[...CAPABILITIES],message:folderId?"Les accès du dossier choisi s’appliqueront à ce document.":"À la racine, dans votre espace. Personne d’autre que vous n’y aura accès tant que vous ne l’aurez pas accordé."};
+  if(!rights)projection.people=profiles;
+  else if(rights.canShare||rights.canAdminister)projection.people=profiles.map(p=>({...p,capabilities:p.capabilities.filter(cap=>p.id===actor.id||Boolean(rights.authorityFor([cap],p.id)))})).filter(p=>p.capabilities.includes("consulter"));
+  const duplicate=resolved.allExist&&Boolean((await client.query("SELECT 1 FROM hestia_document WHERE folder_id=$1 AND sha256=$2 AND trashed_at IS NULL AND purged_at IS NULL LIMIT 1",[folderId,a.sha256])).rowCount);
+  const policy=digest(JSON.stringify([folderId,path,resolved.identity,rights?.ownerId??actor.id,profiles,graph.grants,graph.restrictions,graph.cuts]));
+  return {preview:{artifact:artifactDto(a),title:c.title,path,access:projection,duplicate},policy,ownerId:missing.length?actor.id:rights!.ownerId,folderId,missing};
  }
  async function handleCapturePreview(request:Request,id:string){return guarded(async()=>{
-  method(request,"POST");origin(request);const input=previewInput(await json(request,["version","artifactId","destination","keepDuplicate"]));
+  method(request,"POST");origin(request);const input=previewInput(await destinationJson(request,["version","artifactId","destination","keepDuplicate"]));
   return response(await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);version(c,input.version);const planned=await plan(client,actor,c,input),token=randomBytes(32).toString("base64url"),now=await clock(client);
    await client.query("DELETE FROM hestia_capture_preview WHERE capture_id=$1 AND expires_at<=$2",[id,now]);const count=Number((await client.query("SELECT count(*) FROM hestia_capture_preview WHERE capture_id=$1",[id])).rows[0].count);if(count>=20)await client.query("DELETE FROM hestia_capture_preview WHERE token=(SELECT token FROM hestia_capture_preview WHERE capture_id=$1 ORDER BY expires_at LIMIT 1)",[id]);
    await client.query("INSERT INTO hestia_capture_preview(token,capture_id,actor_epoch,identity_sha,policy_sha,expires_at) VALUES($1,$2,$3,$4,$5,$6)",[token,id,c.actor_epoch,previewHash(id,input),planned.policy,new Date(Math.min(c.expires_at.getTime(),now.getTime()+15*60000))]);return {preview:{...planned.preview,previewToken:token}};
@@ -224,7 +225,7 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   const document:CaptureDocumentDto={id:d.id,folderId:d.folder_id,title:d.title,fileName:d.file_name,mediaType:d.media_type,size:d.size,sha256:d.sha256,source:d.source,version:d.version,createdAt:d.created_at.toISOString(),uploadedByName:d.uploaded_by_name,previewSupported:d.preview_supported,capabilities:rights.capabilities};return {status:"recorded",document};
  }
  async function handleCaptureFinalize(request:Request,id:string){return guarded(async()=>{
-  method(request,"POST");origin(request);const input=finalInput(await json(request,["version","artifactId","destination","keepDuplicate","previewToken","idempotencyKey"]));
+  method(request,"POST");origin(request);const input=finalInput(await destinationJson(request,["version","artifactId","destination","keepDuplicate","previewToken","idempotencyKey"]));
   return (await operation(id,async()=>response(await withActor(request,async(client,actor)=>{
    const previous=await recorded(client,actor,id,input);if(previous)return previous;
    const c=await owned(client,actor,id);version(c,input.version);const a=await artifact(client,c,input.artifactId),planned=await plan(client,actor,c,input),now=await clock(client);
@@ -232,7 +233,14 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
    if(!token||token.actor_epoch!==c.actor_epoch||token.expires_at<=now||token.identity_sha!==previewHash(id,input)||token.policy_sha!==planned.policy)throw conflict("ACCESS_CHANGED","Les accès ou le document ont changé. Vérifiez et confirmez à nouveau.");
    if(planned.preview.duplicate&&!input.keepDuplicate)throw conflict("DUPLICATE","Ce fichier existe déjà dans ce dossier. Vous pouvez l’ajouter quand même.");
    await deps.budget.lock(client);let folderId=planned.folderId;
-   if(input.destination.kind==="create")for(const name of input.destination.levels){const child=randomUUID();await client.query("INSERT INTO hestia_folder(id,name,name_key,created_by,parent_folder_id) VALUES($1,$2,$3,$4,$5)",[child,name,folderNameKey(name),actor.id,folderId]);folderId=child;}
+   for(const name of planned.missing){
+    const child=randomUUID();await client.query("INSERT INTO hestia_folder(id,name,name_key,created_by,parent_folder_id) VALUES($1,$2,$3,$4,$5)",[child,name,folderNameKey(name),actor.id,folderId]);
+    if(!folderId){
+     for(const capability of CAPABILITIES)await client.query(`INSERT INTO hestia_grant(id,folder_id,user_id,capability,kind,transmit,author_id,subject_epoch,batch_id) VALUES($1,$2,$3,$4,$5,$6,$3,(SELECT departure_epoch FROM hestia_member WHERE user_id=$3),$2)`,[randomUUID(),child,actor.id,capability,capability==="administrer"?"reference":"direct",capability==="administrer"?[...CAPABILITIES]:capability==="partager"?CAPABILITIES.filter(cap=>cap!=="administrer"):[]]);
+     await client.query("UPDATE hestia_folder SET reference_grant_id=(SELECT id FROM hestia_grant WHERE folder_id=$1 AND kind='reference' AND revoked_at IS NULL) WHERE id=$1",[child]);
+    }
+    folderId=child;
+   }
    const documentId=randomUUID(),uploadId=randomUUID();
    await client.query("INSERT INTO hestia_upload(id,actor_id,folder_id,owner_id,idempotency_key,identity_sha,title,file_name,media_type,size,sha256,source,status,created_at,expires_at,reservation_released,final_key,keep_duplicate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'completed',$13,$13,true,$14,$15)",[uploadId,actor.id,folderId,planned.ownerId,randomUUID(),finalHash(id,input),c.title,a.file_name,a.media_type,a.size,a.sha256,c.kind,now,a.object_key,input.keepDuplicate]);
    await client.query("INSERT INTO hestia_upload_object(object_key,upload_id,kind,size,sha256,ready) VALUES($1,$2,'original',$3,$4,true)",[a.object_key,uploadId,a.size,a.sha256]);
@@ -245,7 +253,7 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   }))))!;
  });}
  async function handleCaptureOperation(request:Request,operationId:string){return guarded(async()=>{
-  method(request,"POST");origin(request);const raw=await json(request,["captureId","version","artifactId","destination","keepDuplicate","previewToken","idempotencyKey"]),id=uuid(raw.captureId),input=finalInput(raw);if(uuid(operationId)!==input.idempotencyKey)throw invalid();
+  method(request,"POST");origin(request);const raw=await destinationJson(request,["captureId","version","artifactId","destination","keepDuplicate","previewToken","idempotencyKey"]),id=uuid(raw.captureId),input=finalInput(raw);if(uuid(operationId)!==input.idempotencyKey)throw invalid();
   await withActor(request,async(client,actor)=>{await owned(client,actor,id,false);});
   const checked=await operation(id,()=>withActor(request,async(client,actor)=>{const receipt=await recorded(client,actor,id,input);if(receipt)return receipt;await owned(client,actor,id,false);return {status:"not-recorded" as const};}),true);
   return response(checked??{status:"in-progress"});

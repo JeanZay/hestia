@@ -1,6 +1,7 @@
 import { invalid, isUuid, textField } from "../access";
 import type { ClassificationResultDto } from "../../shared/capture-contract";
 import type { AuthorizedFolder } from "./types";
+import { CAPTURE_PATH_MAX_LEVELS, normalizeCaptureLevel } from "../../shared/capture-path";
 
 export function micros(value: unknown, positive = false): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < (positive ? 1 : 0) || value > 1_000_000_000_000) throw invalid();
@@ -25,7 +26,7 @@ function plain(value: unknown, maximum: number) {
   return text;
 }
 /** Hostile model output has no tool channel and cannot carry arbitrary extra fields. */
-export function parseClassificationResult(value: unknown, folders: readonly AuthorizedFolder[], maxBytes: number, maximum: number): ClassificationResultDto {
+export function parseClassificationResult(value: unknown, folders: readonly AuthorizedFolder[], maxBytes: number, maximum: number, canCreateRoot = false): ClassificationResultDto {
   const encoded = typeof value === "string" ? value : JSON.stringify(value);
   if (!encoded || Buffer.byteLength(encoded) > maxBytes) throw invalid();
   const root = record(JSON.parse(encoded), ["existing", "created", "summary"]);
@@ -42,13 +43,14 @@ export function parseClassificationResult(value: unknown, folders: readonly Auth
   });
   const created = root.created.map(item => {
     const row = record(item, ["parentId", "levels", "reason"]);
-    if (!isUuid(row.parentId) || !Array.isArray(row.levels) || row.levels.length < 1 || row.levels.length > 4) throw invalid();
+    if ((row.parentId !== null && !isUuid(row.parentId)) || !Array.isArray(row.levels) || row.levels.length < 1 || row.levels.length > CAPTURE_PATH_MAX_LEVELS) throw invalid();
     const levels = row.levels.map(level => {
-      const name = plain(level, 120).normalize("NFC");
-      if (name === "." || name === ".." || /[/\\]/u.test(name)) throw invalid();
+      const name = normalizeCaptureLevel(level);
+      // Reference variables must be resolved, never installed as literal folders.
+      if (name === null || /\[(?:personne|logement|véhicule|équipement|année|contrat|service|animal)\]/iu.test(name)) throw invalid();
       return name;
     });
     return { parentId: row.parentId, levels, reason: plain(row.reason, 500) };
-  }).filter(item => allowed.get(item.parentId)?.canCreate);
+  }).filter(item => item.parentId === null ? canCreateRoot === true : allowed.get(item.parentId)?.canCreate);
   return { existing, created, ...(root.summary === undefined ? {} : { summary: plain(root.summary, 1000) }) };
 }

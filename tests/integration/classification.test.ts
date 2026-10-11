@@ -104,6 +104,21 @@ describe("classification SQL budget, admission and write-only configuration", ()
     expect((await service.handleCaptureAnalysis(request(undefined, "GET", memberCookie), captureId, dto.analysisId)).status).toBe(404);
     expect((await (await settings()).json()).settings).toMatchObject({ spentMicros: 20, reservedMicros: 0 });
   });
+  it("admits root suggestions for an active member with no existing folders without creating anything", async () => {
+    await save(); folders = [];
+    await pool.query("UPDATE hestia_member SET role='member' WHERE user_id=$1", [actorId]);
+    const before = await pool.query("SELECT (SELECT count(*) FROM hestia_folder)::int AS folders,(SELECT count(*) FROM hestia_document)::int AS documents");
+    const root = { existing: [], created: [{ parentId: null, levels: ["Études", "Diplômes"], reason: "Diplôme synthétique" }] };
+    outcome = async () => ({ value: root, actualMicros: 20 });
+    const key = randomUUID(), dto = await (await analyze(key)).json();
+    expect(dto).toMatchObject({ status: "complete", result: root });
+    expect(selectedPayload).toMatchObject({ folders: [], canCreateRoot: true });
+    expect(await (await analyze(key)).json()).toEqual(dto); expect(calls).toBe(1);
+    expect((await pool.query("SELECT (SELECT count(*) FROM hestia_folder)::int AS folders,(SELECT count(*) FROM hestia_document)::int AS documents")).rows).toEqual(before.rows);
+    expect((await ledger())[0]).toMatchObject({ actual_micros: "20", status: "complete" });
+    await pool.query("UPDATE hestia_member SET active=false WHERE user_id=$1", [actorId]);
+    expect((await service.handleCaptureAnalysis(request(), captureId, dto.analysisId)).status).toBe(401);
+  });
   it("serializes concurrent requests across service instances before emission", async () => {
     await save({ monthlyLimitMicros: 100 });
     let release!: () => void, entered!: () => void; const inCall = new Promise<void>(resolve => { entered = resolve; });

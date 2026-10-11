@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
+import type { ClassificationResultDto } from "../../src/shared/capture-contract";
 
 const password=process.env.HESTIA_TEST_PASSWORD;
 if(!password||process.env.HESTIA_ENVIRONMENT!=="local")throw new Error("Use the owned synthetic local harness.");
@@ -25,6 +26,81 @@ async function picker(page:Page,label:string,hidden=false){
   await expect(page.getByText("Page sauvegardée.",{exact:true})).toBeVisible({timeout:30_000});
 }
 async function choose(page:Page,name:string){await page.getByRole("button",{name:"Parcourir les dossiers",exact:true}).click();await page.getByRole("radio",{name,exact:true}).click();await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();await expect(page.getByRole("heading",{name:"Qui pourra accéder au document",exact:true})).toBeVisible();}
+
+const localOrigin={origin:"http://127.0.0.1:3210"};
+async function namedFolder(page:Page,name:string,parentId:string|null=null){
+  const response=await page.request.post("/api/hestia/folders",{headers:localOrigin,data:{name,parentId,idempotencyKey:randomUUID()}});expect(response.status()).toBe(201);return (await response.json()).folder as {id:string;name:string};
+}
+async function assistedImport(page:Page,result:ClassificationResultDto){
+  let analyses=0;
+  await page.route("**/api/hestia/capture/*/analyze",async route=>{analyses++;await route.fulfill({status:200,json:{analysisId:randomUUID(),status:"complete",result}});});
+  await page.reload();await expect(page.getByRole("heading",{name:"Dossiers",exact:true})).toBeVisible();await drafts(page);await picker(page,"Importer un fichier");
+  await page.getByLabel("Titre du document").fill("Garantie synthétique");await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"3. Créer un chemin (proposé)",exact:true})).toBeVisible();return ()=>analyses;
+}
+
+test("Guide Capture : nouvelle racine privée, changement annulé et rétabli avant confirmation",async({page,browser})=>{
+  await login(page);const existing=await createFolder(page),rootName=`Animaux ${randomUUID().slice(0,8)}`;
+  const count=await assistedImport(page,{existing:[],created:[{parentId:null,levels:[rootName,"Soins"],reason:"Document vétérinaire synthétique."}]});
+  const card=page.locator(".hc-path-suggestion");await expect(card.getByText("Nouvelle racine privée",{exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"Changer de point de départ",exact:true}).click();await card.getByRole("button",{name:"Annuler le changement",exact:true}).click();
+  await expect(card.getByText("Nouvelle racine privée",{exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"Changer de point de départ",exact:true}).click();await card.getByRole("radio",{name:existing.name,exact:true}).click();
+  await expect(card.getByText("Point de départ modifié par vous",{exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"Revenir au point de départ proposé",exact:true}).click();await expect(card.getByText("Nouvelle racine privée",{exact:true})).toBeVisible();
+  await card.getByRole("button",{name:"Choisir cette proposition",exact:true}).focus();await page.keyboard.press("Enter");
+  const previewResponse=page.waitForResponse(r=>r.url().endsWith("/preview")&&r.request().method()==="POST");await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();
+  const preview=(await(await previewResponse).json()).preview;expect(preview.path.map((p:{isNew:boolean})=>p.isNew)).toEqual([true,true]);expect(preview.access.people).toHaveLength(1);
+  await expect(page.getByRole("list",{name:"Chemin exact",exact:true})).toContainText("Racine de votre espace · privé");
+  expect((await(await page.request.get("/api/hestia/folders")).json()).folders.some((f:{name:string})=>f.name===rootName)).toBe(false);
+  await page.getByRole("list",{name:"Chemin exact",exact:true}).scrollIntoViewIfNeeded();
+  await page.screenshot({path:test.info().outputPath("capture-private-root-review.png"),fullPage:true});
+  await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible();
+  const rows=(await(await page.request.get("/api/hestia/folders")).json()).folders as {id:string;name:string;visibleParentId:string|null}[];
+  const root=rows.find(f=>f.name===rootName)!;expect(root.visibleParentId).toBeNull();const child=rows.find(f=>f.visibleParentId===root.id&&f.name==="Soins")!;
+  expect((await(await page.request.get(`/api/hestia/documents?folderId=${child.id}`)).json()).documents).toHaveLength(1);expect(count()).toBe(1);
+  const context=await browser.newContext({baseURL:"http://127.0.0.1:3210"});try{const other=await context.newPage();await login(other,"alex@hestia.invalid");expect((await other.request.get(`/api/hestia/folders/${root.id}`)).status()).toBe(404);}finally{await context.close();}
+});
+
+test("Guide Capture : préfixe réutilisé et collision après aperçu, sans nouvelle analyse",async({page})=>{
+  await login(page);const root=await createFolder(page),equipment=await namedFolder(page,"Équipements",root.id);
+  const count=await assistedImport(page,{existing:[],created:[{parentId:null,levels:[root.name,"Équipements","Garanties"],reason:"Garanties de l’équipement synthétique."}]});
+  const card=page.locator(".hc-path-suggestion");await expect(card.getByText("Chemin dans vos dossiers existants",{exact:true})).toBeVisible();
+  await expect(card.locator('[data-status="reused"]')).toHaveCount(2);await expect(card.locator('[data-status="new"]')).toHaveCount(1);
+  await card.getByRole("button",{name:"Choisir cette proposition",exact:true}).click();await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Qui pourra accéder au document",exact:true})).toBeVisible();
+  const appeared=await namedFolder(page,"Garanties",equipment.id);
+  await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByRole("heading",{name:"Où ranger ce document ?",exact:true})).toBeVisible();
+  await expect(page.getByText("Accès modifiés.",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true})).toBeDisabled();
+  await expect(card.getByText("Tout ce chemin existe déjà : aucun dossier ne sera créé.",{exact:true})).toBeVisible();
+  expect((await(await page.request.get(`/api/hestia/documents?folderId=${appeared.id}`)).json()).documents).toHaveLength(0);
+  await card.getByRole("button",{name:"Choisir « Garanties » (existant)",exact:true}).click();
+  await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();await expect(page.getByRole("list",{name:"Chemin exact",exact:true}).locator('[data-status="new"]')).toHaveCount(0);
+  await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible();expect(count()).toBe(1);
+  const rows=(await(await page.request.get("/api/hestia/folders")).json()).folders;expect(rows.filter((f:{visibleParentId:string;name:string})=>f.visibleParentId===equipment.id&&f.name==="Garanties")).toHaveLength(1);
+  expect((await(await page.request.get(`/api/hestia/documents?folderId=${appeared.id}`)).json()).documents).toHaveLength(1);
+});
+
+test("Guide Capture : homonymes et sous-dossier partagé, ancêtre privé invisible",async({page,browser})=>{
+  await login(page);const suffix=randomUUID().slice(0,8),sameName=`Équipement ${suffix}`;await namedFolder(page,sameName);
+  const context=await browser.newContext({baseURL:"http://127.0.0.1:3210"});
+  try{
+    const owner=await context.newPage();await login(owner,"alex@hestia.invalid");const hidden=await namedFolder(owner,`Privé ${suffix}`),shared=await namedFolder(owner,sameName,hidden.id);
+    const sharing=await(await owner.request.get(`/api/hestia/folders/${shared.id}/sharing`)).json();const camille=sharing.members.find((m:{name:string})=>m.name==="Camille");expect(camille).toBeTruthy();
+    expect((await owner.request.post(`/api/hestia/folders/${shared.id}/sharing`,{headers:localOrigin,data:{memberId:camille.id,export:false,deposit:true,modify:true,delete:false,idempotencyKey:randomUUID()}})).status()).toBe(200);
+    const count=await assistedImport(page,{existing:[],created:[{parentId:null,levels:[sameName,"Garanties"],reason:"Choisissez l’équipement concerné."}]});
+    const card=page.locator(".hc-path-suggestion");await expect(card.getByText("Chemin à préciser",{exact:true})).toBeVisible();await expect(card.getByRole("button",{name:"Choisir cette proposition",exact:true})).toBeDisabled();
+    await expect(card.getByRole("radio")).toHaveCount(2);await card.getByRole("radio",{name:/Créé par Alex/}).click();
+    await expect(card.getByRole("radio")).toHaveCount(0);await expect(card.getByText("Chemin dans vos dossiers existants",{exact:true})).toBeVisible();
+    await expect(card.getByText("Nouvelle racine privée",{exact:true})).toHaveCount(0);await expect(page.getByText(hidden.name,{exact:false})).toHaveCount(0);
+    await card.getByRole("button",{name:"Choisir cette proposition",exact:true}).click();const response=page.waitForResponse(r=>r.url().endsWith("/preview")&&r.request().method()==="POST");await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();
+    const preview=(await(await response).json()).preview;expect(preview.path.map((p:{name:string})=>p.name)).toEqual([sameName,"Garanties"]);expect(preview.access.people).toBeUndefined();expect(JSON.stringify(preview)).not.toContain(hidden.name);
+    await page.getByRole("list",{name:"Chemin exact",exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:test.info().outputPath("capture-shared-prefix-review.png"),fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible();expect(count()).toBe(1);
+    const rows=(await(await owner.request.get("/api/hestia/folders")).json()).folders;expect(rows.filter((f:{name:string;visibleParentId:string})=>f.name==="Garanties"&&f.visibleParentId===shared.id)).toHaveLength(1);
+  }finally{await context.close();}
+});
 
 test("Capture mobile : pages ajustées, reprise privée, PDF multipage et classement manuel",async({page,isMobile})=>{
   test.skip(!isMobile,"A physical camera is not claimed; this test injects synthetic files on the mobile profile.");
@@ -178,7 +254,7 @@ test("Suggestions tardives : choix manuel préservé puis chemin confirmé atomi
     }}});
   });
   await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();
-  await expect(page.getByRole("button",{name:"Choisir ce chemin",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Choisir cette proposition",exact:true})).toBeVisible();
   await expect(page.getByRole("radio",{name:first.name,exact:true})).toHaveAttribute("aria-checked","false");
   await expect(page.getByRole("radio",{name:second.name,exact:true})).toHaveAttribute("aria-checked","false");
   await expect(page.getByText("Destination choisie.",{exact:true})).toHaveCount(0);
@@ -193,7 +269,7 @@ test("Suggestions tardives : choix manuel préservé puis chemin confirmé atomi
   await expect(page.getByRole("radio",{name:second.name,exact:true})).toHaveAttribute("aria-checked","false");
   const before=(await (await page.request.get("/api/hestia/folders")).json()).folders;
   expect(before.some((f:{name:string})=>f.name===levels[0])).toBe(false);
-  await page.getByRole("button",{name:"Choisir ce chemin",exact:true}).click();
+  await page.getByRole("button",{name:"Choisir cette proposition",exact:true}).click();
   await page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true}).click();
   await expect(page.getByRole("heading",{name:"Qui pourra accéder au document",exact:true})).toBeVisible();
   await expect(page.getByText(second.name+" / "+levels[0]+" (à créer) / "+levels[1]+" (à créer)",{exact:true})).toBeVisible();
