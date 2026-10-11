@@ -17,7 +17,10 @@ const folder = { id: "10000000-0000-4000-8000-000000000001", name: "Factures syn
 const payload = { bytes: Buffer.from("synthetic selected document"), mediaType: "application/pdf" as const, folders: [folder] };
 const suggestions = { existing: [{ folderId: folder.id, reason: "Facture synthétique" }], created: [] };
 const signal = () => new AbortController().signal;
-function body(content = JSON.stringify(suggestions), usage: unknown = { cost: 0.000001, cost_details: { upstream_inference_cost: 90 } }) {
+function external(value: { existing: unknown[]; created: unknown[] }) {
+  return JSON.stringify({ existingFolderSuggestions: value.existing, newFolderPathSuggestions: value.created });
+}
+function body(content = external(suggestions), usage: unknown = { cost: 0.000001, cost_details: { upstream_inference_cost: 90 } }) {
   return { model: OPENROUTER_CLASSIFICATION_MODEL, choices: [{ finish_reason: "stop", message: { role: "assistant", content } }], usage };
 }
 function setup(value: unknown = body(), selected = profile) {
@@ -101,8 +104,8 @@ describe("OpenRouter fixed one-call multimodal transport, entirely synthetic", (
     expect(instructions).not.toContain(hostileFolder.name);
     expect(request.messages[1].role).toBe("user");
     expect(request.messages[1].content[0]).toEqual({ type: "text", text: JSON.stringify({ folders: [hostileFolder] }) });
-    expect(request.response_format.json_schema.schema.properties.existing.minItems).toBeUndefined();
-    expect(request.response_format.json_schema.schema.properties.created.minItems).toBeUndefined();
+    expect(request.response_format.json_schema.schema.properties.existingFolderSuggestions.minItems).toBeUndefined();
+    expect(request.response_format.json_schema.schema.properties.newFolderPathSuggestions.minItems).toBeUndefined();
     expect(transport).toHaveBeenCalledTimes(1);
   });
   it("preserves multiple existing alternatives and a useful child path through common validation", async () => {
@@ -116,17 +119,28 @@ describe("OpenRouter fixed one-call multimodal transport, entirely synthetic", (
         { folderId: folders[1].id, reason: "Le lave-linge est un équipement du logement." }],
       created: [{ parentId: folders[1].id, levels: ["Garanties"], reason: "Le document indique une garantie de deux ans." }],
     };
-    const { provider, transport } = setup(body(JSON.stringify(alternatives)));
+    const { provider, transport } = setup(body(external(alternatives)));
     const outcome = await provider.analyze(config, { ...payload, folders }, "synthetic", signal());
     expect(parseClassificationResult(outcome.value, folders, 16_384, 8)).toEqual(alternatives);
     expect(JSON.parse(String(transport.mock.calls[0][1]?.body)).messages[1].content[0].text).toBe(JSON.stringify({ folders }));
   });
   it("accepts abstention without inventing alternatives or making another call", async () => {
     const empty = { existing: [], created: [] };
-    const { provider, transport } = setup(body(JSON.stringify(empty)));
+    const { provider, transport } = setup(body(external(empty)));
     const outcome = await provider.analyze(config, payload, "synthetic", signal());
     expect(parseClassificationResult(outcome.value, [folder], 16_384, 8)).toEqual(empty);
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("keeps existing-only suggestions and filters paths without create permission", async () => {
+    const restricted = { ...folder, canCreate: false };
+    const proposed = { parentId: folder.id, levels: ["Sous-catégorie"], reason: "Justification synthétique." };
+    for (const created of [[], [proposed]]) {
+      const { provider, transport } = setup(body(external({ ...suggestions, created })));
+      const outcome = await provider.analyze(config, { ...payload, folders: [restricted] }, "synthetic", signal());
+      expect(parseClassificationResult(outcome.value, [restricted], 16_384, 8)).toEqual(suggestions);
+      expect(outcome.actualMicros).toBe(2);
+      expect(transport).toHaveBeenCalledTimes(1);
+    }
   });
   it.each(["application/pdf", "image/png", "image/jpeg", "image/webp"] as const)("sends only selected %s and authorized catalogue with pinned routing", async mediaType => {
     const { provider, transport } = setup(); const requestSignal = signal();
@@ -217,13 +231,26 @@ describe("OpenRouter cost settlement and unusable suggestions", () => {
       expect(outcome.actualMicros).toBe(2); expect(() => parseClassificationResult(outcome.value, [folder], 16_384, 8)).toThrow();
     }
   });
+  it.each([
+    '{"existing":[],"created":[]}',
+    '{"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"created":[]}',
+    '{"existingFolderSuggestions":[],"newFolderPathSuggestions":null}',
+    JSON.stringify({ existingFolderSuggestions: [{ folderId: folder.id, reason: "Synthétique", action: "move" }], newFolderPathSuggestions: [] }),
+    JSON.stringify({ existingFolderSuggestions: [], newFolderPathSuggestions: [{ parentId: folder.id, levels: [42], reason: "Synthétique" }] }),
+  ])("rejects old, mixed or malformed external contract %# without losing cost or retrying", async content => {
+    const { provider, transport } = setup(body(content));
+    expect(await provider.analyze(config, payload, "synthetic", signal())).toEqual({ value: null, actualMicros: 2 });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(await provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 2 });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
   it("checks with a bounded strict JSON call and no document, and rejects overruns", async () => {
-    const { provider, transport } = setup(body('{"existing":[],"created":[]}'));
+    const { provider, transport } = setup(body(external({ existing: [], created: [] })));
     expect(await provider.check(config, "synthetic", signal())).toEqual({ status: "accepted", actualMicros: 2 });
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
-    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existing":[],"created":[]}.' }]);
+    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existingFolderSuggestions":[],"newFolderPathSuggestions":[]}.' }]);
     expect(request.plugins).toEqual([]); expect(request.max_tokens).toBe(profile.maxOutputTokens);
-    expect(await setup(body('{"existing":[],"created":[]}', { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
+    expect(await setup(body(external({ existing: [], created: [] }), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
     expect((await setup(body("OK")).provider.check(config, "synthetic", signal())).status).toBe("unreachable");
   });
 });
