@@ -6,6 +6,23 @@ export class CaptureError extends Error {
 type CaptureJob = { priority: "read" | "write"; start: () => Promise<void> };
 type CaptureQueue = { running: boolean; jobs: CaptureJob[] };
 const captureQueues = new Map<string, CaptureQueue>();
+// An aborted preview can release the browser queue before its server worker has
+// released the aggregate lock. Only this explicit pre-action refusal is safe to
+// repeat: generation busy, uncertain responses and provider calls are excluded.
+async function waitForCaptureOperation(send:()=>Promise<Response>,signal:AbortSignal):Promise<Response> {
+  const delays=[100,200,400,800,1000,1000,1000],deadline=Date.now()+5000;
+  for(let attempt=0;;attempt++){
+    signal.throwIfAborted();const response=await send();
+    if(response.status!==409||attempt===delays.length||Date.now()+delays[attempt]>deadline)return response;
+    const data=await response.clone().json().catch(()=>null);
+    if(data?.error?.code!=="CAPTURE_OPERATION_BUSY")return response;
+    await new Promise<void>((resolve,reject)=>{
+      const abort=()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);reject(signal.reason);};
+      const timer=setTimeout(()=>{signal.removeEventListener("abort",abort);resolve();},delays[attempt]);
+      signal.addEventListener("abort",abort,{once:true});if(signal.aborted)abort();
+    });
+  }
+}
 /** One operation at a time per aggregate. Writes pass queued previews, never the
  * active request. Aborted queued reads own no bytes and are removed immediately. */
 function captureTurn<T>(captureId:string, signal:AbortSignal, priority:"read"|"write", task:()=>Promise<T>):Promise<T> {
@@ -21,15 +38,17 @@ function captureTurn<T>(captureId:string, signal:AbortSignal, priority:"read"|"w
   return result;
 }
 export async function captureRequest<T>(path: string, signal: AbortSignal, method = "GET", body?: unknown): Promise<T> {
+  const aggregate=path.match(/^\/capture\/([^/?]+)(?:\/(?:pages(?:\/[^/?]+\/complete)?|prepare|preview|finalize))?$/)?.[1];
+  const serializedBody=body===undefined?undefined:JSON.stringify(body);
   const send=async()=>{
-    const response = await fetch('/api/hestia'+path, { method, signal:AbortSignal.any([signal,AbortSignal.timeout(100_000)]), credentials: "same-origin", cache: "no-store", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const request=()=>fetch('/api/hestia'+path, { method, signal:AbortSignal.any([signal,AbortSignal.timeout(100_000)]), credentials: "same-origin", cache: "no-store", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: serializedBody });
+    const response = method!=="GET"&&aggregate?await waitForCaptureOperation(request,signal):await request();
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new CaptureError(response.status, data?.error?.code || "UNAVAILABLE", data?.error?.message || "L’action n’a pas pu aboutir. Réessayez.");
     return data as T;
   };
   // Analyze is deliberately outside this queue: a waiting provider must never
   // delay choosing a destination, previewing rights or recording manually.
-  const aggregate=path.match(/^\/capture\/([^/?]+)(?:\/(?:pages(?:\/[^/?]+\/complete)?|prepare|preview|finalize))?$/)?.[1];
   return method!=="GET"&&aggregate ? captureTurn(aggregate,signal,"write",send) : send();
 }
 export type PendingPage = { file: File; key: string; hash?: string; reservation?: CapturePageReservationDto; replacePageId?: string };
@@ -51,7 +70,8 @@ export async function uploadCapturePage(capture: CaptureDto, pending: PendingPag
   pending.reservation ??= await captureRequest<CapturePageReservationDto>(`/capture/${capture.id}/pages`, signal, "POST", { version: capture.version, idempotencyKey: pending.key, fileName: pending.file.name, mediaType: mediaType as CaptureMediaType, size: pending.file.size, sha256: pending.hash, replacePageId: pending.replacePageId });
   const { upload, captureVersion } = pending.reservation;
   for (let offset = 0, index = 0; offset < pending.file.size; offset += upload.chunkSize, index++) {
-    const response = await captureTurn(capture.id,signal,"write",()=>fetch(`/api/hestia/capture/${capture.id}/pages/${upload.id}/chunks/${index}`, { method: "PUT", credentials: "same-origin", cache: "no-store", signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]), headers: { "Content-Type": "application/octet-stream" }, body: pending.file.slice(offset, offset + upload.chunkSize) }));
+    const chunk=pending.file.slice(offset,offset+upload.chunkSize);
+    const response = await captureTurn(capture.id,signal,"write",()=>waitForCaptureOperation(()=>fetch(`/api/hestia/capture/${capture.id}/pages/${upload.id}/chunks/${index}`, { method: "PUT", credentials: "same-origin", cache: "no-store", signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]), headers: { "Content-Type": "application/octet-stream" }, body: chunk }),signal));
     if (!response.ok) { const data = await response.json().catch(() => ({})); throw new CaptureError(response.status, data?.error?.code || "UPLOAD_FAILED", data?.error?.message || "Envoi interrompu. Cette page n’est pas encore confirmée."); }
     progress(Math.round(Math.min(offset + upload.chunkSize, pending.file.size) / pending.file.size * 100));
   }
@@ -67,7 +87,7 @@ async function readCaptureBlob(captureId: string, selector: {pageId: string} | {
   const chunks: ArrayBuffer[] = []; let offset = 0, total = 20 * 1024 * 1024, type = "";
   while (offset < total) {
     const query = new URLSearchParams({ ...selector, offset: String(offset), length: String(Math.min(2 * 1024 * 1024, total - offset)) });
-    const response = await fetch(`/api/hestia/capture/${captureId}/content?${query}`, { credentials: "same-origin", cache: "no-store", signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]) });
+    const response = await waitForCaptureOperation(()=>fetch(`/api/hestia/capture/${captureId}/content?${query}`, { credentials: "same-origin", cache: "no-store", signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]) }),signal);
     if (!response.ok) throw new CaptureError(response.status, "PREVIEW_FAILED", "Aperçu indisponible. Actualisez les pages avant de poursuivre.");
     const range = response.headers.get("Content-Range")?.match(/bytes (\d+)-(\d+)\/(\d+)/);
     const bytes = await response.arrayBuffer();

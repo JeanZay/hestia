@@ -102,7 +102,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
       // Reasons and summary are free text. A vanished catalogue entry may also
       // occur in that text, so invalidate the whole response when it changes.
       if (hash(folders) !== hash(row.folders)) return { ...basic, status: "stale" };
-      const result = parseClassificationResult(row.result, folders, deps.maxResultBytes, deps.maxSuggestions);
+      const result = parseClassificationResult(row.result, folders, deps.maxResultBytes, deps.maxSuggestions, true);
       // If a former destination disappeared, keep surviving suggestions only.
       return { ...basic, result };
     } catch (error) {
@@ -178,7 +178,9 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
         await deps.capture.assertCurrent(client, actor, identity);
         const row = await config(client), selected = provider(row), folders = await deps.readAuthorizedFolders(client, actor);
         if (row.version !== initial.configVersion) throw conflict();
-        const payload: ProviderPayload = { bytes, mediaType: identity.mediaType, folders };
+        // Every currently admitted actor may propose their own private root.
+        // Only Capture's later preview/confirmation may actually create it.
+        const payload: ProviderPayload = { bytes, mediaType: identity.mediaType, folders, canCreateRoot: true };
         const saved = await reserve(client, actor, row, key, "analysis", identityHash, identity, selected.quote(configured(row), payload));
         if (saved.fresh) await client.query("UPDATE hestia_classification_request SET folders=$2 WHERE id=$1", [saved.row.id, JSON.stringify(folders)]);
         return { ...saved, config: row, selected, payload };
@@ -200,7 +202,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
       try {
         const outcome = await bounded(signal => reservation.selected.analyze(configured(reservation.config), reservation.payload, credential, signal));
         actual = outcome.actualMicros;
-        const result = parseClassificationResult(outcome.value, reservation.payload.folders, deps.maxResultBytes, deps.maxSuggestions);
+        const result = parseClassificationResult(outcome.value, reservation.payload.folders, deps.maxResultBytes, deps.maxSuggestions, reservation.payload.canCreateRoot);
         await settle(reservation.row.id, actual, result, "complete");
       } catch { await settle(reservation.row.id, actual, null, "failed"); }
       return handleCaptureAnalysis(new Request(request.url, { headers: request.headers }), captureId, reservation.row.id);

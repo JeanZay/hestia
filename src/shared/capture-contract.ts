@@ -20,7 +20,7 @@ export type CaptureArtifactDto = {
 };
 export type CaptureDestination =
   | { kind: "existing"; folderId: string }
-  | { kind: "create"; parentId: string; levels: string[] };
+  | { kind: "create"; parentId: string | null; levels: string[] };
 export type CaptureAccessProjection = {
   capabilities: string[]; message: string;
   /** Only the existing sharing/administration envelope may disclose people. */
@@ -46,7 +46,7 @@ export type CaptureOperationDto =
   | { status: "not-recorded" | "in-progress" };
 export type ClassificationResultDto = {
   existing: { folderId: string; reason: string }[];
-  created: { parentId: string; levels: string[]; reason: string }[];
+  created: { parentId: string | null; levels: string[]; reason: string }[];
   summary?: string;
 };
 export type ClassificationAnalysisDto = {

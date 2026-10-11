@@ -1,11 +1,12 @@
+import { OPENROUTER_CLASSIFICATION_CONTRACT_SHA256 } from "../../src/server/classification/openrouter";
 import { describe, expect, it } from "vitest";
 import { readClassificationDeployment, DEV_CLASSIFICATION_CEILING_MICROS } from "../../src/server/classification/deployment";
 
 describe("classification deployment gate", () => {
-  const profile = { model: "anthropic/claude-haiku-5.5", providerSlug: "anthropic",
+  const profile = { classificationContractSha256: OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, model: "anthropic/claude-haiku-5.5", providerSlug: "anthropic",
     qualificationRef: "synthetic-only", pricingSourceRef: "synthetic-prices", exchangeRateSourceRef: "synthetic-fx",
     qualifiedAt: "2026-10-10T00:00:00Z", expiresAt: "2026-10-11T00:00:00Z", currency: "EUR",
-    maxContextTokens: 1_000_000, maxOutputTokens: 2048, maxInputBytes: 4096, maxFolderBytes: 4096,
+    maxContextTokens: 1_000_000, maxOutputTokens: 2048, maxInputBytes: 4096, maxFolderBytes: 32768,
     mediaTypes: ["application/pdf", "image/png"], pricingTiers: [
       { minimumContextTokens: 0, promptUsdPerMillion: "0.1", completionUsdPerMillion: "0.5" },
       { minimumContextTokens: 100000, promptUsdPerMillion: "0.5", completionUsdPerMillion: "2.5" }], usdToEurUpperBound: "1.2" };
@@ -34,5 +35,14 @@ describe("classification deployment gate", () => {
     time = new Date("2026-10-11T00:00:00Z");
     expect(active.providers?.[0].quoteCheck(config)).toBeNull();
     expect(readClassificationDeployment("dev", env, () => time).allowRemote).toBe(false);
+  });
+  it("keeps a former deployment profile disabled after the classification contract changes", () => {
+    for (const classificationContractSha256 of [undefined, "old-contract"]) {
+      const result = readClassificationDeployment("dev", {
+        HESTIA_CLASSIFICATION_REMOTE: "openrouter-haiku-dev",
+        HESTIA_OPENROUTER_PROFILE: JSON.stringify({ ...profile, classificationContractSha256 }),
+      }, () => new Date("2026-10-10T12:00:00Z"));
+      expect(result).toEqual({ providers: [], allowRemote: false, deploymentLimitMicros: 50_000_000 });
+    }
   });
 });
