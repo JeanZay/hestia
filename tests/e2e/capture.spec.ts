@@ -39,6 +39,66 @@ async function assistedImport(page:Page,result:ClassificationResultDto){
   await expect(page.getByRole("heading",{name:"3. Créer un chemin (proposé)",exact:true})).toBeVisible();return ()=>analyses;
 }
 
+const emptyFeedbackText="Aucune suggestion pertinente pour ce document. Choisissez un dossier vous-même.";
+const emptyFeedback=(page:Page)=>page.getByRole("status",{name:"Aucune suggestion pertinente.",exact:true});
+async function feedbackImport(page:Page){
+  await drafts(page);await picker(page,"Importer un fichier");
+  await page.getByLabel("Titre du document").fill("Capture synthétique sans destination");
+  await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Où ranger ce document ?",exact:true})).toBeVisible();
+}
+
+test("Résultat IA vide : retour accessible renouvelé et classement manuel sans relance implicite",async({page})=>{
+  await login(page);const folder=await createFolder(page),before=(await(await page.request.get("/api/hestia/folders")).json()).folders;
+  let analyses=0,deliver=()=>{};const held=new Promise<void>(resolve=>{deliver=resolve;});
+  await page.route("**/api/hestia/capture/*/analyze",async route=>{
+    analyses++;if(analyses===2)await held;
+    await route.fulfill({status:200,json:{analysisId:randomUUID(),status:"complete",result:{existing:[],created:[]}}});
+  });
+  await feedbackImport(page);await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();
+  const feedback=emptyFeedback(page);await expect(feedback).toHaveText(emptyFeedbackText);await expect(feedback).toHaveAttribute("aria-live","polite");
+  await expect(page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true})).toBeDisabled();expect(analyses).toBe(1);
+  await choose(page,folder.name);await page.getByRole("button",{name:"Retour",exact:true}).click();
+  await expect(page.getByText("Destination choisie.",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Ne plus attendre",exact:true})).toBeVisible();await expect(feedback).toHaveCount(0);
+  deliver();await expect(feedback).toHaveText(emptyFeedbackText);await expect(page.getByText("Destination choisie.",{exact:true})).toBeVisible();
+  expect(analyses).toBe(2);expect((await(await page.request.get("/api/hestia/folders")).json()).folders).toEqual(before);
+  expect((await(await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json()).documents).toHaveLength(0);
+  await expect(page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true})).toBeEnabled();
+});
+
+test("Résultat IA vide : transitions existant, vide puis nouveau chemin sans faux état vide",async({page})=>{
+  await login(page);const folder=await createFolder(page),rootName=`Soins ${randomUUID().slice(0,8)}`;
+  const results:ClassificationResultDto[]=[{existing:[{folderId:folder.id,reason:"Dossier témoin synthétique."}],created:[]},{existing:[],created:[]},{existing:[],created:[{parentId:null,levels:[rootName],reason:"Chemin synthétique à confirmer."}]}];
+  let analyses=0;await page.route("**/api/hestia/capture/*/analyze",async route=>{
+    const result=results[analyses++];expect(result).toBeDefined();await route.fulfill({status:200,json:{analysisId:randomUUID(),status:"complete",result}});
+  });
+  await feedbackImport(page);await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();
+  await expect(page.getByRole("radio",{name:folder.name,exact:true})).toBeVisible();await expect(emptyFeedback(page)).toHaveCount(0);
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();await expect(emptyFeedback(page)).toHaveText(emptyFeedbackText);
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();await expect(page.getByRole("heading",{name:"3. Créer un chemin (proposé)",exact:true})).toBeVisible();
+  await expect(emptyFeedback(page)).toHaveCount(0);await page.locator(".hc-path-suggestion").getByRole("button",{name:"Choisir cette proposition",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true})).toBeEnabled();
+  expect((await(await page.request.get("/api/hestia/folders")).json()).folders.some((f:{name:string})=>f.name===rootName)).toBe(false);expect(analyses).toBe(3);
+});
+
+test("Résultat IA vide : erreur et réponse annulée distinctes, puis succès courant après polling",async({page})=>{
+  await login(page);let analyses=0,polls=0,deliver=()=>{};const held=new Promise<void>(resolve=>{deliver=resolve;});
+  await page.route("**/api/hestia/capture/*/analyze",async route=>{
+    analyses++;const attempt=analyses;if(attempt===3)await held;
+    await route.fulfill({status:200,json:{analysisId:randomUUID(),status:attempt===2?"failed":attempt===4?"pending":"complete",...(attempt===2||attempt===4?{}:{result:{existing:[],created:[]}})}});
+  });
+  await page.route("**/api/hestia/capture/*/analyses/*",async route=>{polls++;await route.fulfill({status:200,json:{analysisId:randomUUID(),status:"complete",result:{existing:[],created:[]}}});});
+  await feedbackImport(page);await page.getByRole("button",{name:"Demander des suggestions",exact:true}).click();await expect(emptyFeedback(page)).toHaveText(emptyFeedbackText);
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();await expect(page.getByText("Suggestions indisponibles.",{exact:true})).toBeVisible();await expect(emptyFeedback(page)).toHaveCount(0);
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();await expect(page.getByRole("button",{name:"Ne plus attendre",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Ne plus attendre",exact:true}).click();const lateResponse=page.waitForResponse(r=>r.url().endsWith("/analyze"));deliver();await lateResponse;
+  await expect(page.getByText("Vous n’attendez plus les suggestions.",{exact:true})).toBeVisible();await expect(emptyFeedback(page)).toHaveCount(0);
+  await page.getByRole("button",{name:"Redemander (nouvelle analyse)",exact:true}).click();await expect(emptyFeedback(page)).toHaveText(emptyFeedbackText);
+  expect(analyses).toBe(4);expect(polls).toBe(1);await expect(page.getByRole("button",{name:"Vérifier avant d’enregistrer",exact:true})).toBeDisabled();
+});
+
 test("Guide Capture : nouvelle racine privée, changement annulé et rétabli avant confirmation",async({page,browser})=>{
   await login(page);const existing=await createFolder(page),rootName=`Animaux ${randomUUID().slice(0,8)}`;
   const count=await assistedImport(page,{existing:[],created:[{parentId:null,levels:[rootName,"Soins"],reason:"Document vétérinaire synthétique."}]});
