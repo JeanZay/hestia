@@ -1,22 +1,24 @@
 # ADR 0010 — Classement Capture via OpenRouter
 
-Date : 10 octobre 2026. Complète l'ADR 0009, sans nouvelle interface.
+Date : 10 octobre 2026. Complément Production : 12 octobre 2026. Complète l'ADR 0009, sans nouvelle interface.
 
 ## Un modèle pour le document et ses destinations
 
 Le modèle retenu est `anthropic/claude-haiku-5.5`. Un appel reçoit le document préparé et les dossiers autorisés, puis propose plusieurs emplacements existants ou de nouveaux chemins. Il ne classe rien lui-même. La validation des résultats, des droits et de la confirmation reste celle du service Capture.
 
-## Activation explicite en Dev
+## Activation explicite par environnement
 
-Le serveur démarre sans fournisseur distant. Pour Dev seulement, `HESTIA_CLASSIFICATION_REMOTE=openrouter-haiku-dev` et `HESTIA_OPENROUTER_PROFILE` (JSON sans secret) permettent de charger un profil qualifié et non périmé. Ces variables ne configurent pas la Production. Un profil invalide ou absent laisse le classement manuel disponible.
+Le serveur démarre sans fournisseur distant. Dev exige `HESTIA_CLASSIFICATION_REMOTE=openrouter-haiku-dev` ; Production exige le token distinct `openrouter-haiku-production`. Chaque environnement charge son `HESTIA_OPENROUTER_PROFILE` (JSON sans secret) qualifié et non périmé. Un token absent, inconnu ou destiné à l'autre environnement, ou un profil absent, invalide, surdimensionné ou périmé laisse le fournisseur désactivé et le classement manuel disponible. Local ne peut jamais activer ce fournisseur distant, même avec un token et un profil valides.
 
 Le profil indique le modèle et le fournisseur exact, la référence de qualification, les sources tarifaires et de conversion monétaire, les dates de validité et les bornes de formats, volumes, contexte et sortie. Une référence textuelle n'est pas une certification : l'opérateur doit conserver les résultats réels correspondants avant activation. L'expiration est recontrôlée avant chaque appel.
 
-La clé est renseignée dans les réglages existants réservés au Propriétaire et aux Administrateurs. Elle reste chiffrée dans la base et n'est jamais renvoyée par GET. Le profil de déploiement ne contient pas la clé. Enregistrer les réglages ne fait aucun appel ; le test et l'analyse restent des gestes explicites et budgétés.
+La clé est renseignée dans les réglages existants réservés au Propriétaire et aux Administrateurs. Elle reste chiffrée dans la base et n'est jamais renvoyée par GET. Le profil de déploiement ne contient pas la clé. La même clé OpenRouter peut être utilisée dans les deux environnements, chacun avec son stockage chiffré séparé. Lire ou enregistrer la configuration ne fait aucun appel ; le test et l'analyse restent des gestes explicites et budgétés. Le câblage disponible ne vaut pas activation autorisée : Production attend son GO sur le candidat exact et les preuves opératoires applicables.
 
 ## Budget et facture
 
-Dev impose un plafond serveur de **50 EUR par mois civil UTC**. Le plafond effectif est le minimum entre celui-ci et le plafond des réglages du foyer. Un PUT ne peut pas relever la limite serveur ; une valeur préexistante supérieure est également plafonnée lors de la réservation. Les appels d'analyse et de test partagent ce contrôle sérialisé.
+Dev conserve son plafond serveur de **50 EUR par mois civil UTC**. Production impose son propre plafond serveur de **50 EUR par mois civil UTC**, y compris quand le fournisseur est désactivé. Chaque environnement utilise ses réglages, sa base et son registre de réservations séparés ; les dépenses et réserves Dev ne sont pas imputées au budget Production, et réciproquement. Ces deux plafonds ne constituent pas une limite globale du compte OpenRouter, même avec une clé partagée.
+
+Dans chaque environnement, le plafond effectif est le minimum entre le plafond serveur et celui des réglages du foyer. Un PUT ne peut pas relever la limite serveur ; une valeur préexistante supérieure est également plafonnée lors de la réservation. Les appels d'analyse et de test partagent ce contrôle sérialisé.
 
 La réserve couvre le contexte maximal qualifié au tarif d'entrée le plus élevé et la sortie bornée au tarif de sortie le plus élevé, avec conversion conservatrice vers l'euro et arrondi supérieur. La taille d'un PDF compressé et le nombre de fichiers importés ne sont pas une borne de tokens. Les paliers tarifaires, notamment les contextes longs, doivent être inclus dans la qualification. Les rabais de cache ne sont pas anticipés.
 
@@ -30,7 +32,7 @@ Les documents sont intégrés en base64 avec un nom générique ; aucune URL doc
 
 ## Qualification
 
-Les tests synthétiques de transport, de coût et de budget SQL sont nécessaires, mais ne prouvent ni la qualité ni la latence réelles. Avant l'activation Dev, vérifier le profil exact sur un corpus synthétique de PDF texte, scan multipage et images, ainsi que les suggestions multiples et le retour au classement manuel après erreur. Conserver le coût, la durée, le modèle et le fournisseur, sans secret ni document familial.
+Les tests synthétiques de transport, de coût et de budget SQL sont nécessaires, mais ne prouvent ni la qualité ni la latence réelles. Avant l'activation de chaque environnement, vérifier les preuves applicables au profil exact sur un corpus synthétique de PDF texte, scan multipage et images, ainsi que les suggestions multiples et le retour au classement manuel après erreur. Conserver le coût, la durée, le modèle et le fournisseur, sans secret ni document familial. La qualification Dev d'un profil ne constitue pas un GO Production ; les contrôles du candidat, migrations, sauvegarde/restauration et procédure de retour doivent être qualifiés séparément.
 
 Les huit propositions Browser Use Capture gardent leur contrat. Les parcours exigeant une IA inactive sont exécutés dans cette configuration avant les parcours nécessitant le fournisseur actif. Chaque phase conserve sa configuration et son identité de déploiement ; aucun résultat historique n'est transféré.
 
