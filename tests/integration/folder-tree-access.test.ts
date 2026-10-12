@@ -46,7 +46,15 @@ describe('tree access with PostgreSQL and signed sessions',()=>{
    expect((await pool.query('SELECT count(*)::int n FROM hestia_grant')).rows[0].n).toBe(50000);
    expect(await rights(0)).toContain('consulter');expect((await pool.query('SELECT reference_grant_id FROM hestia_folder WHERE id=$1',[child])).rows[0].reference_grant_id).toBeNull();
    checked=performance.now();
-  }finally{await pool.query('DELETE FROM hestia_grant WHERE origin=$1',[marker]);console.log(JSON.stringify({test:'grant capacity 50000',populationMs:Math.round(populated-started),checksMs:Math.round(Math.max(0,checked-populated)),cleanupMs:Math.round(performance.now()-Math.max(populated,checked))}));}
+  }finally{
+   // Teardown only: the self-referencing FK otherwise scans the 50k-row fixture
+   // for every removed row. Assertions above run against the product schema.
+   const cleanupIndex=`hestia_test_grant_anchor_${randomUUID().replaceAll('-','')}`;
+   await pool.query(`CREATE INDEX "${cleanupIndex}" ON hestia_grant(anchor_reference_id)`);
+   try{await pool.query('DELETE FROM hestia_grant WHERE origin=$1',[marker]);}
+   finally{await pool.query(`DROP INDEX "${cleanupIndex}"`);}
+   console.log(JSON.stringify({test:'grant capacity 50000',populationMs:Math.round(populated-started),checksMs:Math.round(Math.max(0,checked-populated)),cleanupMs:Math.round(performance.now()-Math.max(populated,checked))}));
+  }
  // Includes inserting/removing 50,000 real rows on the single-CPU owned bench;
  // the operation/refusal assertions and all policy limits remain unchanged.
  },120000);
