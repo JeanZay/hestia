@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const config: NextConfig = {
   output: "standalone",
+  outputFileTracingRoot: __dirname,
+  turbopack: { root: __dirname },
   poweredByHeader: false,
   devIndicators: false,
   outputFileTracingIncludes: {
