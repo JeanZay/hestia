@@ -1,8 +1,8 @@
 ```json
 {
   "schemaVersion": 1,
-  "revision": 4,
-  "status": "active",
+  "revision": 5,
+  "status": "retired",
   "theme": "Capture — guide documentaire",
   "references": [
     "docs/adr/0009-capture-classification.md",
@@ -63,16 +63,20 @@
   ],
   "dependencies": [],
   "approval": {
-    "kind": "editorial",
-    "actor": "root",
-    "approvedAt": "2026-10-11T18:02:08.177Z",
-    "proposalSha256": "be8a1ff8d6b522d224c598cca7033c60d3e5120d74d67727d3151e80f2096d64",
-    "decisionSha256": "aced339e66b47ead13e682a267ca4b4874d586d0df438c510d1c8fed02b11f29",
-    "contentSha256": "2110978d26b30daca2e31f44c01b62c371eda943f251e451d2b4fdb3ada4db8e",
-    "contractSha256": "9b6d76aecbbf813df4f7083daba92fbf73b9b78e8768c48fae28793094e16fc9"
+    "kind": "human",
+    "actor": "Amaury",
+    "approvedAt": "2026-10-12T06:45:18.934Z",
+    "proposalSha256": "237da2577deacf41d93b9f29a100c6c8e9da3826cc6c04310f5f994997e34186",
+    "decisionSha256": "d6acded58cfb2eca4c93f811f704c6bba17b49f21c912109226bad0d46928755",
+    "contentSha256": "d2743593a7b70b32604dc2d8ed31af3dfd7c7246809c3f0581aaa7ef61614c3c",
+    "contractSha256": "aa793ecd93ef9c282bc824af2227efa52dd9fc0de36f96d368d755cc1f73ac52"
   }
 }
 ```
+
+# Retrait proposé de la fiche préfixe + suffixe
+
+PROPOSITION — NON ADMISE. Le contrat historique ci-dessous est conservé pour interpréter ses anciennes tentatives. Il exigeait un nouveau chemin à chaque analyse. Le retrait proposé sépare maintenant la pertinence des suggestions (nouvelle fiche capture-suggestions-pertinentes r1) de la création d’arborescence (contrôles techniques déterministes). Aucun FAIL historique n’est effacé et aucun PASS n’est transféré. Cette fiche retirée ne doit plus être sélectionnée après son admission.
 
 # Réutiliser un préfixe existant et confirmer son suffixe manquant
 
