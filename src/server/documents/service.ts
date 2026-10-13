@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { type Access, type Actor, HttpError, bodyBytes, guarded, invalid, isUuid, json, privateHeaders, response, textField, unavailable } from "../access";
+import { type Access, type Actor, HttpError, bodyBytes, guarded, invalid, isUuid, json, privateHeaders, readActivity, response, textField, unavailable } from "../access";
 import type { ObjectStore } from "../storage";
 import { validateOriginal } from "../formats";
-import { getFolderAccess, getFolderAccessEvaluator, loadFolderAccessGraph } from "../permissions/service";
+import { getFolderAccess, getFolderAccessEvaluator, loadFolderAccessGraph, type FolderAccessEvaluator } from "../permissions/service";
+import type { WorkspaceDocument } from "../../lib/workspace";
 import {evaluateTreeAccess} from '../permissions/tree';
 import {trashPolicyGraph} from './folder-trash';
 import { createStorageBudget, type StorageBudget } from '../storage/quota';
@@ -26,7 +27,7 @@ type Upload = {
 };
 type StoredDocument = {
   id: string; folder_id: string; title: string; file_name: string; media_type: string;
-  size: number; sha256: string; source: string; version: number; created_at: Date;
+  size: number; sha256: string; source: "import" | "camera"; version: number; created_at: Date;
   uploaded_by_name: string; preview_supported: boolean; object_key: string;
   trashed_at: Date | null; purged_at: Date | null; trashed_by_name: string | null;
   trash_group_id: string | null;
@@ -37,11 +38,26 @@ const conflict = (code: string, message: string) => new HttpError(409, code, mes
 const closed = () => conflict("OPERATION_CLOSED", "Cet envoi a expiré ou a été annulé. Recommencez l’ajout.");
 const busy = () => conflict("OPERATION_BUSY", "Cet envoi est déjà en cours. Réessayez dans un instant.");
 const fold = (value: string) => value.normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase("fr");
-function dto(row: StoredDocument, capabilities: string[]) {
+function dto(row: StoredDocument, capabilities: string[]):WorkspaceDocument {
   return { id: row.id, folderId: row.folder_id, title: row.title, fileName: row.file_name,
     mediaType: row.media_type, size: row.size, sha256: row.sha256, source: row.source,
     version: row.version, createdAt: row.created_at.toISOString(), uploadedByName: row.uploaded_by_name,
     previewSupported: row.preview_supported, capabilities };
+}
+
+/** The caller owns admission, the transaction and its current rights evaluator. */
+export async function readWorkspaceDocuments(client:PoolClient,evaluate:FolderAccessEvaluator,folderId:string|null,q:string):Promise<WorkspaceDocument[]> {
+  const rows=(await client.query<StoredDocument>(`SELECT d.id,d.folder_id,d.title,d.file_name,d.media_type,d.size,d.sha256,d.source,
+    d.version,d.created_at,d.uploaded_by_name,d.preview_supported FROM hestia_document d
+    WHERE d.purged_at IS NULL AND d.trashed_at IS NULL AND ($1::uuid IS NULL OR d.folder_id=$1)
+    ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`,[folderId])).rows;
+  if(rows.length>10000)throw new HttpError(503,"RESOURCE_LIMIT","Cette recherche est trop importante. Précisez le dossier recherché.");
+  const query=fold(q),documents:WorkspaceDocument[]=[];
+  for(const row of rows){
+    const rights=evaluate(row.folder_id);
+    if(rights.capabilities.includes("consulter")&&fold(row.title+" "+row.file_name).includes(query))documents.push(dto(row,rights.capabilities));
+  }
+  return documents;
 }
 
 export function createDocuments(pool: Pool, access: Access, dependencies?: DocumentDependencies) {
@@ -302,7 +318,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
             : dto(row,rights.capabilities));
         }
         return { documents: result, now: now.toISOString() };
-      });
+      },readActivity(request));
       return response(listing);
     });
   }
@@ -335,7 +351,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
       if (!isUuid(id)) throw unavailable();
       if (request.method === "GET") return response({ document: await withActor(request,async (client,actor) => {
         const current = await currentDocument(client,actor,id); return dto(current.row,current.capabilities);
-      }) });
+      },readActivity(request)) });
       origin(request);
       const input = await json(request,["title","version"]), title = textField(input.title,200);
       if (!Number.isSafeInteger(input.version) || Number(input.version)<1 || Number(input.version)>2147483647) throw invalid();

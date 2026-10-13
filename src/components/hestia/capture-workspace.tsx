@@ -19,7 +19,7 @@ const expiry=(c:CaptureDto)=>new Date(c.expiresAt).toLocaleString("fr-FR");
 const allowed=(f:TreeFolder|undefined,create=false)=>!!f&&f.capabilities.includes("consulter")&&f.capabilities.includes("déposer")&&(!create||f.capabilities.includes("modifier"));
 const folderLabel=(f:TreeFolder)=>f.breadcrumbs.map(p=>p.name).join(" / ")||f.name;
 
-export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId,mode="photo",initial,pendingRef,onConsumed,onClose,onDone,onAccessLost}:{userId:string;folders:TreeFolder[];currentFolderId:string|null;mode?:"photo"|"drafts";initial?:CaptureResult|null;pendingRef:RefObject<CapturePendingFinal|null>;onConsumed:()=>void;onClose:()=>void;onDone:(folderId:string)=>void;onAccessLost:()=>void}) {
+export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId,mode="photo",initial,pendingRef,onConsumed,onClose,onDone,onCommitted,onMutationStart,onAccessLost}:{userId:string;folders:TreeFolder[];currentFolderId:string|null;mode?:"photo"|"drafts";initial?:CaptureResult|null;pendingRef:RefObject<CapturePendingFinal|null>;onConsumed:()=>void;onClose:()=>void;onDone:(folderId:string)=>void;onCommitted:()=>Promise<boolean>;onMutationStart:()=>void;onAccessLost:()=>void}) {
   const [refreshedFolders,setRefreshedFolders]=useState<TreeFolder[]|null>(null);
   const folders=refreshedFolders??providedFolders;
   const [pathDrafts,setPathDrafts]=useState<CapturePathDraft[]>([]);
@@ -47,7 +47,9 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
   useEffect(()=>{
     const ac=new AbortController();controller.current=ac;
     void Promise.resolve().then(()=>{if(ac.signal.aborted)return;setCamera(hasNativeCamera());const op=pendingRef.current;if(op?.userId===userId){accept(op.capture);setArtifact(op.preview.artifact);setDestination(op.body.destination);setPreview(op.preview);setKeepDuplicate(op.body.keepDuplicate);setStep("review");setUncertain(true);setNotice({tone:"warning",title:"Résultat incertain.",text:"Vérifiez le résultat de l’enregistrement précédent avant de recommencer."});}});
-    void Promise.resolve().then(()=>list(ac.signal)).catch(fail).finally(()=>{if(!ac.signal.aborted)setLoading(false);});
+    // A restored uncertain finalization already has its review payload. Loading
+    // the hidden draft list here would count an automatic return as activity.
+    void Promise.resolve().then(()=>{if(!ac.signal.aborted&&pendingRef.current?.userId!==userId)return list(ac.signal);}).catch(fail).finally(()=>{if(!ac.signal.aborted)setLoading(false);});
     return()=>{
       ac.abort();
       const c=current.current;
@@ -127,15 +129,20 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
     if(!capture||!artifact||!destination||!preview||running.current||!controller.current)return;
     if(uncertain&&!reconcile)return;
     const signal=controller.current.signal;
+    onMutationStart();
     pendingRef.current??={userId,captureId:capture.id,capture,preview,body:{version:capture.version,artifactId:artifact.id,destination,keepDuplicate,previewToken:preview.previewToken,idempotencyKey:crypto.randomUUID()}};
     const op=pendingRef.current;running.current=true;setBusy(true);setNotice(null);
+    let recorded=false;
     try{const r=await captureRequest<CaptureOperationDto>(reconcile?`/capture-operations/${op.body.idempotencyKey}`:`/capture/${op.captureId}/finalize`,signal,"POST",reconcile?{captureId:op.captureId,...op.body}:op.body);
       if(signal.aborted)return;
-      if(r.status==="recorded"){pendingRef.current=null;current.current=null;setCapture(null);setDone({folderId:r.document.folderId,title:r.document.title});}
+      if(r.status==="recorded"){recorded=true;pendingRef.current=null;current.current=null;setCapture(null);setDone({folderId:r.document.folderId,title:r.document.title});}
       else if(r.status==="not-recorded"){pendingRef.current=null;setUncertain(false);setPreview(null);setStep("destination");setNotice({title:"Non enregistré.",text:"Relisez la destination et les accès avant de réessayer."});}
       else{setUncertain(true);setNotice({tone:"warning",title:"Enregistrement en cours.",text:"Vérifiez le résultat avant de recommencer."});}
     }catch(e){if(signal.aborted)return;if(e instanceof CaptureError&&e.status<500){pendingRef.current=null;setUncertain(false);setPreview(null);setStep("destination");await destinationFailure(e);}else{setUncertain(true);setNotice({tone:"warning",title:"Résultat incertain.",text:"La réponse a été perdue. Vérifiez le résultat avant de recommencer."});}}
     finally{running.current=false;if(!signal.aborted)setBusy(false);}
+    // A confirmed document stays confirmed even if its following read fails.
+    // Keep that read outside the mutation's uncertain-result handling.
+    if(recorded&&!signal.aborted)await onCommitted().catch(()=>{if(!signal.aborted)setNotice({tone:"warning",title:"Action enregistrée. Actualisation indisponible.",text:"Le document est enregistré. Actualisez la liste avant de poursuivre."});});
   }
   async function discard(){if(!abandon||running.current||!controller.current)return;running.current=true;setBusy(true);try{await captureRequest(`/capture/${abandon.id}`,controller.current.signal,"DELETE",{version:abandon.version});if(!controller.current.signal.aborted){if(current.current?.id===abandon.id){current.current=null;setCapture(null);setPending(null);createKey.current=crypto.randomUUID();resetDerived();}setAbandon(null);await list(controller.current.signal);}}catch(e){fail(e);}finally{running.current=false;setBusy(false);}}
   function close(){if(busy||uncertain)return;onClose();}
@@ -143,7 +150,7 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
   const menu=notice&&<Banner tone={notice.tone} title={notice.title} action={stale&&capture?"Actualiser le brouillon":undefined} onAction={()=>{if(capture)void resume(capture);}}>{notice.text}</Banner>;
   const ordered=["pages","title","destination","review"] as const;
   const pageEditDisabled=busy||!!pending;
-  if(done)return <div className="hc-stack"><Banner tone="success" title="Enregistré.">{done.title}</Banner><div className="hc-row"><Button icon="folder-open" onClick={()=>onDone(done.folderId)}>Ouvrir le dossier</Button>{camera&&<Button variant="secondary" icon="camera" onClick={()=>{setDone(null);setPreview(null);setArtifact(null);setDestination(null);setPending(null);setUncertain(false);createKey.current=crypto.randomUUID();requestCaptureFlow(userId,currentFolderId,"camera");}}>Photographier un autre document</Button>}</div></div>;
+  if(done)return <div className="hc-stack"><Banner tone="success" title="Enregistré.">{done.title}</Banner>{menu}<div className="hc-row"><Button icon="folder-open" onClick={()=>onDone(done.folderId)}>Ouvrir le dossier</Button>{camera&&<Button variant="secondary" icon="camera" onClick={()=>{setDone(null);setPreview(null);setArtifact(null);setDestination(null);setPending(null);setUncertain(false);createKey.current=crypto.randomUUID();requestCaptureFlow(userId,currentFolderId,"camera");}}>Photographier un autre document</Button>}</div></div>;
   return <div ref={heading} className="hc-stack hc-flow">{menu}{!capture?<><PageHeader title={mode==="photo"?"Photo":"Brouillons"} summary={mode==="photo"?"Photographiez une ou plusieurs pages : elles forment un seul document. Vous choisissez ensuite où le ranger.":""}/>{mode==="photo"&&<>{startFolder&&<span className="hc-muted">Depuis {folderLabel(startFolder)}. Vous choisirez la destination ensuite.</span>}{camera?<div><Button icon="camera" disabled={busy} onClick={()=>requestCaptureFlow(userId,currentFolderId,"camera")}>Prendre la première page</Button></div>:<Banner title="Photo sur téléphone ou tablette.">Vous pouvez reprendre un brouillon ou importer un fichier depuis cet appareil.</Banner>}</>}<div><Button variant="secondary" icon="upload" disabled={busy} onClick={()=>requestCaptureFlow(userId,currentFolderId,"import")}>Importer un fichier</Button></div><h2 className="hc-section-heading">Brouillons en cours</h2><p className="hc-muted"><Icon name="lock" size={16}/> Visibles par vous seul. Chaque brouillon est conservé 7 jours après sa création.</p>{loading?<p role="status">Chargement des brouillons…</p>:drafts.length?<ul className="hc-list">{drafts.map(d=><li className="hc-card hc-row" key={d.id}><div className="hc-grow"><strong>{d.title||"Nouveau document"}</strong><div className="hc-muted">{d.pages.length} page(s) sauvegardée(s) · expire le {expiry(d)}</div></div><Button variant="secondary" compact disabled={busy} onClick={()=>void resume(d)}>Reprendre</Button><Button variant="tertiary" compact icon="trash" disabled={busy} onClick={()=>setAbandon(d)}>Abandonner</Button></li>)}</ul>:<EmptyState icon="file-text" title="Aucun brouillon">Vos pages sauvegardées apparaîtront ici.</EmptyState>}</>:<>
       <div className="hc-row" style={{justifyContent:"space-between"}}><Button variant="tertiary" compact icon="x" disabled={busy||uncertain} onClick={close}>Fermer</Button><span className="hc-muted">{capture.kind==="camera"?`Brouillon privé · expire le ${expiry(capture)}`:"Import temporaire · sélection perdue à la fermeture"}</span></div>
       <StepHeader step={capture.kind==="import"?ordered.indexOf(step):ordered.indexOf(step)+1} total={capture.kind==="import"?3:4} label={step==="pages"?"Pages":step==="title"?"Titre et format":step==="destination"?"Rangement":"Vérification"}/><h1 tabIndex={-1} className="hc-heading">{step==="pages"?"Les pages du document":step==="title"?"Titre et format":step==="destination"?"Où ranger ce document ?":"Vérifier avant d’enregistrer"}</h1>

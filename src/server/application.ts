@@ -3,11 +3,12 @@ import type { Pool, PoolClient } from "pg";
 import { createAuth } from "./auth/options";
 import type { ServerConfig } from "./config";
 import { CAPABILITIES } from "./permissions/capabilities";
-import { createSharing, getFolderAccess, getFolderAccessEvaluator } from "./permissions/service";
+import { createSharing, getFolderAccess, getFolderAccessEvaluator, loadFolderAccessGraph, folderAccessEvaluator, type FolderAccessEvaluator } from "./permissions/service";
 import { folderNameKey } from "./db/folder-name";
 
-import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, isUuid, type Actor } from "./access";
-import { createDocuments, type DocumentDependencies } from "./documents/service";
+import { createAccess, HttpError, unavailable, unauthenticated, invalid, response, guarded, json, textField, isUuid, readActivity, type Actor } from "./access";
+import { createDocuments, readWorkspaceDocuments, type DocumentDependencies } from "./documents/service";
+import type { WorkspaceFolder, WorkspaceSnapshot, WorkspaceUser } from "../lib/workspace";
 import { createFolderMoves } from "./documents/moves";
 import { createFolderTrash } from "./documents/folder-trash";
 import { createIdentity, revokeIdentityArtifacts } from "./identity";
@@ -19,8 +20,7 @@ import { createClassificationService } from "./classification/service";
 import { createClassificationCredentialCipher } from "./classification/cipher";
 import { DEFAULT_CLASSIFICATION_LIMITS, type ClassificationDependencies } from "./classification/types";
 const folderName = (value: unknown) => textField(value, 120);
-type Folder = { id: string; name: string; version: number; capabilities: string[]; documentCount: number; docCount:number;
-  visibleParentId:string|null; breadcrumbs:{id:string;name:string}[]; childCount:number; canShare:boolean; canAdminister:boolean; createdAt:string; createdByName:string };
+type Folder = WorkspaceFolder;
 type FolderRow = { id:string; name:string; version:number; parent_folder_id:string|null; document_count:string; created_at:Date; creator_name:string };
 type FolderOperation = {kind:"create";name:string;parentId:string|null} | {kind:"rename";name:string;folderId:string;version:number};
 const folderBudget = () => new HttpError(503,"RESOURCE_LIMIT","Cette opération est trop importante. Réessayez plus tard.");
@@ -43,11 +43,11 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
   const auth = createAuth(pool, config);
   const access = createAccess(pool, config, auth);
   const { origin, transaction, withActor } = access;
-  async function foldersFor(client: PoolClient, actor: Actor, id?: string): Promise<Folder[]> {
+  async function foldersFor(client: PoolClient, actor: Actor, id?: string, rights?:FolderAccessEvaluator): Promise<Folder[]> {
     const found = await client.query<FolderRow>(`SELECT f.id,f.name,f.version,f.parent_folder_id,f.created_at,u.name AS creator_name,(SELECT count(*) FROM hestia_document d WHERE d.folder_id=f.id AND d.trashed_at IS NULL AND d.purged_at IS NULL) AS document_count
       FROM hestia_folder f JOIN "user" u ON u.id=f.created_by WHERE f.trashed_at IS NULL ORDER BY f.created_at,f.id LIMIT 10001`);
     if (found.rows.length>10000) throw folderBudget();
-    const evaluate=await getFolderAccessEvaluator(client,actor.id);
+    const evaluate=rights??await getFolderAccessEvaluator(client,actor.id);
     const folders:Folder[]=[];
     for (const row of found.rows) {
       const rights=evaluate(row.id);
@@ -140,6 +140,25 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       const member = (await client.query("SELECT role FROM hestia_member WHERE user_id=$1", [actor.id])).rows[0];
       return { ...actor, role: member.role as "owner" | "admin" | "member" };
     }, false) }));
+  }
+  function handleWorkspace(request:Request) {
+    return guarded(async()=>{
+      if(request.method!=="GET")throw new HttpError(405,"METHOD_NOT_ALLOWED","Action indisponible.");
+      const params=new URL(request.url).searchParams;
+      if([...params.keys()].some(key=>!["folderId","q"].includes(key)||params.getAll(key).length!==1))throw invalid();
+      const rawFolder=params.get("folderId"),q=params.get("q")??"";
+      if((rawFolder!==null&&!isUuid(rawFolder))||q.length>200)throw invalid();
+      const folderId=rawFolder?.toLowerCase()??null,touch=readActivity(request,false,false);
+      const snapshot=await withActor(request,async(client,actor):Promise<WorkspaceSnapshot>=>{
+        const role=(await client.query("SELECT role FROM hestia_member WHERE user_id=$1",[actor.id])).rows[0].role as WorkspaceUser["role"];
+        const graph=await loadFolderAccessGraph(client),evaluate=folderAccessEvaluator(graph,actor.id);
+        const folders=await foldersFor(client,actor,undefined,evaluate);
+        const selectedFolder=folderId?folders.find(folder=>folder.id===folderId)??null:null;
+        const documents=(folderId&&!selectedFolder)||(!folderId&&!q)?[]:await readWorkspaceDocuments(client,evaluate,folderId,q);
+        return {user:{...actor,role},folders,selectedFolder,documents,now:new Date(graph.now).toISOString()};
+      },touch);
+      return response(snapshot);
+    });
   }
   function handleFolders(request: Request) {
     return guarded(async () => {
@@ -240,7 +259,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
     providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
   });
   const folderTrash=createFolderTrash(access, { now: dependencies?.now });
-  return { handleAuth, handleSession, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
+  return { handleAuth, handleSession, handleWorkspace, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
     ...documents, ...folderTrash, ...captureHandlers, ...classification,
     async cleanupTrash(limit:number) {

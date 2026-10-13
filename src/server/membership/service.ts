@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { type Access, type Actor, guarded, HttpError, invalid, isUuid, json, response, unavailable } from '../access';
+import { type Access, type Actor, guarded, HttpError, invalid, isUuid, json, readActivity, response, unavailable } from '../access';
 import { assertPolicyCapacity, getFolderAccess, type Grant } from '../permissions/service';
 import { evaluateTreeAccess, type TreeFolder } from '../permissions/tree';
 import { CAPABILITIES } from '../permissions/capabilities';
@@ -18,11 +18,13 @@ const canonicalCaps = (caps:string[]) => CAPABILITIES.filter(c=>caps.includes(c)
 function getOnly(request:Request) { if(request.method!=='GET') throw invalid(); }
 function page(request:Request,allowStatus=false) {
   const params=new URL(request.url).searchParams;
-  if([...params.keys()].some(k=>!['offset','limit',...(allowStatus?['status']:[])].includes(k)) || [...params.keys()].some(k=>params.getAll(k).length!==1)) throw invalid();
+  if([...params.keys()].some(k=>!['offset','limit',...(allowStatus?['status','summary']:[])].includes(k)) || [...params.keys()].some(k=>params.getAll(k).length!==1)) throw invalid();
+  const summary=params.get('summary');
+  if(summary!==null&&(summary!=='true'||params.has('offset')||params.has('limit')))throw invalid();
   const integer=(key:string,fallback:number,max:number)=>{const raw=params.get(key);if(raw!==null&&!/^\d{1,9}$/.test(raw))throw invalid();const n=raw===null?fallback:Number(raw);if(n>max)throw invalid();return n;};
   const offset=integer('offset',0,1000000),limit=integer('limit',50,100),status=params.get('status')??'active';
   if(limit<1 || !['active','removed'].includes(status))throw invalid();
-  return {offset,limit,status};
+  return {offset,limit,status,summary:summary==='true'};
 }
 async function loadMember(client:PoolClient,id:string) {
   return (await client.query<Member>('SELECT m.*,u.name,u.email FROM hestia_member m JOIN "user" u ON u.id=m.user_id WHERE m.user_id=$1 FOR UPDATE OF m',[id])).rows[0];
@@ -91,9 +93,10 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
   }
   function handleMembers(request:Request) {return guarded(async()=>{getOnly(request);const paging=page(request,true);return response(await withActor(request,async(client,actor)=>{
     const admin=await administrator(client,actor);
+    if(paging.summary)return {count:Number((await client.query('SELECT count(*) AS count FROM hestia_member WHERE active=$1',[paging.status==='active'])).rows[0].count)};
     const rows=(await client.query<Member>('SELECT m.*,u.name,u.email FROM hestia_member m JOIN "user" u ON u.id=m.user_id WHERE m.active=$1 ORDER BY m.user_id OFFSET $2 LIMIT $3',[paging.status==='active',paging.offset,paging.limit+1])).rows;
     return {members:rows.slice(0,paging.limit).map(m=>({id:m.user_id,name:m.name,email:m.email,role:m.role,status:m.active?'active':'removed',membershipVersion:String(m.membership_version),removedAt:m.removed_at?.toISOString()??null,allowedActions:{remove:mayRemove(admin,m),readmit:!m.active && m.role!=='owner' && (admin.role==='owner'||m.role==='member')}})),nextOffset:rows.length>paging.limit?paging.offset+paging.limit:null};
-  }));});}
+  },readActivity(request)));});}
   function handleRemovalPreview(request:Request,id:string) {return guarded(async()=>{getOnly(request);if(!memberId(id))throw unavailable();return response(await withActor(request,async(client,actor)=>(await removal(client,await administrator(client,actor),id)).projection));});}
   function handleRemoveMember(request:Request,id:string) {return guarded(async()=>{
     if(request.method!=='POST')throw invalid();origin(request);if(!memberId(id))throw unavailable();
@@ -190,7 +193,7 @@ export function createMembership(access:Access,dependencies:{revokeIdentityArtif
       results.push({id:f.id,adminReference:`D-${f.admin_reference}`,creator:{id:f.created_by,name:f.creator_name},createdAt:f.created_at.toISOString(),vacantSince:f.vacant_since.toISOString(),readerCount:readers.size,canNominate:readers.size>0&&Boolean(ref&&attestedReference(f,ref,state.graphRows,state.graph.folders)&&bound&&bound.end>state.now)});
     }
     return {folders:results,nextOffset:folders.length>paging.limit?paging.offset+paging.limit:null};
-  }));});}
+  },readActivity(request)));});}
   function handleSuccessionPreview(request:Request,id:string) {return guarded(async()=>{getOnly(request);if(!isUuid(id))throw unavailable();return response(await withActor(request,async(client,actor)=>(await succession(client,await administrator(client,actor),id,'nominate')).projection));});}
   function changeReference(request:Request,id:string,mode:'transfer'|'nominate') {return guarded(async()=>{
     if(request.method!=='POST')throw invalid();origin(request);if(!isUuid(id))throw unavailable();

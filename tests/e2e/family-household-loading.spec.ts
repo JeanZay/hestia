@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const paths = ["members", "invitations", "readmissions", "folders/without-manager"];
+const initialPaths = ["members", "folders/without-manager"];
 const prefix = "/api/hestia/household/";
 const deferred = () => { let resolve = () => {}; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 async function navigate(page: Page, name: string) { await page.getByRole("button", { name, exact: true }).filter({ visible: true }).first().click(); }
@@ -24,12 +25,15 @@ function body(path: string, label: string, nextOffset: number | null = null) {
   return { invitations: [{ id: label, name: label, email: "invited@example.invalid", status: "pending", version: 1, expires_at: "2099-01-01", delivery: "sent" }], nextOffset };
 }
 
-test("Foyer charge les listes indépendantes ensemble et conserve toutes leurs pages", async ({ page }) => {
+test("Foyer charge seulement les listes utiles ensemble et conserve leurs pages et compteur", async ({ page }) => {
   await login(page);
   const gate = deferred(), arrived = new Set<string>(), seen = new Set<string>();
+  let memberPageRequests = 0, summaries = 0;
   await page.route("**/api/hestia/household/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname.slice(prefix.length);
     if (!paths.includes(path)) return route.continue();
+    if (url.searchParams.get("summary") === "true") { summaries++; return route.fulfill({ json: { count: 2 } }); }
+    if (path === "members") memberPageRequests++;
     const offset = Number(url.searchParams.get("offset"));
     seen.add(`${path}:${offset}`);
     if (!offset) { arrived.add(path); await gate.promise; }
@@ -37,15 +41,19 @@ test("Foyer charge les listes indépendantes ensemble et conserve toutes leurs p
   });
   try {
     await navigate(page, "Foyer");
-    // A slow members response must not prevent the other three lists starting.
-    await expect.poll(() => arrived.size, { timeout: 3000 }).toBe(4);
+    // Members and the common panel start together; hidden tabs fetch nothing.
+    await expect.poll(() => arrived.size, { timeout: 3000 }).toBe(2);
+    expect([...arrived].sort()).toEqual([...initialPaths].sort());
     await expect(page.getByRole("tab", { name: "Membres", exact: true })).toHaveCount(0);
   } finally { gate.resolve(); }
   await expect(page.getByRole("tab", { name: "Membres", exact: true })).toBeVisible();
-  for (const path of paths) for (const offset of [0, 1]) expect(seen.has(`${path}:${offset}`)).toBe(true);
+  for (const path of initialPaths) for (const offset of [0, 1]) expect(seen.has(`${path}:${offset}`)).toBe(true);
+  expect([...seen].some(value => value.includes("invitations") || value.includes("readmissions"))).toBe(false);
   for (const label of ["members page 1", "members page 2", "folders/without-manager page 1", "folders/without-manager page 2"]) await expect(page.getByText(label, { exact: true })).toBeVisible();
   await page.getByRole("tab", { name: "En attente", exact: true }).click();
   for (const path of ["invitations", "readmissions"]) for (const offset of [1, 2]) await expect(page.getByText(`${path} page ${offset}`, { exact: true })).toBeVisible();
+  await expect(page.getByText("2 personnes", { exact: true })).toBeVisible();
+  expect(memberPageRequests).toBe(2); expect(summaries).toBe(1);
 });
 
 for (const status of [401, 403, 500]) test(`Foyer ignore les réponses tardives après refus ${status}`, async ({ page }) => {
@@ -62,12 +70,12 @@ for (const status of [401, 403, 500]) test(`Foyer ignore les réponses tardives 
   });
   try {
     await navigate(page, "Foyer");
-    await expect.poll(() => arrived.size).toBe(4);
+    await expect.poll(() => arrived.size).toBe(2);
     denied.resolve();
     if (status === 500) await expect(page.getByText("L’action n’a pas abouti.", { exact: true })).toBeVisible();
     else await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
   } finally { denied.resolve(); gate.resolve(); }
-  await expect.poll(() => completed).toBe(4);
+  await expect.poll(() => completed).toBe(2);
   await expect(page.getByText("Réponse périmée", { exact: true })).toHaveCount(0);
   if (status !== 500) await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
 });
@@ -86,12 +94,12 @@ test("Foyer ne réutilise pas les réponses d'une ouverture abandonnée", async 
   });
   try {
     await navigate(page, "Foyer");
-    await expect.poll(() => counts.size).toBe(4);
+    await expect.poll(() => counts.size).toBe(2);
     await navigate(page, "Moi");
     await navigate(page, "Foyer");
     await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
   } finally { gate.resolve(); }
-  await expect.poll(() => oldCompleted).toBe(4);
+  await expect.poll(() => oldCompleted).toBe(2);
   await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
   await expect(page.getByText("Ancien members", { exact: true })).toHaveCount(0);
 });
@@ -104,12 +112,12 @@ for (const status of [401, 403]) test(`Foyer traite un refus ${status} même apr
     if (!paths.includes(path)) return route.continue();
     arrived.add(path);
     if (path === "members") { await denied.promise; await route.fulfill({ status, json: { error: { message: "Accès perdu" } } }); }
-    else if (path === "invitations") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
+    else if (path === "folders/without-manager") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
     else await route.fulfill({ json: body(path, "Données non affichables") });
   });
   try {
     await navigate(page, "Foyer");
-    await expect.poll(() => arrived.size).toBe(4);
+    await expect.poll(() => arrived.size).toBe(2);
     await expect(page.getByText("L’action n’a pas abouti.", { exact: true })).toBeVisible();
   } finally { denied.resolve(); }
   await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toBeVisible();
@@ -119,24 +127,47 @@ for (const status of [401, 403]) test(`Foyer traite un refus ${status} même apr
 test("Foyer ignore un refus tardif de l'ouverture abandonnée", async ({ page }) => {
   await login(page);
   const denied = deferred(), counts = new Map<string, number>();
+  let oldFinished = false;
   await page.route("**/api/hestia/household/**", async route => {
     const path = new URL(route.request().url()).pathname.slice(prefix.length);
     if (!paths.includes(path)) return route.continue();
     const number = (counts.get(path) ?? 0) + 1; counts.set(path, number);
-    if (number === 1 && path === "members") { await denied.promise; await route.fulfill({ status: 403, json: { error: { message: "Ancien contexte" } } }); }
-    else if (number === 1 && path === "invitations") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
+    if (number === 1 && path === "members") { await denied.promise; await route.fulfill({ status: 403, json: { error: { message: "Ancien contexte" } } }); oldFinished = true; }
+    else if (number === 1 && path === "folders/without-manager") await route.fulfill({ status: 500, json: { error: { message: "Lecture indisponible" } } });
     else await route.fulfill({ json: body(path, `Actuel ${path}`) });
   });
-  let late: Promise<void> | undefined;
   try {
     await navigate(page, "Foyer");
     await expect(page.getByText("L’action n’a pas abouti.", { exact: true })).toBeVisible();
     await navigate(page, "Moi"); await navigate(page, "Foyer");
     await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
-    late = page.waitForResponse(r => r.url().includes(`${prefix}members?`) && r.status() === 403).then(async response => { await response.finished(); });
   } finally { denied.resolve(); }
-  await late;
+  await expect.poll(() => oldFinished).toBe(true);
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.getByText("Actuel members", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Connexion", exact: true })).toHaveCount(0);
+});
+
+test("Foyer garde une invitation confirmée si la relecture échoue sans rejouer l’envoi", async ({ page }) => {
+  await login(page);
+  let writes = 0;
+  const refreshActivity: (string | undefined)[] = [];
+  await page.route("**/api/hestia/household/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname.slice(prefix.length);
+    if (path === "invitations" && route.request().method() === "POST") { writes++; return route.fulfill({ json: { success: true } }); }
+    if (!initialPaths.includes(path)) return route.continue();
+    if (writes) { refreshActivity.push(route.request().headers()["x-hestia-activity"]); return route.fulfill({ status: 503, json: { error: { message: "Panne de lecture synthétique" } } }); }
+    return route.fulfill({ json: body(path, `Actuel ${path}`) });
+  });
+  await navigate(page, "Foyer");
+  await expect(page.getByRole("tab", { name: "Membres", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Inviter une personne", exact: true }).click();
+  await page.getByLabel("Prénom et nom", { exact: true }).fill("Invitation synthétique");
+  await page.getByLabel("Adresse e-mail personnelle", { exact: true }).fill("cache-test@example.invalid");
+  await page.getByRole("button", { name: "Inviter", exact: true }).click();
+  await expect(page.getByText("Invitation enregistrée.", { exact: true })).toBeVisible();
+  await expect(page.getByText(/L’action est enregistrée, mais l’actualisation a échoué/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Vérifier le résultat", exact: true })).toHaveCount(0);
+  expect(writes).toBe(1);
+  expect(refreshActivity).toEqual(["passive", "passive"]);
 });

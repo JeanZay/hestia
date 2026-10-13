@@ -221,8 +221,10 @@ test("Import assisté intact : réponse perdue puis reçu unique, sans brouillon
   let finalized=0;
   await page.route("**/api/hestia/capture/*/finalize",async route=>{finalized++;const response=await route.fetch();expect(response.ok()).toBeTruthy();await route.abort();});
   await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Résultat incertain.",{exact:true})).toBeVisible();
+  let automaticLists=0;page.on("request",request=>{if(request.method()==="GET"&&new URL(request.url()).pathname==="/api/hestia/capture")automaticLists++;});
   await page.evaluate(()=>{Object.defineProperty(document,"hidden",{configurable:true,get:()=>true});document.dispatchEvent(new Event("visibilitychange"));});
   await page.evaluate(()=>{Object.defineProperty(document,"hidden",{configurable:true,get:()=>false});document.dispatchEvent(new Event("visibilitychange"));});
+  await expect(page.getByText("Résultat incertain.",{exact:true})).toBeVisible();await page.waitForTimeout(200);expect(automaticLists).toBe(0);
   await page.getByRole("button",{name:"Vérifier le résultat",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible();expect(finalized).toBe(1);
   const docs=(await (await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json()).documents;
   expect(docs).toHaveLength(1);expect(docs[0].sha256).toBe(createHash("sha256").update(await readFile("tests/fixtures/documents/synthetic.png")).digest("hex"));
@@ -359,4 +361,28 @@ test("Suggestions tardives : choix manuel préservé puis chemin confirmé atomi
   const documents=(await (await page.request.get("/api/hestia/documents?folderId="+level2[0].id)).json()).documents;
   expect(documents).toHaveLength(1);expect(documents[0].sha256).toBe(createHash("sha256").update(await readFile("tests/fixtures/documents/synthetic.png")).digest("hex"));
   expect(analyses).toBe(2);
+});
+
+test("confirmation capture réconcilie le workspace, même avec une ancienne réponse et un refresh 503",async({page})=>{
+  await login(page);const folder=await createFolder(page);await page.reload();await expect(page.getByRole("heading",{name:"Dossiers",exact:true})).toBeVisible();await drafts(page);
+  await picker(page,"Importer un fichier");await page.getByLabel("Titre du document").fill(`Confirmé ${folder.name}`);
+  await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();await choose(page,folder.name);
+  let release!:()=>void,reached!:()=>void,delivered!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{reached=resolve;}),sent=new Promise<void>(resolve=>{delivered=resolve;});
+  let reads=0,writes=0,fail=true;const activity:(string|undefined)[]=[];
+  page.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith("/finalize"))writes++;});
+  await page.route("**/api/hestia/workspace?**",async route=>{
+    activity.push(route.request().headers()["x-hestia-activity"]);const phase=++reads;
+    if(phase===1){const response=await route.fetch();reached();await held;try{await route.fulfill({response});}catch{/* obsolete fetch */}finally{delivered();}}
+    else if(fail)await route.fulfill({status:503,json:{error:{message:"Synthetic refresh failure"}}});else await route.continue();
+  });
+  try{
+    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await ready;
+    await page.getByRole("button",{name:"Enregistrer le document",exact:true}).click();await expect(page.getByText("Enregistré.",{exact:true})).toBeVisible();
+    await expect(page.getByText("Action enregistrée. Actualisation indisponible.",{exact:true})).toBeVisible();
+    release();await sent;expect(reads).toBe(2);expect(writes).toBe(1);expect(activity).toEqual([undefined,undefined]);
+    fail=false;const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/hestia/workspace");
+    await page.getByRole("button",{name:"Actualiser",exact:true}).click();expect((await refreshed).status()).toBe(200);expect(writes).toBe(1);
+    const docs=(await(await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json()).documents;expect(docs).toHaveLength(1);
+  }finally{release();}
 });

@@ -1,6 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {type Access,type Actor,HttpError,guarded,invalid,isUuid,json,response,textField,unavailable} from '../access';
+import {type Access,type Actor,HttpError,guarded,invalid,isUuid,json,readActivity,response,textField,unavailable} from '../access';
 import {folderNameKey} from '../db/folder-name';
 import {loadFolderAccessGraph} from '../permissions/service';
 import {evaluateTreeAccess,type AccessGraph} from '../permissions/tree';
@@ -150,7 +150,7 @@ export function createFolderTrash(access:Access,dependencies?:{now?:()=>Date}){
       if(Number((await client.query('SELECT count(*) FROM hestia_trash_preview WHERE actor_id=$1',[actor.id])).rows[0].count)>=100)throw exhausted();
       const token=randomUUID();await client.query('INSERT INTO hestia_trash_preview VALUES($1,$2,$3,$4,$5,$6)',[token,actor.id,await epoch(client,actor),digest(input),p.fingerprint,new Date(p.validUntil)]);
       return {...p.dto,previewToken:token};
-    }));
+    },readActivity(request)));
   });}
   function commit(request:Request,id:string,action:'trash'|'restore'){return guarded(async()=>{
     post(request);const body=await json(request,['destinationId','name','previewToken','idempotencyKey']),input=operation(action,id,body);
@@ -203,7 +203,7 @@ export function createFolderTrash(access:Access,dependencies?:{now?:()=>Date}){
           originalDestinationAvailable:!g.original_parent_id||Boolean(parent&&!parent.trashed_at&&allowed(s.graph,actor.id,parent.id,['consulter']))});
       }
       return {groups,now:new Date(s.graph.now).toISOString()};
-    },false));
+    },readActivity(request,false)));
   });}
   async function cleanupFolderTrash(limit=20){
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid trash batch');

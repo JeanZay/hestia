@@ -14,8 +14,8 @@ type RestoreBody = {destinationId?:string|null;name?:string};
 export type PendingTrash = {key:string;userId:string;body:RestoreBody & {action:"trash"|"restore";sourceId:string;previewToken:string}};
 type Preview = {previewToken:string|null;allowed:boolean;source:{id:string;name:string};counts?:{folders:number;documents:number};destination?:{id:string|null;name:string;breadcrumbs?:{id:string;name:string}[]};groups?:MoveImpactGroup[];impactNote?:string;collision?:boolean;needDestination?:boolean;refusal?:{code:string;title:string;message:string}};
 class TrashError extends Error {constructor(public status:number,public code:string,message:string){super(message);}}
-async function request<T>(path:string,signal:AbortSignal,body?:unknown):Promise<T>{
-  const response=await fetch(`/api/hestia/${path}`,{method:body===undefined?"GET":"POST",credentials:"same-origin",cache:"no-store",signal,headers:body===undefined?undefined:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});
+async function request<T>(path:string,signal:AbortSignal,body?:unknown,passive=false):Promise<T>{
+  const response=await fetch(`/api/hestia/${path}`,{method:body===undefined?"GET":"POST",credentials:"same-origin",cache:"no-store",signal,headers:{...(body===undefined?{}:{"Content-Type":"application/json"}),...(passive?{"X-Hestia-Activity":"passive"}:{})},body:body===undefined?undefined:JSON.stringify(body)});
   const data=await response.json().catch(()=>({}));
   if(!response.ok)throw new TrashError(response.status,data.error?.code??"UNAVAILABLE",data.error?.message??"L’action n’a pas pu aboutir. Réessayez.");
   return data;
@@ -25,7 +25,7 @@ const countText=(counts:NonNullable<Preview["counts"]>)=>[(counts.folders>1)?`${
 
 // Technical integration of validated Documents v2: grouped trash, neutral
 // refusals, restore review and the existing 1.3 destination/impact components.
-export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,onClose,onDone,onAccessLost,onUnavailable}:{userId:string;folders:TreeFolder[];source:TreeFolder|null;showList:boolean;host:HTMLElement|null;pendingRef:RefObject<PendingTrash|null>;onClose:()=>void;onDone:(action:"trash"|"restore")=>Promise<void>;onAccessLost:()=>void;onUnavailable:()=>void}){
+export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,onClose,onDone,onAccessLost,onUnavailable,onMutationStart}:{userId:string;folders:TreeFolder[];source:TreeFolder|null;showList:boolean;host:HTMLElement|null;pendingRef:RefObject<PendingTrash|null>;onClose:()=>void;onDone:(action:"trash"|"restore")=>Promise<boolean>;onAccessLost:()=>void;onUnavailable:()=>void;onMutationStart:()=>void}){
   const [groups,setGroups]=useState<Group[]>([]),[documents,setDocuments]=useState<TrashedDocument[]>([]);
   const [active,setActive]=useState<Group|null>(null),[preview,setPreview]=useState<Preview|null>(null);
   const [loading,setLoading]=useState(showList),[busy,setBusy]=useState(false),[uncertain,setUncertain]=useState(false);
@@ -36,6 +36,7 @@ export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,o
   const [displayedAt,setDisplayedAt]=useState<string>();
   const [qualifiedFolders,setQualifiedFolders]=useState(folders);
   const control=useRef(new AbortController()),running=useRef(false),epoch=useRef(0),panel=useRef<HTMLElement>(null);
+  const confirmedRefresh=useRef(false);
   const sourceId=source?.id;
   const permitted=!source||folders.some(f=>f.id===source.id&&f.capabilities.includes("consulter")&&f.capabilities.includes("supprimer"));
   const resetReview=()=>{setPreview(null);setName("");setReviewName("");setDestination(undefined);setBrowse(null);setPicking(false);};
@@ -48,16 +49,17 @@ export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,o
     setNotice({tone:"danger",title:"L’action n’a pas pu aboutir.",text:error instanceof Error?error.message:"Impossible de joindre Hestia. Réessayez."});
   },[onAccessLost,onUnavailable]);
   const load=useCallback(async()=>{
+    const afterWrite=confirmedRefresh.current;confirmedRefresh.current=false;
     const current=++epoch.current;control.current.abort();control.current=new AbortController();const signal=control.current.signal;
     // Invalidate every private field before requalifying, including descendants
     // whose rights may change without changing the root's public listing.
     setPreview(null);setActive(null);setName("");setReviewName("");setBrowse(null);setDestination(undefined);setPicking(false);setGroups([]);setDocuments([]);setLoading(true);setFailedLoad(false);setNotice(previous=>previous?.tone==="danger"?null:previous);setQualifiedFolders(folders);running.current=false;setBusy(false);
     if(pendingRef.current)setUncertain(true);
     try{
-      const [listing,docs]=await Promise.all([request<{groups:Group[];now?:string}>("trash",signal),request<{documents:TrashedDocument[];now?:string}>("documents?trash=true",signal)]);
+      const [listing,docs]=await Promise.all([request<{groups:Group[];now?:string}>("trash",signal,undefined,true),request<{documents:TrashedDocument[];now?:string}>("documents?trash=true",signal,undefined,true)]);
       if(signal.aborted||current!==epoch.current)return;
       setQualifiedFolders(folders);setGroups(listing.groups);setDocuments(docs.documents);setDisplayedAt(listing.now??new Date().toISOString());setNotice(previous=>previous&&previous.tone!=="info"?previous:{tone:"info",title:"La corbeille a été mise à jour."});
-    }catch(error){if(!signal.aborted&&current===epoch.current){setFailedLoad(true);fail(error);}}
+    }catch(error){if(!signal.aborted&&current===epoch.current){setFailedLoad(true);if(afterWrite&&!(error instanceof TrashError&&[401,403,404,410].includes(error.status)))setNotice({tone:"warning",title:"Action enregistrée. Actualisation indisponible.",text:"L’action est enregistrée ; la corbeille n’a pas pu être relue."});else fail(error);}}
     finally{if(!signal.aborted&&current===epoch.current)setLoading(false);}
   },[fail,pendingRef,folders]);
   useEffect(()=>{const sequence=epoch;control.current=new AbortController();return()=>{++sequence.current;control.current.abort();};},[]);
@@ -65,20 +67,22 @@ export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,o
   useEffect(()=>{if(!active&&!uncertain)return;panel.current?.querySelector<HTMLElement>("h2")?.focus();},[active,uncertain,picking]);
   const review=useCallback(async(id:string,action:"trash"|"restore",body:RestoreBody={})=>{
     if(running.current||pendingRef.current)return;const signal=control.current.signal;running.current=true;setBusy(true);setPreview(null);setNotice(null);
-    try{const result=await request<Preview>(action==="trash"?`folders/${id}/trash/preview`:`trash/${id}/restore/preview`,signal,body);if(signal.aborted)return;setQualifiedFolders(folders);setPreview(result);setReviewName(body.name??"");if(result.needDestination||result.refusal?.code==="DESTINATION_UNAVAILABLE"){setPicking(true);setPreview(null);setNotice({tone:"warning",title:"Emplacement indisponible.",text:"L’emplacement d’origine n’est plus disponible. Choisissez une autre destination. Le groupe reste à la corbeille sans prolongation."});}}
+    try{const result=await request<Preview>(action==="trash"?`folders/${id}/trash/preview`:`trash/${id}/restore/preview`,signal,body,true);if(signal.aborted)return;setQualifiedFolders(folders);setPreview(result);setReviewName(body.name??"");if(result.needDestination||result.refusal?.code==="DESTINATION_UNAVAILABLE"){setPicking(true);setPreview(null);setNotice({tone:"warning",title:"Emplacement indisponible.",text:"L’emplacement d’origine n’est plus disponible. Choisissez une autre destination. Le groupe reste à la corbeille sans prolongation."});}}
     catch(error){if(!signal.aborted)fail(error);}finally{if(!signal.aborted){running.current=false;setBusy(false);}}
   },[fail,pendingRef,folders]);
   useEffect(()=>{if(!sourceId)return;control.current.abort();control.current=new AbortController();const timer=setTimeout(()=>{setPreview(null);setQualifiedFolders(folders);running.current=false;setBusy(false);if(pendingRef.current){setUncertain(true);return;}void review(sourceId,"trash");},0);return()=>clearTimeout(timer);},[sourceId,folders,review,pendingRef]);
   const restoreBody=():RestoreBody=>({...destination!==undefined?{destinationId:destination}:{},...name.trim()?{name:name.trim()}: {}});
   async function completed(action:"trash"|"restore"){
-    pendingRef.current=null;setUncertain(false);setActive(null);resetReview();await onDone(action);setNotice({tone:"success",title:action==="trash"?"Mis à la corbeille.":"Restauré.",text:action==="restore"?"Aucun accès retiré ou expiré n’est rétabli. Les éléments supprimés avant cette opération gardent leur échéance.":undefined});
+    const restoredGroup=pendingRef.current?.body.sourceId;
+    if(action==="restore")setGroups(previous=>previous.filter(group=>group.id!==restoredGroup));
+    pendingRef.current=null;setUncertain(false);setActive(null);resetReview();confirmedRefresh.current=true;setNotice({tone:"success",title:action==="trash"?"Mis à la corbeille.":"Restauré.",text:action==="restore"?"Aucun accès retiré ou expiré n’est rétabli. Les éléments supprimés avant cette opération gardent leur échéance.":undefined});if(!await onDone(action)&&showList)await load();
   }
   async function confirm(){
     if(running.current||uncertain||!preview?.allowed||!preview.previewToken)return;
     const action=source?"trash":"restore",id=source?.id??active?.id;if(!id)return;
     if(action==="restore"&&name.trim()!==reviewName){await review(id,action,restoreBody());return;}
     const operation:PendingTrash={key:crypto.randomUUID(),userId,body:{action,sourceId:id,...action==="restore"?restoreBody():{},previewToken:preview.previewToken}};
-    pendingRef.current=operation;running.current=true;setBusy(true);setNotice(null);const signal=control.current.signal;
+    onMutationStart();pendingRef.current=operation;running.current=true;setBusy(true);setNotice(null);const signal=control.current.signal;
     try{const {action:kind,sourceId:target,...body}=operation.body;await request(kind==="trash"?`folders/${target}/trash`:`trash/${target}/restore`,signal,{...body,idempotencyKey:operation.key});if(!signal.aborted)await completed(action);}
     catch(error){if(signal.aborted)return;setPreview(null);
       if(error instanceof TrashError&&error.status<500){pendingRef.current=null;if(error.code.includes("STALE")){setNotice({tone:"warning",title:action==="trash"?"Contenu modifié.":"Effets modifiés.",text:"Rien n’a été modifié. Relisez les effets actuels, puis confirmez de nouveau."});}else fail(error);}
@@ -86,15 +90,15 @@ export function TrashWorkspace({userId,folders,source,showList,host,pendingRef,o
     }finally{if(!signal.aborted){running.current=false;setBusy(false);}}
   }
   async function reconcile(){
-    const operation=pendingRef.current;if(!operation||operation.userId!==userId||running.current)return;running.current=true;setBusy(true);const signal=control.current.signal;
+    const operation=pendingRef.current;if(!operation||operation.userId!==userId||running.current)return;onMutationStart();running.current=true;setBusy(true);const signal=control.current.signal;
     try{const result=await request<{status:"committed"|"not-recorded"}>(`trash/operations/${operation.key}`,signal,operation.body);if(signal.aborted)return;
       pendingRef.current=null;setUncertain(false);if(result.status==="committed")await completed(operation.body.action);
       else{setActive(null);resetReview();setNotice({tone:"info",title:"Non enregistré.",text:"L’opération n’a pas été enregistrée. Vérifiez les effets avant de recommencer."});if(source)onClose();}
     }catch(error){if(!signal.aborted)fail(error);}finally{if(!signal.aborted){running.current=false;setBusy(false);}}
   }
   async function restoreDocument(document:TrashedDocument){
-    if(running.current||uncertain)return;running.current=true;setBusy(true);const signal=control.current.signal;
-    try{await request(`documents/${document.id}/restore`,signal,{version:document.version});if(!signal.aborted){await onDone("restore");setNotice({tone:"success",title:"Restauré.",text:"Les accès retirés entre-temps ne sont pas rétablis."});}}
+    if(running.current||uncertain)return;onMutationStart();running.current=true;setBusy(true);const signal=control.current.signal;
+    try{await request(`documents/${document.id}/restore`,signal,{version:document.version});if(!signal.aborted){setDocuments(previous=>previous.filter(doc=>doc.id!==document.id));confirmedRefresh.current=true;setNotice({tone:"success",title:"Restauré.",text:"Les accès retirés entre-temps ne sont pas rétablis."});if(!await onDone("restore"))await load();}}
     catch(error){if(!signal.aborted){await load();fail(error);}}finally{if(!signal.aborted){running.current=false;setBusy(false);}}
   }
   const banner=notice&&<Banner tone={notice.tone} title={notice.title}>{notice.text}</Banner>;

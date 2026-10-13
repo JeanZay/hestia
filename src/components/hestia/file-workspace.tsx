@@ -33,10 +33,7 @@ function prepareDrafts(files: File[], source: "import" | "camera"): Draft[] {
     });
 }
 
-export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onUpdated, query, onQuery, onFolder, initialCapture, onCaptureConsumed, suppressPanel = false, onOpenPanel, onMove }: { onMove?:(source:MoveSource)=>void; suppressPanel?: boolean; onOpenPanel?: () => void; userId: string; onCaptureConsumed?: () => void; initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: () => void; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
-  const [storedDocuments, setDocuments] = useState<FileDocument[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [failure, setFailure] = useState<string>();
+export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onUpdated, onMutationStart, documents: storedDocuments, loading, failure, query, onQuery, onFolder, initialCapture, onCaptureConsumed, suppressPanel = false, onOpenPanel, onMove }: { onMove?:(source:MoveSource)=>void; suppressPanel?: boolean; onOpenPanel?: () => void; userId: string; onCaptureConsumed?: () => void; initialCapture?: CaptureResult | null; folder?: Folder; folders: Folder[]; host: HTMLElement | null; onAccessLost: () => void; onUpdated: (confirmed?: boolean, change?: FileDocument | string) => Promise<boolean>; onMutationStart: () => void; documents: FileDocument[]; loading: boolean; failure?: string; query?: string; onQuery?: (value: string) => void; onFolder?: (id: string) => void }) {
   const [panel, setPanel] = useState<"deposit" | "capture" | "document" | null>(null);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const draftsRef = useRef<Draft[]>([]);
@@ -56,49 +53,38 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   const [restored, setRestored] = useState(false);
   const [mutationError, setMutationError] = useState<string>();
   const controller = useRef(new AbortController());
-  const listingController = useRef<AbortController | null>(null);
   const previewController = useRef<AbortController | null>(null);
   const urls = useRef(new Set<string>());
   const running = useRef(false);
-  const listEpoch = useRef(0);
   // A fresh inventory is authoritative for rendering, even before a search
   // request finishes. Never retain a server document from a removed scope.
   const permitted = (doc: {folderId: string}) => folders.find(f=>f.id===doc.folderId&&f.capabilities.includes("consulter"));
   const documents = storedDocuments.flatMap(doc=>{const allowed=permitted(doc);return allowed?[{...doc,capabilities:doc.capabilities.filter(cap=>allowed.capabilities.includes(cap))}]:[];});
-  const activeScope=storedActive&&permitted(storedActive);
-  const active=storedActive&&activeScope?{...storedActive,capabilities:storedActive.capabilities.filter(cap=>activeScope.capabilities.includes(cap))}:null;
+  const currentActive=storedActive&&storedDocuments.find(doc=>doc.id===storedActive.id);
+  // Detail reads can observe a newer rename than the last workspace snapshot.
+  // Presence and rights in that snapshot still gate the panel independently.
+  const latestActive=currentActive&&storedActive&&storedActive.version>currentActive.version?storedActive:currentActive;
+  const activeScope=latestActive&&permitted(latestActive);
+  const active=currentActive&&latestActive&&activeScope&&permitted(currentActive)?{...latestActive,capabilities:currentActive.capabilities.filter(cap=>activeScope.capabilities.includes(cap)&&storedActive!.capabilities.includes(cap))}:null;
   useEffect(()=>{
-    if(!storedActive||folders.some(f=>f.id===storedActive.folderId&&f.capabilities.includes("consulter")))return;
+    if(!storedActive||(storedDocuments.some(doc=>doc.id===storedActive.id)&&folders.some(f=>f.id===storedActive.folderId&&f.capabilities.includes("consulter"))))return;
     previewController.current?.abort();
     for(const url of urls.current)URL.revokeObjectURL(url);urls.current.clear();
     const timer=setTimeout(()=>{setActive(null);setPreview(undefined);setPanel(null);setTitle(null);setTrashTarget(null);},0);
     return()=>clearTimeout(timer);
-  },[storedActive,folders]);
+  },[storedActive,folders,storedDocuments]);
   const createUrl = (blob: Blob) => { const url = URL.createObjectURL(blob); urls.current.add(url); return url; };
   const revoke = (url?: string) => { if (url) { URL.revokeObjectURL(url); urls.current.delete(url); } };
   const pickerSnapshot = () => ({userId, drafts: draftsRef.current.map(d => ({...d}))});
   const updateDraft = (id: string, update: Partial<Draft>) => { draftsRef.current = draftsRef.current.map(d => d.id === id ? { ...d, ...update } : d); setDrafts(draftsRef.current); };
   const fail = useCallback((error: unknown) => { if (error instanceof FileError && [401, 403, 404].includes(error.status)) onAccessLost(); }, [onAccessLost]);
-  const reload = useCallback(async () => {
-    const seq = ++listEpoch.current;
-    listingController.current?.abort(); const listing = new AbortController(); listingController.current=listing;
-    const signal = listing.signal;
-    setLoading(true); setFailure(undefined);
-    try {
-      if (query !== undefined && !query.trim()) { setDocuments([]); return; }
-      const params = new URLSearchParams(); if (folder) params.set("folderId", folder.id); if (query !== undefined) params.set("q", query);
-      const result = await api<{ documents: FileDocument[] }>(`/documents?${params}`, signal);
-      if (!signal.aborted && seq === listEpoch.current) { setDocuments(result.documents.slice().sort((a,b)=>a.title.localeCompare(b.title,"fr"))); setActive(previous=>previous ? result.documents.find(d=>d.id===previous.id)??null : null); }
-    } catch (error) { if (!signal.aborted && seq === listEpoch.current) { setDocuments([]); setFailure(message(error)); fail(error); } }
-    finally { if (!signal.aborted && seq === listEpoch.current) setLoading(false); }
-  }, [folder, query, fail]);
   useEffect(() => {
     controller.current = new AbortController();
     const liveUrls = urls.current;
     Promise.resolve().then(() => { if (!controller.current.signal.aborted) setCamera(hasNativeCamera()); });
-    return () => { controller.current.abort(); listingController.current?.abort(); previewController.current?.abort(); if (!isNativePickerOpen()) for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
+    return () => { controller.current.abort(); previewController.current?.abort(); if (!isNativePickerOpen()) for (const draft of draftsRef.current) if (draft.operation && draft.status !== "done") void fetch(`/api/hestia/uploads/${draft.operation}`, {method:"DELETE", credentials:"same-origin", cache:"no-store", keepalive:true}).catch(() => {}); for (const url of liveUrls) URL.revokeObjectURL(url); liveUrls.clear(); draftsRef.current = []; };
   }, []);
-  useEffect(() => { const sequence=listEpoch;const listing=listingController;const timer = setTimeout(() => void reload(), query === undefined ? 0 : 180); return () => {clearTimeout(timer);++sequence.current;listing.current?.abort();}; }, [reload, query, folders]);
+
   useEffect(() => { if (!trashed) return; const timer = setTimeout(() => setTrashed(null), 7000); return () => clearTimeout(timer); }, [trashed]);
   useEffect(() => {
     if (!trashed || folders.some(f=>f.id===trashed.folderId&&f.capabilities.includes("consulter"))) return;
@@ -127,24 +113,24 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   }
   async function trashDocument() {
     if (!trashTarget || running.current) return;
-    running.current = true; setBusy(true); setPanelError(undefined); setMutationError(undefined);
+    onMutationStart();running.current = true; setBusy(true); setPanelError(undefined); setMutationError(undefined);
     const signal = controller.current.signal;
     try {
       const result = await api<{documentId: string; version: number; restorableUntil: string}>(`/documents/${trashTarget.id}/trash`, signal, "POST", {version:trashTarget.version});
       if (signal.aborted) return;
       setTrashed({id:result.documentId,folderId:trashTarget.folderId,title:trashTarget.title,version:result.version,restorableUntil:result.restorableUntil}); setRestored(false); setTrashTarget(null);
-      running.current = false; closePanel(); await reload(); onUpdated();
-    } catch (error) { if (!signal.aborted) { setTrashTarget(null); setPanelError(message(error)); fail(error); if (error instanceof FileError && error.status === 409) { running.current = false; closePanel(); await reload(); setMutationError("Le document a changé. Ouvrez-le à nouveau avant de réessayer."); } } }
+      running.current = false; closePanel(); await onUpdated(true,trashTarget.id);
+    } catch (error) { if (!signal.aborted) { setTrashTarget(null); setPanelError(message(error)); fail(error); if (error instanceof FileError && error.status === 409) { running.current = false; closePanel(); await onUpdated(false); setMutationError("Le document a changé. Ouvrez-le à nouveau avant de réessayer."); } } }
     finally { running.current = false; if (!signal.aborted) setBusy(false); }
   }
   async function undoTrash() {
     if (!trashed || running.current) return;
-    running.current = true; setBusy(true); setMutationError(undefined);
+    onMutationStart();running.current = true; setBusy(true); setMutationError(undefined);
     const signal = controller.current.signal;
     try {
       await api(`/documents/${trashed.id}/restore`, signal, "POST", {version:trashed.version});
       if (signal.aborted) return;
-      setTrashed(null); setRestored(true); await reload(); onUpdated();
+      setTrashed(null); setRestored(true); await onUpdated();
     } catch (error) { if (!signal.aborted) { setTrashed(null); setMutationError(message(error)); fail(error); } }
     finally { running.current = false; if (!signal.aborted) setBusy(false); }
   }
@@ -159,14 +145,15 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
     if (running.current) return;
     setPanelError(undefined);
     if (draft.operation) {
-      try { const result = await api<{status: string}>(`/uploads/${draft.operation}`, controller.current.signal, "DELETE"); if (result.status === "completed") { updateDraft(draft.id, { status: "done" }); await reload(); onUpdated(); return; } }
+      onMutationStart();
+      try { const result = await api<{status: string}>(`/uploads/${draft.operation}`, controller.current.signal, "DELETE"); if (result.status === "completed") { updateDraft(draft.id, { status: "done" }); await onUpdated(); return; } }
       catch (error) { if (!controller.current.signal.aborted) { setPanelError(message(error)); fail(error); } return; }
     }
     draftsRef.current = draftsRef.current.filter(d => d.id !== draft.id); setDrafts(draftsRef.current);
   }
   async function save(ids?: string[]) {
     if (!folder || running.current) return;
-    running.current = true; setBusy(true); setPanelError(undefined);
+    onMutationStart();running.current = true; setBusy(true); setPanelError(undefined);
     const signal = controller.current.signal;
     try {
       for (const draft of draftsRef.current.filter(d => ids ? ids.includes(d.id) : d.status === "ready")) {
@@ -190,7 +177,7 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
           }
           await api(`/uploads/${operation.id}/complete`, signal, "POST", { keepDuplicate: draft.keepDuplicate });
           if (signal.aborted) break;
-          updateDraft(draft.id, { status: "done", progress: 100 }); await reload(); onUpdated();
+          updateDraft(draft.id, { status: "done", progress: 100 }); await onUpdated();
         } catch (error) {
           if (signal.aborted) break;
           const duplicate = error instanceof FileError && error.code === "DUPLICATE";
@@ -247,8 +234,8 @@ export function FileWorkspace({ userId, folder, folders, host, onAccessLost, onU
   async function rename() {
     if (!active || title === null || busy) return;
     if (!title.trim()) { setPanelError("Donnez un titre au document."); return; }
-    setBusy(true); setPanelError(undefined); const signal = controller.current.signal;
-    try { const result = await api<{document: FileDocument}>(`/documents/${active.id}`, signal, "PATCH", { title: title.trim(), version: active.version }); if (!signal.aborted) { setActive(result.document); setTitle(null); await reload(); } }
+    onMutationStart();setBusy(true); setPanelError(undefined); const signal = controller.current.signal;
+    try { const result = await api<{document: FileDocument}>(`/documents/${active.id}`, signal, "PATCH", { title: title.trim(), version: active.version }); if (!signal.aborted) { setActive(result.document); setTitle(null); await onUpdated(true,result.document); } }
     catch (error) { if (!signal.aborted) { setPanelError(message(error)); fail(error); if (error instanceof FileError && error.status === 409) { setTitle(null); await openDocument(active); setPanelError("Le document a changé. Le titre à jour a été rechargé."); } } }
     finally { if (!signal.aborted) setBusy(false); }
   }

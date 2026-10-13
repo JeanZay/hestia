@@ -1,7 +1,7 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { hashPassword, verifyPassword } from "better-auth/crypto";
 import type { Pool, PoolClient } from "pg";
-import { guarded, HttpError, invalid, isUuid, json, response, textField, unavailable, type Access } from "../access";
+import { guarded, HttpError, invalid, isUuid, json, readActivity, response, textField, unavailable, type Access } from "../access";
 import type { ServerConfig } from "../config";
 import { capability, identityCrypto, newCodes } from "./crypto";
 import { createCredential, credential, setPassword } from "./auth-record";
@@ -341,7 +341,7 @@ export function createIdentity(pool:Pool,config:ServerConfig,access:Access) {
           const invitations=rows.rows.slice(0,limit).map(({manageable,authority,...row})=>({...row,allowedActions:{canManage:!!manageable,canCancel:!!manageable,canReissue:!!manageable&&!!authority}}));
           const receipt=requestId&&(await client.query("SELECT 1 FROM hestia_identity_receipt WHERE principal=$1 AND request_id=$2 AND operation LIKE $3",[actor.id,requestId,`${kind}:%`])).rowCount;
           return send({invitations,nextOffset:rows.rows.length>limit?offset+limit:null,...(kind==="readmit"?{readmissions:invitations}:{}),...(requestId?{operationStatus:receipt?"committed":"not-recorded"}:{})});
-        });
+        },readActivity(request));
       }
       route(request);if(id)uuid(id);
       const input=await json(request,id?["requestId"]:kind==="invite"?["name","email","requestId"]:["memberId","requestId","confirmationId"]),requestId=uuid(input.requestId);

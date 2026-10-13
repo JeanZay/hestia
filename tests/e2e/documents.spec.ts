@@ -77,7 +77,7 @@ test("refus anonyme, inscription fermée et aucune donnée dans le stockage navi
 
 test("une panne de chargement ne devient pas un dossier vide", async ({ page }) => {
   await login(page);
-  await page.route("**/api/hestia/folders", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "UNAVAILABLE", message: "Service momentanément indisponible. Réessayez." } }) }));
+  await page.route("**/api/hestia/workspace?**", route => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "UNAVAILABLE", message: "Service momentanément indisponible. Réessayez." } }) }));
   await page.reload();
   await expect(page.getByText("Connexion indisponible.", { exact: true })).toBeVisible();
   await expect(page.getByText("Aucun dossier accessible pour le moment", { exact: true })).toHaveCount(0);
