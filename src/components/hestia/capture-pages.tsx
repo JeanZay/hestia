@@ -1,24 +1,41 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Authenticated, bounded Blob previews must not use the image optimizer. */
-import { useEffect, useState } from "react";
-import type { CaptureCrop, CapturePageDto } from "../../shared/capture-contract";
-import { captureBlob } from "./capture-client";
+import { useEffect, useRef, useState } from "react";
+import type { CaptureCrop, CapturePageDto, CapturePreviewVariant } from "../../shared/capture-contract";
+import { CaptureError } from "./capture-client";
+import { capturePreviews } from "./capture-preview-cache";
 import { Icon } from "./design-system";
 
 // P17: the server applies EXIF orientation, rotation, then crop in displayed axes.
 // We intentionally do not repeat the prototype's CSS clip (which clipped the frame).
-export function CapturePageTile({ captureId, page, width = 64 }: {captureId: string; page: CapturePageDto; width?: number}) {
-  const [preview, setPreview] = useState<{version:number;url:string}|null>(null);
+export function CapturePageTile({ userId, privacyEpoch, captureId, page, variant = "thumbnail", width = 64, onFailure }: {userId: string; privacyEpoch: number; captureId: string; page: CapturePageDto; variant?: CapturePreviewVariant; width?: number; onFailure: (error: unknown) => void}) {
+  const [preview, setPreview] = useState<{key:string;url:string}|null>(null);
   const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const image = useRef<HTMLImageElement>(null), failure = useRef(onFailure);
+  useEffect(() => { failure.current = onFailure; }, [onFailure]);
+  const key = JSON.stringify([userId, privacyEpoch, captureId, page.id, page.version, variant]);
   useEffect(() => {
-    const controller = new AbortController(); let url: string | null = null;
-    void captureBlob(captureId, {pageId:page.id}, controller.signal).then(blob => {
-      if (controller.signal.aborted) return;
-      url = URL.createObjectURL(blob); setPreview({version:page.version,url}); setFailed(false);
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
-    return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
-  }, [captureId, page.id, page.version]);
-  return <figure className="hc-tile" style={{width,height:Math.round(width*1.414)}}>{preview?.version===page.version&&!failed ? <img src={preview.url} alt={`Page ${page.order + 1}, ajustements appliqués`} draggable={false} onError={()=>setFailed(true)}/> : <span>{failed ? "Aperçu indisponible" : "Chargement de l’aperçu"}</span>}</figure>;
+    let disposed = false;
+    if (!capturePreviews.admitted({userId, epoch: privacyEpoch})) return;
+    const lease = capturePreviews.acquire({userId, epoch: privacyEpoch, captureId, pageId: page.id, pageVersion: page.version, variant}, reason => {
+      // Remove the DOM source synchronously too: React can defer its repaint.
+      image.current?.removeAttribute("src");
+      if (!disposed) {
+        setPreview(null);
+        if (reason === "expired" && !document.hidden && capturePreviews.admitted({userId, epoch: privacyEpoch})) setRetry(value => value + 1);
+      }
+    });
+    void lease.ready.then(url => {
+      if (!disposed && lease.current()) { setPreview({key, url}); setFailed(false); }
+    }).catch(error => {
+      if (disposed || error instanceof DOMException && error.name === "AbortError") return;
+      setFailed(true);
+      if (error instanceof CaptureError && [401, 403, 404, 409, 410].includes(error.status)) failure.current(error);
+    });
+    return () => { disposed = true; lease.release(); };
+  }, [userId, privacyEpoch, captureId, page.id, page.version, variant, key, retry]);
+  return <figure className="hc-tile" style={{width,height:Math.round(width*1.414)}}>{preview?.key===key&&!failed ? <img ref={image} src={preview.url} alt={`Page ${page.order + 1}, ajustements appliqués`} draggable={false} onError={()=>setFailed(true)}/> : <span>{failed ? "Aperçu indisponible" : "Chargement de l’aperçu"}</span>}</figure>;
 }
 export function CaptureIconButton({icon,label,disabled,onClick}:{icon:string;label:string;disabled?:boolean;onClick:()=>void}) {
   return <button type="button" className="cdv-focus hc-icon-button" aria-label={label} disabled={disabled} onClick={onClick}><Icon name={icon}/></button>;

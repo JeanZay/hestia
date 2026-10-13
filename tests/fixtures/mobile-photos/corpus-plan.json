@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "seed": 1301026,
+  "dataPolicy": "synthetic-only",
+  "mainCount": 30,
+  "dimensions": [[3000,4000],[4000,6000],[5000,8000]],
+  "sourceJpegQuality": [82,92,96],
+  "noiseAmplitude": [2,5,6],
+  "orientations": [1,2,3,4,5,6,7,8],
+  "complements": [[900,1200],[1500,2000],[2000,3000]],
+  "qrPayload": "HESTIA-SYNTHETIC-PHOTO-V1",
+  "textTruth": ["DOCUMENT SYNTHETIQUE - AUCUNE DONNEE FAMILIALE", "REFERENCE HESTIA 001 238 579", "TOTAL 1 234,56 EUR", "Petits caracteres : 0O 1Il 5S 8B 69 96"],
+  "archiveTargetsBytes": [102400,1048576,5242880,10485760,20447232],
+  "archivePdfPages": [1,10,50],
+  "limits": ["Controlled synthetic document scenes, not a representative sample of physical phone optics.", "No post-result exclusion of main cases; every planned case stays in the denominator.", "Source JPEG quality and sensor-like noise are fixed before measurements; no tuning to achieve the weight target."]
+}

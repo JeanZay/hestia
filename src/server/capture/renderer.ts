@@ -44,11 +44,12 @@ async function run(input: RenderRequest, inspect: boolean, timeoutMs: number): P
           if(!(result.bytes instanceof Uint8Array)||result.bytes.length>MAX_BYTES||(!inspect&&!result.bytes.length)||
             result.mediaType!==(input.format==="pdf"?"application/pdf":"image/jpeg")||
             !Number.isSafeInteger(result.width)||Number(result.width)<1||!Number.isSafeInteger(result.height)||Number(result.height)<1||
+            (input.maxLongEdge!==undefined&&Math.max(Number(result.width),Number(result.height))>input.maxLongEdge)||
             result.pageCount!==input.pages.length||!Number.isFinite(result.peakRssKiB)||cursor!==input.pages.length){stop();return;}
           stop(result as RenderResult);
         }else stop();
       });
-      worker.send({pages:input.pages,format:input.format,inspect},error=>{if(error)stop();});
+      worker.send({pages:input.pages,format:input.format,inspect,maxLongEdge:input.maxLongEdge},error=>{if(error)stop();});
     });
   }finally{workers--;}
 }

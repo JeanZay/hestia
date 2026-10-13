@@ -4,6 +4,7 @@ export type CaptureRotation = 0 | 90 | 180 | 270;
 export type CaptureCrop = { t: number; r: number; b: number; l: number };
 export type CaptureKind = "camera" | "import";
 export type CaptureFormat = "pdf" | "image" | "original";
+export type CapturePreviewVariant = "thumbnail" | "settings";
 export type CapturePageDto = {
   id: string; version: number; order: number; rotation: CaptureRotation; crop: CaptureCrop;
   size: number; mediaType: CaptureMediaType; width: number; height: number; savedAt: string;

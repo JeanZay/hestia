@@ -35,6 +35,18 @@ describe("bounded Capture rendering and identities",()=>{
  it("normalizes EXIF orientation before reporting dimensions",async()=>{
   const bytes=await sharp({create:{width:120,height:80,channels:3,background:"white"}}).jpeg().withMetadata({orientation:6}).toBuffer();expect(await inspectCaptureImage(bytes,"image/jpeg")).toEqual({width:80,height:120});
  },20000);
+ it("bounds derivative pixels after orientation, rotation and crop without changing the final",async()=>{
+  const bytes=await sharp({create:{width:2400,height:1800,channels:3,background:"#d8c8b8"}}).jpeg().withMetadata({orientation:6}).toBuffer();
+  const input={pages:[page("a",{rotation:90,crop:{t:0,r:0,b:0,l:20}})],format:"image" as const,readPage:async()=>bytes,signal:new AbortController().signal};
+  for(const limit of [640,1600] as const){
+   const result=await createCaptureRenderer()({...input,maxLongEdge:limit});
+   expect(Math.max(result.width,result.height)).toBe(limit);
+   const meta=await sharp(result.bytes).metadata();expect([meta.width,meta.height]).toEqual([result.width,result.height]);
+  }
+  const final=await createCaptureRenderer()(input);expect([final.width,final.height]).toEqual([1920,1800]);
+  const small=await sharp({create:{width:120,height:80,channels:3,background:"white"}}).png().toBuffer();
+  const result=await createCaptureRenderer()({...input,pages:[page("a")],readPage:async()=>small,maxLongEdge:640});expect([result.width,result.height]).toEqual([120,80]);
+ },30000);
  it("rejects corrupt input, oversized pixels and already aborted requests",async()=>{
   await expect(inspectCaptureImage(new Uint8Array([1,2]),"image/png")).rejects.toThrow();
   const bytes=await sharp({create:{width:8000,height:5001,channels:3,background:"white"}}).png().toBuffer();await expect(inspectCaptureImage(bytes,"image/png")).rejects.toThrow();

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { ClassificationResultDto } from "../../src/shared/capture-contract";
+import { execFileSync } from "node:child_process";
 
 const password=process.env.HESTIA_TEST_PASSWORD;
 if(!password||process.env.HESTIA_ENVIRONMENT!=="local")throw new Error("Use the owned synthetic local harness.");
@@ -385,4 +386,66 @@ test("confirmation capture réconcilie le workspace, même avec une ancienne ré
     await page.getByRole("button",{name:"Actualiser",exact:true}).click();expect((await refreshed).status()).toBe(200);expect(writes).toBe(1);
     const docs=(await(await page.request.get(`/api/hestia/documents?folderId=${folder.id}`)).json()).documents;expect(docs).toHaveLength(1);
   }finally{release();}
+});
+
+test("Photos : vrai worker JPEG, dérivées bornées, PDF inchangé réutilisé et purge visible",async({page,isMobile})=>{
+  test.skip(!isMobile,"The camera route uses the existing mobile capability gate.");
+  test.setTimeout(120_000);
+  const source=execFileSync(process.execPath,["tests/fixtures/mobile-photos/single.mjs","camera"],{maxBuffer:21*1024*1024,timeout:60_000,windowsHide:true});
+  await page.addInitScript(()=>{
+    const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL),live=new Set<string>();
+    URL.createObjectURL=blob=>{const url=create(blob);live.add(url);return url;};
+    URL.revokeObjectURL=url=>{live.delete(url);revoke(url);};
+    Object.defineProperty(window,"__photoLiveUrls",{value:live});
+  });
+  await login(page);
+  await page.getByRole("button",{name:"Photo",exact:true}).click();
+  const chosen=page.waitForEvent("filechooser");await page.getByRole("button",{name:"Prendre la première page",exact:true}).click();const chooser=await chosen;
+  const worker=page.waitForEvent("worker");
+  const reservation=page.waitForResponse(r=>/\/capture\/[^/]+\/pages$/.test(new URL(r.url()).pathname)&&r.request().method()==="POST");
+  const completion=page.waitForResponse(r=>/\/pages\/[^/]+\/complete$/.test(new URL(r.url()).pathname));
+  await chooser.setFiles({name:"synthetic-camera.jpg",mimeType:"image/jpeg",buffer:source});
+  const actualWorker=await worker;expect(new URL(actualWorker.url()).origin).toBe("http://127.0.0.1:3210");
+  expect(new URL(actualWorker.url()).pathname).toContain("/_next/");
+  const reserved=await reservation;expect(reserved.status()).toBe(200);
+  const identity=reserved.request().postDataJSON() as {size:number;sha256:string;mediaType:string};
+  expect(identity.size).toBeLessThan(source.length);expect(identity.mediaType).toBe("image/jpeg");
+  expect(identity.sha256).not.toBe(createHash("sha256").update(source).digest("hex"));
+  const completed=await completion;expect(completed.status()).toBe(200);
+  const capture=(await completed.json()).capture;expect(Math.max(capture.pages[0].width,capture.pages[0].height)).toBe(3200);
+  await expect(page.getByText("Page sauvegardée.",{exact:true})).toBeVisible();
+  const thumbnail=page.getByRole("list",{name:"Pages du document"}).locator("img");
+  await expect.poll(()=>thumbnail.evaluate((img:HTMLImageElement)=>img.complete?Math.max(img.naturalWidth,img.naturalHeight):0)).toBe(640);
+  await page.getByRole("button",{name:"Ajuster la page",exact:true}).click();
+  const settings=page.getByRole("group",{name:"Ajuster la page 1",exact:true}).locator("img");
+  await expect.poll(()=>settings.evaluate((img:HTMLImageElement)=>img.complete?Math.max(img.naturalWidth,img.naturalHeight):0)).toBe(1600);
+  await page.getByRole("button",{name:"Fermer les ajustements",exact:true}).click();
+  await page.getByRole("button",{name:"Continuer",exact:true}).click();await page.getByLabel("Titre du document").fill("PDF synthétique sans changement");
+  const first=page.waitForResponse(r=>r.url().endsWith("/prepare")&&r.request().method()==="POST");await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();
+  const firstResult=await(await first).json();await expect(page.getByRole("heading",{name:"Où ranger ce document ?",exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Retour",exact:true}).click();
+  const second=page.waitForResponse(r=>r.url().endsWith("/prepare")&&r.request().method()==="POST");await page.getByRole("button",{name:"Choisir où ranger",exact:true}).click();
+  const secondResult=await(await second).json();expect(secondResult.artifact.id).toBe(firstResult.artifact.id);expect(secondResult.artifact.sha256).toBe(firstResult.artifact.sha256);expect(secondResult.capture.version).toBe(firstResult.capture.version);
+  await page.getByRole("button",{name:"Retour",exact:true}).click();
+  await page.evaluate(()=>{Object.defineProperty(document,"hidden",{configurable:true,get:()=>true});document.dispatchEvent(new Event("visibilitychange"));});
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {__photoLiveUrls:Set<string>}).__photoLiveUrls.size)).toBe(0);
+  await expect(page.locator("img[src^='blob:']")).toHaveCount(0);
+});
+
+test("Photos : worker indisponible conserve le JPEG exact et import assisté reste intact",async({page,isMobile})=>{
+  test.skip(!isMobile,"Camera fallback is exercised on the mobile profile.");
+  const source=execFileSync(process.execPath,["tests/fixtures/mobile-photos/single.mjs","compact"],{maxBuffer:21*1024*1024,timeout:60_000,windowsHide:true});
+  await page.addInitScript(()=>{Object.defineProperty(window,"Worker",{configurable:true,value:class {constructor(){throw new Error("Synthetic unsupported worker");}}});});
+  await login(page);await page.getByRole("button",{name:"Photo",exact:true}).click();
+  const chosen=page.waitForEvent("filechooser");await page.getByRole("button",{name:"Prendre la première page",exact:true}).click();const chooser=await chosen;
+  const reservation=page.waitForResponse(r=>/\/capture\/[^/]+\/pages$/.test(new URL(r.url()).pathname)&&r.request().method()==="POST");
+  await chooser.setFiles({name:"fallback.jpg",mimeType:"image/jpeg",buffer:source});
+  const identity=(await reservation).request().postDataJSON();expect(identity.size).toBe(source.length);expect(identity.sha256).toBe(createHash("sha256").update(source).digest("hex"));
+  await expect(page.getByText("Page sauvegardée.",{exact:true})).toBeVisible();
+  await page.getByRole("button",{name:"Fermer",exact:true}).click();await drafts(page);
+  const imported=page.waitForEvent("filechooser");await page.getByRole("button",{name:"Importer un fichier",exact:true}).click();const importChooser=await imported;
+  const importReservation=page.waitForResponse(r=>/\/capture\/[^/]+\/pages$/.test(new URL(r.url()).pathname)&&r.request().method()==="POST");
+  await importChooser.setFiles({name:"untouched-import.jpg",mimeType:"image/jpeg",buffer:source});
+  const original=(await importReservation).request().postDataJSON();expect(original.size).toBe(source.length);expect(original.sha256).toBe(identity.sha256);
+  await expect(page.getByText("Page sauvegardée.",{exact:true})).toBeVisible();
 });

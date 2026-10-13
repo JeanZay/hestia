@@ -11,9 +11,10 @@ export class FormatValidationError extends Error {
   }
 }
 let active = 0;
+export type ValidatedOriginal = { mediaType: string; previewSupported: boolean; image?: { width: number; height: number; count: number } };
 
 /** Decode in a disposable process: parser crash/timeouts cannot hang the application event loop. */
-export async function validateOriginal(bytes: Uint8Array, declaredType: string): Promise<{ mediaType: string; previewSupported: boolean }> {
+export async function validateOriginal(bytes: Uint8Array, declaredType: string): Promise<ValidatedOriginal> {
   if (!bytes.byteLength) throw new FormatValidationError("invalid_file");
   if (bytes.byteLength > MAX_ORIGINAL_BYTES) throw new FormatValidationError("file_too_large");
   if (!TYPES.has(declaredType)) throw new FormatValidationError("unsupported_type");
@@ -42,8 +43,17 @@ export async function validateOriginal(bytes: Uint8Array, declaredType: string):
         if (expired) return reject(new FormatValidationError("invalid_file"));
         if (code !== 0) return reject(new FormatValidationError(code === 2 ? "validation_unavailable" : "invalid_file"));
         try {
-          const result = JSON.parse(output) as { mediaType: string; previewSupported: boolean };
-          if (!TYPES.has(result.mediaType) || typeof result.previewSupported !== "boolean") throw new Error();
+          const result = JSON.parse(output) as ValidatedOriginal;
+          if (!TYPES.has(result.mediaType) || result.mediaType !== (declaredType === "image/heif" ? "image/heic" : declaredType) ||
+            result.previewSupported !== !result.mediaType.startsWith("image/hei")) throw new Error();
+          if (result.mediaType === "application/pdf") {
+            if (result.image !== undefined) throw new Error();
+          } else {
+            const value = result.image;
+            if (!value || !Number.isSafeInteger(value.width) || !Number.isSafeInteger(value.height) ||
+              !Number.isSafeInteger(value.count) || value.width < 1 || value.height < 1 || value.count < 1 ||
+              value.width * value.height > MAX_IMAGE_PIXELS || value.count > MAX_IMAGE_PIXELS) throw new Error();
+          }
           resolve(result);
         } catch { reject(new FormatValidationError("invalid_file")); }
       });

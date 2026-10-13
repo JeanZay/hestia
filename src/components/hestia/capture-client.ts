@@ -1,7 +1,18 @@
-import type { CaptureDto, CapturePageReservationDto, CaptureMediaType } from "../../shared/capture-contract";
+import type { CaptureDto, CapturePageReservationDto, CaptureMediaType, CapturePreviewVariant } from "../../shared/capture-contract";
+import { cameraNormalizer } from "./camera-normalize";
 
 export class CaptureError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }
+}
+const privateControllers = new Set<AbortController>();
+export function registerCaptureClientWork(controller: AbortController) {
+  privateControllers.add(controller);
+  return () => { privateControllers.delete(controller); };
+}
+/** Privacy events must stop network work before React's deferred cleanup. */
+export function clearCaptureClientWork() {
+  for (const controller of privateControllers) controller.abort();
+  privateControllers.clear(); cameraNormalizer.clear();
 }
 type CaptureJob = { priority: "read" | "write"; start: () => Promise<void> };
 type CaptureQueue = { running: boolean; jobs: CaptureJob[] };
@@ -37,11 +48,11 @@ function captureTurn<T>(captureId:string, signal:AbortSignal, priority:"read"|"w
   if(!queue.running){queue.running=true;void (async()=>{while(queue.jobs.length)await queue.jobs.shift()!.start();queue.running=false;if(captureQueues.get(captureId)===queue)captureQueues.delete(captureId);})();}
   return result;
 }
-export async function captureRequest<T>(path: string, signal: AbortSignal, method = "GET", body?: unknown): Promise<T> {
+export async function captureRequest<T>(path: string, signal: AbortSignal, method = "GET", body?: unknown, options: { activity?: "passive" | "interactive" } = {}): Promise<T> {
   const aggregate=path.match(/^\/capture\/([^/?]+)(?:\/(?:pages(?:\/[^/?]+\/complete)?|prepare|preview|finalize))?$/)?.[1];
   const serializedBody=body===undefined?undefined:JSON.stringify(body);
   const send=async()=>{
-    const request=()=>fetch('/api/hestia'+path, { method, signal:AbortSignal.any([signal,AbortSignal.timeout(100_000)]), credentials: "same-origin", cache: "no-store", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: serializedBody });
+    const request=()=>fetch('/api/hestia'+path, { method, signal:AbortSignal.any([signal,AbortSignal.timeout(100_000)]), credentials: "same-origin", cache: "no-store", headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(method === "GET" && options.activity !== "interactive" ? { "X-Hestia-Activity": "passive" } : {}) }, body: serializedBody });
     const response = method!=="GET"&&aggregate?await waitForCaptureOperation(request,signal):await request();
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new CaptureError(response.status, data?.error?.code || "UNAVAILABLE", data?.error?.message || "L’action n’a pas pu aboutir. Réessayez.");
@@ -51,8 +62,15 @@ export async function captureRequest<T>(path: string, signal: AbortSignal, metho
   // delay choosing a destination, previewing rights or recording manually.
   return method!=="GET"&&aggregate ? captureTurn(aggregate,signal,"write",send) : send();
 }
-export type PendingPage = { file: File; key: string; hash?: string; reservation?: CapturePageReservationDto; replacePageId?: string };
+export type PendingPage = { file: File; key: string; prepared?: boolean; hash?: string; reservation?: CapturePageReservationDto; replacePageId?: string };
 export async function uploadCapturePage(capture: CaptureDto, pending: PendingPage, signal: AbortSignal, progress: (value: number) => void) {
+  signal.throwIfAborted();
+  // Freeze one chosen File before its identity or reservation exists. A raw
+  // fallback is frozen too; retries cannot silently change their source bytes.
+  if (capture.kind === "camera" && !pending.prepared && !pending.hash && !pending.reservation) {
+    const chosen = await cameraNormalizer.normalize(pending.file, signal, pending);
+    signal.throwIfAborted(); pending.file = chosen; pending.prepared = true;
+  }
   if (pending.file.size > 20 * 1024 * 1024 || !pending.file.size) throw new Error("Le fichier doit contenir entre 1 octet et 20 Mio.");
   pending.hash ??= Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await pending.file.arrayBuffer())), b => b.toString(16).padStart(2, "0")).join("");
   signal.throwIfAborted();
@@ -79,18 +97,23 @@ export async function uploadCapturePage(capture: CaptureDto, pending: PendingPag
 }
 
 // No image bytes are fetched until this preview's turn starts.
-export async function captureBlob(captureId: string, selector: {pageId: string} | {artifactId: string}, signal: AbortSignal): Promise<Blob> {
+type CaptureBlobSelector = {pageId: string; variant?: undefined; pageVersion?: undefined} | {pageId: string; variant: CapturePreviewVariant; pageVersion: number} | {artifactId: string};
+export async function captureBlob(captureId: string, selector: CaptureBlobSelector, signal: AbortSignal): Promise<Blob> {
   return captureTurn(captureId,signal,"read",()=>readCaptureBlob(captureId,selector,signal));
 }
 /** Authenticated bounded reads. No public/object-store URL enters the browser. */
-async function readCaptureBlob(captureId: string, selector: {pageId: string} | {artifactId: string}, signal: AbortSignal): Promise<Blob> {
+async function readCaptureBlob(captureId: string, selector: CaptureBlobSelector, signal: AbortSignal): Promise<Blob> {
   const chunks: ArrayBuffer[] = []; let offset = 0, total = 20 * 1024 * 1024, type = "";
   while (offset < total) {
-    const query = new URLSearchParams({ ...selector, offset: String(offset), length: String(Math.min(2 * 1024 * 1024, total - offset)) });
-    const response = await waitForCaptureOperation(()=>fetch(`/api/hestia/capture/${captureId}/content?${query}`, { credentials: "same-origin", cache: "no-store", signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]) }),signal);
-    if (!response.ok) throw new CaptureError(response.status, "PREVIEW_FAILED", "Aperçu indisponible. Actualisez les pages avant de poursuivre.");
+    signal.throwIfAborted();
+    const query = new URLSearchParams({ offset: String(offset), length: String(Math.min(2 * 1024 * 1024, total - offset)) });
+    if ("artifactId" in selector) query.set("artifactId", selector.artifactId);
+    else { query.set("pageId", selector.pageId); if (selector.variant) { query.set("variant", selector.variant); query.set("pageVersion", String(selector.pageVersion)); } }
+    const response = await waitForCaptureOperation(()=>fetch(`/api/hestia/capture/${captureId}/content?${query}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Hestia-Activity": "passive" }, signal:AbortSignal.any([signal,AbortSignal.timeout(30_000)]) }),signal);
+    if (!response.ok) { const data = await response.json().catch(() => null); throw new CaptureError(response.status, data?.error?.code || "PREVIEW_FAILED", "Aperçu indisponible. Actualisez les pages avant de poursuivre."); }
     const range = response.headers.get("Content-Range")?.match(/bytes (\d+)-(\d+)\/(\d+)/);
     const bytes = await response.arrayBuffer();
+    signal.throwIfAborted();
     if (!range || Number(range[1]) !== offset || Number(range[2]) + 1 !== offset + bytes.byteLength || !bytes.byteLength || Number(range[3]) > 20 * 1024 * 1024) throw new Error("Aperçu indisponible.");
     total = Number(range[3]); type = response.headers.get("Content-Type") || "application/octet-stream";
     chunks.push(bytes); offset += bytes.byteLength;

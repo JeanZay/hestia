@@ -69,8 +69,21 @@ describe('family membership on owned real PostgreSQL',()=>{
   await pool.query("UPDATE hestia_folder SET governance_kind='shared' WHERE id=$1",[folder]);await pool.query("UPDATE hestia_grant SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[reference]);expect((await membership.handleManagementTransfer(req(),folder)).status).toBe(404);
  });
  it('projects vacancies without a private title and nominates only surviving reader concurrently',async()=>{
+  // The first root from beforeEach becomes an earlier vacancy. Force the target
+  // onto a later API page even when this test runs alone.
+  const later=await app.handleFolders(req({name:privateTitle+' pagination'}));expect(later.status).toBe(201);folder=(await later.json()).folder.id;
+  reference=(await pool.query('SELECT reference_grant_id FROM hestia_folder WHERE id=$1',[folder])).rows[0].reference_grant_id;
   await grant(2);const input=await removal(0);expect((await membership.handleRemoveMember(req(input,1),users[0].id)).status).toBe(200);
-  const response=await membership.handleUnmanagedFolders(req(undefined,1));expect(response.status).toBe(200);const raw=await response.text();expect(raw).not.toContain('TITRE STRICTEMENT PRIVE');expect(JSON.parse(raw).folders.find((f:{id:string})=>f.id===folder).canNominate).toBe(true);
+  let offset=0,pagesRead=0,candidate:{id:string;canNominate:boolean}|undefined;
+  for(;pagesRead<1000;){
+   const original=req(undefined,1),url=new URL(original.url);url.searchParams.set('limit','1');url.searchParams.set('offset',String(offset));
+   const response=await membership.handleUnmanagedFolders(new Request(url,original));expect(response.status).toBe(200);
+   const raw=await response.text();expect(raw).not.toContain('TITRE STRICTEMENT PRIVE');pagesRead++;
+   const page=JSON.parse(raw) as {folders:{id:string;canNominate:boolean}[];nextOffset:number|null};
+   candidate=page.folders.find(item=>item.id===folder);if(candidate||page.nextOffset===null)break;
+   expect(Number.isSafeInteger(page.nextOffset)).toBe(true);expect(page.nextOffset).toBeGreaterThan(offset);expect(page.nextOffset).toBeLessThanOrEqual(1_000_000);offset=page.nextOffset;
+  }
+  expect(pagesRead).toBeGreaterThan(1);expect(candidate).toBeDefined();expect(candidate?.canNominate).toBe(true);
   const p=await (await membership.handleSuccessionPreview(req(undefined,1),folder)).json();expect(JSON.stringify(p)).not.toContain('TITRE STRICTEMENT PRIVE');
   const command={idempotencyKey:randomUUID(),previousReferenceId:p.previousReferenceId,nomineeId:users[2].id,reviewVersion:p.reviewVersion};
   const results=await Promise.all([membership.handleNominateSuccessor(req(command,1),folder),membership.handleNominateSuccessor(req({...command,idempotencyKey:randomUUID()},1),folder)]);expect(results.map(r=>r.status).sort()).toEqual([200,409]);
