@@ -1,27 +1,32 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { type Access,type Actor,HttpError,bodyBytes,guarded,invalid,isUuid,json,privateHeaders,response,textField,unavailable } from "../access";
+import { type Access,type Actor,HttpError,bodyBytes,guarded,invalid,isUuid,json,privateHeaders,readActivity,response,textField,unavailable } from "../access";
 import { validateOriginal } from "../formats";
 import { folderNameKey } from "../db/folder-name";
 import { getFolderAccess, loadFolderAccessGraph, assertPolicyCapacity } from "../permissions/service";
 import { evaluateTreeAccess } from "../permissions/tree";
 import { CAPABILITIES } from "../permissions/capabilities";
 import { planCaptureDestination, type DestinationFolder } from "./destination-plan";
-import type { CaptureDto,CapturePageDto,CaptureArtifactDto,CaptureMediaType,CaptureRotation,CaptureCrop,CapturePreviewInput,CapturePreviewDto,CaptureDocumentDto,CaptureFinalizeInput,CaptureOperationDto } from "../../shared/capture-contract";
+import type { CaptureDto,CapturePageDto,CaptureArtifactDto,CaptureMediaType,CaptureRotation,CaptureCrop,CapturePreviewInput,CapturePreviewDto,CaptureDocumentDto,CaptureFinalizeInput,CaptureOperationDto,CapturePreviewVariant } from "../../shared/capture-contract";
 import type { CaptureDependencies,CaptureService,CaptureLimits,AnalysisIdentity,AnalysisSelection,RenderPage } from "./types";
-import { createCaptureRenderer,inspectCaptureImage } from "./renderer";
+import { createCaptureRenderer } from "./renderer";
 import { digest,conflict,integer,uuid,crop,previewInput,finalInput,previewHash,finalHash,destinationJson } from "./model";
 export type {CaptureDependencies,CaptureService,CaptureAnalysisBridge,AnalysisIdentity,AnalysisSelection} from "./types";
 const CHUNK=2*1024*1024, MAX=20*1024*1024;
 const TYPES:CaptureMediaType[]=["application/pdf","image/jpeg","image/png","image/webp","image/heic","image/heif"];
 export const DEFAULT_CAPTURE_LIMITS:CaptureLimits={fileBytes:MAX,imagePixels:40_000_000,pages:20,totalPixels:200_000_000,sourceBytes:200*1024*1024,generationTimeoutMs:90_000,maxDraftsPerActor:20,maxConcurrentGenerations:1};
 type CaptureRow={id:string;actor_id:string;actor_epoch:number;kind:"camera"|"import";version:number;state:CaptureDto["state"];created_at:Date;expires_at:Date;current_folder_id:string|null;title:string;format:CaptureDto["format"];identity_sha:string};
-type PageRow={id:string;capture_id:string;identity_sha:string;expected_version:number;replace_page_id:string|null;file_name:string;media_type:CaptureMediaType;size:number;sha256:string;status:string;object_key:string;version:number;position:number;rotation:CaptureRotation;crop:CaptureCrop;width:number;height:number;saved_at:Date|null;preview_key:string|null;preview_version:number|null};
-type ArtifactRow={id:string;capture_id:string;capture_version:number;manifest_sha:string;object_key:string;media_type:CaptureMediaType;file_name:string;size:number;sha256:string;page_count:number};
+type PageRow={id:string;capture_id:string;identity_sha:string;expected_version:number;replace_page_id:string|null;file_name:string;media_type:CaptureMediaType;size:number;sha256:string;status:string;object_key:string;version:number;position:number;rotation:CaptureRotation;crop:CaptureCrop;width:number;height:number;saved_at:Date|null;preview_key:string|null;preview_version:number|null;thumbnail_key:string|null;thumbnail_version:number|null;thumbnail_identity:string|null;settings_key:string|null;settings_version:number|null;settings_identity:string|null};
+type ArtifactRow={id:string;capture_id:string;capture_version:number;manifest_sha:string;content_sha:string|null;object_key:string;media_type:CaptureMediaType;file_name:string;size:number;sha256:string;page_count:number};
 type ObjectRow={object_key:string;size:number;sha256:string;ready:boolean;deleted_at:Date|null;promoted:boolean};
 const pageDto=(p:PageRow):CapturePageDto=>({id:p.id,version:p.version,order:p.position,rotation:p.rotation,crop:p.crop,size:p.size,mediaType:p.media_type,width:p.width,height:p.height,savedAt:p.saved_at!.toISOString()});
 const artifactDto=(a:ArtifactRow):CaptureArtifactDto=>({id:a.id,version:a.capture_version,mediaType:a.media_type,fileName:a.file_name,size:a.size,sha256:a.sha256,pageCount:a.page_count});
 const manifest=(c:CaptureRow,pages:PageRow[])=>digest(JSON.stringify([c.id,c.version,c.title,c.format,pages.map(p=>[p.id,p.version,p.sha256,p.rotation,p.crop,p.position])]));
+const RENDER_REVISION="capture-jpeg92-v1";
+const cropValues=(p:CaptureCrop)=>[p.t,p.r,p.b,p.l];
+const contentManifest=(format:CaptureDto["format"],pages:PageRow[])=>digest(JSON.stringify([RENDER_REVISION,format,pages.map(p=>[p.id,p.object_key,p.sha256,p.media_type,p.size,p.rotation,cropValues(p.crop)])]));
+const previewIdentity=(p:PageRow,variant:CapturePreviewVariant,key:string)=>digest(JSON.stringify([RENDER_REVISION,variant,key,p.object_key,p.sha256,p.media_type,p.size,p.width,p.height,p.rotation,cropValues(p.crop)]));
+const previewKeys=(p:PageRow)=>[p.preview_key,p.thumbnail_key,p.settings_key].filter((key):key is string=>Boolean(key));
 const method=(r:Request,...allowed:string[])=>{if(!allowed.includes(r.method))throw new HttpError(405,"METHOD_NOT_ALLOWED","Action indisponible.");};
 const version=(row:CaptureRow,v:unknown)=>{if(row.version!==integer(v))throw conflict("VERSION_CONFLICT","Ce brouillon a changé. Actualisez-le avant de continuer.");};
 const closed=()=>new HttpError(410,"CAPTURE_EXPIRED","Ce brouillon est expiré ou fermé.");
@@ -57,17 +62,18 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   for(let offset=0;offset<size;offset+=CHUNK){const piece=await deps.store.getRange(key,offset,Math.min(size,offset+CHUNK)-1);if(piece.length!==Math.min(CHUNK,size-offset))throw unavailable();bytes.set(piece,offset);}
   if(digest(bytes)!==sha)throw new HttpError(422,"INTEGRITY_ERROR","Le fichier reçu est incomplet ou altéré.");return bytes;
  }
- async function invalidate(client:PoolClient,c:CaptureRow){
-  await client.query("UPDATE hestia_capture_object SET purge=true WHERE kind='artifact' AND object_key IN(SELECT object_key FROM hestia_capture_artifact WHERE capture_id=$1)",[c.id]);
+ async function invalidate(client:PoolClient,c:CaptureRow,keepKey:string|null=null){
+  await client.query("UPDATE hestia_capture_object SET purge=true WHERE kind='artifact' AND NOT promoted AND object_key IS DISTINCT FROM $2 AND object_key IN(SELECT object_key FROM hestia_capture_artifact WHERE capture_id=$1)",[c.id,keepKey]);
   await client.query("DELETE FROM hestia_capture_preview WHERE capture_id=$1",[c.id]);
  }
  async function page(client:PoolClient,id:string,pageId:string){if(!isUuid(pageId))throw unavailable();const p=(await client.query<PageRow>("SELECT * FROM hestia_capture_page WHERE id=$1 AND capture_id=$2 FOR UPDATE",[pageId,id])).rows[0];if(!p||p.status==="removed")throw unavailable();return p;}
  async function artifact(client:PoolClient,c:CaptureRow,id:string){
   const a=(await client.query<ArtifactRow>("SELECT a.* FROM hestia_capture_artifact a JOIN hestia_capture_object o ON o.object_key=a.object_key WHERE a.id=$1 AND a.capture_id=$2 AND a.capture_version=$3 AND o.ready AND o.deleted_at IS NULL AND NOT o.purge",[uuid(id),c.id,c.version])).rows[0];
-  if(!a||a.manifest_sha!==manifest(c,await pages(client,c.id)))throw conflict("VERSION_CONFLICT","Préparez à nouveau le document avant de continuer.");return a;
+  const current=await pages(client,c.id);
+  if(!a||a.manifest_sha!==manifest(c,current)||a.content_sha!==contentManifest(c.format,current))throw conflict("VERSION_CONFLICT","Préparez à nouveau le document avant de continuer.");return a;
  }
  async function handleCaptures(request:Request){return guarded(async()=>{
-  method(request,"GET","POST");if(request.method==="GET")return response(await withActor(request,async(client,actor)=>{const now=await clock(client);const rows=(await client.query<CaptureRow>("SELECT * FROM hestia_capture WHERE actor_id=$1 AND actor_epoch=$2 AND kind='camera' AND state IN ('open','preparing') AND expires_at>$3 ORDER BY created_at DESC LIMIT 100",[actor.id,await epoch(client,actor),now])).rows;return {captures:await Promise.all(rows.map(row=>dto(client,row))),now:now.toISOString()};}));
+  method(request,"GET","POST");if(request.method==="GET")return response(await withActor(request,async(client,actor)=>{const now=await clock(client);const rows=(await client.query<CaptureRow>("SELECT * FROM hestia_capture WHERE actor_id=$1 AND actor_epoch=$2 AND kind='camera' AND state IN ('open','preparing') AND expires_at>$3 ORDER BY created_at DESC LIMIT 100",[actor.id,await epoch(client,actor),now])).rows;return {captures:await Promise.all(rows.map(row=>dto(client,row))),now:now.toISOString()};},readActivity(request)));
   origin(request);const input=await json(request,["kind","idempotencyKey","currentFolderId"]);if(!["camera","import"].includes(String(input.kind)))throw invalid();const key=uuid(input.idempotencyKey),folder=input.currentFolderId==null?null:uuid(input.currentFolderId),identity=digest(JSON.stringify([input.kind,folder]));
   return response(await withActor(request,async(client,actor)=>{const actorEpoch=await epoch(client,actor);const old=(await client.query<CaptureRow>("SELECT * FROM hestia_capture WHERE actor_id=$1 AND actor_epoch=$2 AND idempotency_key=$3",[actor.id,actorEpoch,key])).rows[0];if(old){if(old.identity_sha!==identity)throw conflict("IDEMPOTENCY_CONFLICT","Cette demande correspond à un autre brouillon.");await owned(client,actor,old.id);return {capture:await dto(client,old)};}
    const now=await clock(client);const count=Number((await client.query("SELECT count(*) FROM hestia_capture WHERE actor_id=$1 AND state IN ('open','preparing') AND expires_at>$2",[actor.id,now])).rows[0].count);if(count>=limits.maxDraftsPerActor)throw new HttpError(429,"CAPTURE_LIMIT","Trop de brouillons en cours. Abandonnez un brouillon avant de recommencer.");
@@ -76,20 +82,37 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   }),201);
  });}
  async function handleCapture(request:Request,id:string){return guarded(async()=>{
-  method(request,"GET","PATCH","DELETE");if(request.method==="GET")return response(await withActor(request,async(client,actor)=>({capture:await dto(client,await owned(client,actor,id))})));
+  method(request,"GET","PATCH","DELETE");if(request.method==="GET")return response(await withActor(request,async(client,actor)=>({capture:await dto(client,await owned(client,actor,id))}),readActivity(request)));
   origin(request);const input=await json(request,request.method==="DELETE"?["version"]:["version","title","format","pages"]);
   return (await operation(id,async()=>response(await withActor(request,async(client,actor)=>{
    const c=await owned(client,actor,id);version(c,input.version);await deps.budget.lock(client);
    if(request.method==="DELETE"){await client.query("UPDATE hestia_capture SET state='abandoned',version=version+1 WHERE id=$1",[id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE capture_id=$1 AND NOT promoted",[id]);return {capture:await dto(client,{...c,state:"abandoned",version:c.version+1})};}
    const title=textField(input.title,200),format=input.format;if(!Array.isArray(input.pages)||input.pages.length>limits.pages||!["pdf","image","original"].includes(String(format)))throw invalid();const current=await pages(client,id);
    if(c.kind==="import"&&(format!=="original"||input.pages.length!==current.length))throw invalid();if(c.kind==="camera"&&(format==="original"||(format==="image"&&input.pages.length>1)))throw invalid();
-   const seen=new Set<string>();for(let i=0;i<input.pages.length;i++){const item=input.pages[i];if(!item||typeof item!=="object"||Object.keys(item).sort().join()!=="crop,id,rotation")throw invalid();const p=current.find(p=>p.id===uuid(item.id));if(!p||seen.has(p.id))throw invalid();seen.add(p.id);const rotate=integer(item.rotation,0,270);if(rotate%90)throw invalid();const adjusted=crop(item.crop);if(c.kind==="import"&&(rotate!==0||Object.values(adjusted).some(n=>n)))throw invalid();
-    if(rotate!==p.rotation||Object.keys(adjusted).some(k=>adjusted[k as keyof CaptureCrop]!==p.crop[k as keyof CaptureCrop])){await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1",[p.preview_key]);await client.query("UPDATE hestia_capture_page SET rotation=$2,crop=$3,position=$4,version=version+1,preview_key=NULL,preview_version=NULL WHERE id=$1",[p.id,rotate,adjusted,i]);}else await client.query("UPDATE hestia_capture_page SET position=$2 WHERE id=$1",[p.id,i]);}
+   const seen=new Set<string>(),selected:PageRow[]=[];
+   for(let i=0;i<input.pages.length;i++){const item=input.pages[i];if(!item||typeof item!=="object"||Object.keys(item).sort().join()!=="crop,id,rotation")throw invalid();const p=current.find(p=>p.id===uuid(item.id));if(!p||seen.has(p.id))throw invalid();seen.add(p.id);const rotate=integer(item.rotation,0,270);if(rotate%90)throw invalid();const adjusted=crop(item.crop);if(c.kind==="import"&&(rotate!==0||Object.values(adjusted).some(n=>n)))throw invalid();
+    selected.push({...p,rotation:rotate as CaptureRotation,crop:adjusted,position:i});
+   }
+   const sameContent=contentManifest(c.format,current)===contentManifest(format as CaptureDto["format"],selected);
+   const pending=(await client.query("SELECT 1 FROM hestia_capture_page WHERE capture_id=$1 AND status='uploading' LIMIT 1",[id])).rowCount;
+   if(sameContent&&title===c.title&&!pending)return {capture:await dto(client,c)};
+   // Retain only an intact current rendering before invalidation. A rename gets
+   // new metadata/confirmation identity, while keeping exactly the same bytes.
+   const reusable=sameContent?(await client.query<ArtifactRow>("SELECT a.* FROM hestia_capture_artifact a JOIN hestia_capture_object o ON o.object_key=a.object_key WHERE a.capture_id=$1 AND a.capture_version=$2 AND a.content_sha=$3 AND o.ready AND NOT o.purge AND NOT o.promoted AND o.deleted_at IS NULL",[id,c.version,contentManifest(c.format,current)])).rows[0]:undefined;
+   if(reusable&&reusable.manifest_sha!==manifest(c,current))throw conflict("VERSION_CONFLICT","Préparez à nouveau le document avant de continuer.");
+   for(const p of selected){const old=current.find(value=>value.id===p.id)!;
+    if(p.rotation!==old.rotation||cropValues(p.crop).some((value,i)=>value!==cropValues(old.crop)[i])){
+     await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=ANY($1::text[]) AND NOT promoted",[previewKeys(old)]);
+     await client.query("UPDATE hestia_capture_page SET rotation=$2,crop=$3,position=$4,version=version+1,preview_key=NULL,preview_version=NULL,thumbnail_key=NULL,thumbnail_version=NULL,thumbnail_identity=NULL,settings_key=NULL,settings_version=NULL,settings_identity=NULL WHERE id=$1",[p.id,p.rotation,p.crop,p.position]);
+    }else if(old.position!==p.position)await client.query("UPDATE hestia_capture_page SET position=$2 WHERE id=$1",[p.id,p.position]);
+   }
    // A complete manifest edit also cancels unsaved selections, under the same writer lock.
    const unsaved=(await client.query<PageRow>("UPDATE hestia_capture_page SET status='removed' WHERE capture_id=$1 AND status='uploading' RETURNING *",[id])).rows;
    for(const pending of unsaved)await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1 OR object_key IN(SELECT object_key FROM hestia_capture_chunk WHERE page_id=$2)",[pending.object_key,pending.id]);
-   for(const p of current)if(!seen.has(p.id)){await client.query("UPDATE hestia_capture_page SET status='removed' WHERE id=$1",[p.id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=ANY($1::text[])",[[p.object_key,p.preview_key].filter(Boolean)]);}
-   await invalidate(client,c);const updated=(await client.query<CaptureRow>("UPDATE hestia_capture SET title=$2,format=$3,version=version+1,state='open' WHERE id=$1 RETURNING *",[id,title,format])).rows[0];return {capture:await dto(client,updated)};
+   for(const p of current)if(!seen.has(p.id)){await client.query("UPDATE hestia_capture_page SET status='removed' WHERE id=$1",[p.id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=ANY($1::text[]) AND NOT promoted",[[p.object_key,...previewKeys(p)]]);}
+   await invalidate(client,c,reusable?.object_key);const updated=(await client.query<CaptureRow>("UPDATE hestia_capture SET title=$2,format=$3,version=version+1,state='open' WHERE id=$1 RETURNING *",[id,title,format])).rows[0];
+   if(reusable)await client.query("INSERT INTO hestia_capture_artifact(id,capture_id,capture_version,manifest_sha,object_key,media_type,file_name,size,sha256,page_count,content_sha) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",[randomUUID(),id,updated.version,manifest(updated,await pages(client,id)),reusable.object_key,reusable.media_type,c.kind==="camera"?title+(reusable.media_type==="application/pdf"?".pdf":".jpg"):reusable.file_name,reusable.size,reusable.sha256,reusable.page_count,reusable.content_sha]);
+   return {capture:await dto(client,updated)};
   }))))!;
  });}
  async function handleCapturePages(request:Request,id:string){return guarded(async()=>{
@@ -122,11 +145,12 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
    const bytes=new Uint8Array(initial.p.size);for(const part of initial.parts){bytes.set(await readObject(part.object_key,part.size,part.sha256),part.chunk_index*CHUNK);await withActor(request,async(client,actor)=>{version(await owned(client,actor,id),input.version);});}
    if(digest(bytes)!==initial.p.sha256)throw new HttpError(422,"INTEGRITY_ERROR","La page reçue est altérée.");let checked:Awaited<ReturnType<typeof validate>>;
    try{checked=await validate(bytes,initial.p.media_type);}catch{throw new HttpError(422,"INVALID_FILE","Ce fichier est invalide ou son format n’est pas pris en charge.");}
-   const dimensions=initial.c.kind==="camera"?await inspectCaptureImage(bytes,checked.mediaType as CaptureMediaType):{width:0,height:0};
+   if(initial.c.kind==="camera"&&(!checked.image||checked.image.count!==1))throw new HttpError(422,"CAPTURE_RENDER_FAILED","Le document n’a pas pu être préparé. Les pages enregistrées sont conservées.");
+   const dimensions=initial.c.kind==="camera"?checked.image!:{width:0,height:0};
    await withActor(request,async(client,actor)=>{version(await owned(client,actor,id),input.version);const current=await pages(client,id);const pixels=current.filter(p=>p.id!==initial.p.replace_page_id).reduce((n,p)=>n+p.width*p.height,0)+dimensions.width*dimensions.height;if(pixels>limits.totalPixels||dimensions.width*dimensions.height>limits.imagePixels)throw new HttpError(413,"CAPTURE_LIMIT","Le document dépasse la limite de pixels. Les pages enregistrées sont conservées.");});
    await deps.store.put(initial.p.object_key,bytes,checked.mediaType);
    return response(await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);version(c,input.version);await deps.budget.lock(client);
-    if(initial.p.replace_page_id){const old=await page(client,id,initial.p.replace_page_id);await client.query("UPDATE hestia_capture_page SET status='removed' WHERE id=$1",[old.id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=ANY($1::text[])",[[old.object_key,old.preview_key].filter(Boolean)]);initial.p.position=old.position;}
+    if(initial.p.replace_page_id){const old=await page(client,id,initial.p.replace_page_id);await client.query("UPDATE hestia_capture_page SET status='removed' WHERE id=$1",[old.id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=ANY($1::text[]) AND NOT promoted",[[old.object_key,...previewKeys(old)]]);initial.p.position=old.position;}
     await client.query("UPDATE hestia_capture_object SET ready=true,sha256=$2 WHERE object_key=$1",[initial.p.object_key,initial.p.sha256]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key IN(SELECT object_key FROM hestia_capture_chunk WHERE page_id=$1)",[pageId]);
     const p=(await client.query<PageRow>("UPDATE hestia_capture_page SET status='saved',saved_at=$2,width=$3,height=$4,position=$5,media_type=$6 WHERE id=$1 RETURNING *",[pageId,await clock(client),dimensions.width,dimensions.height,initial.p.position,checked.mediaType])).rows[0];await invalidate(client,c);
     const updated=(await client.query<CaptureRow>("UPDATE hestia_capture SET version=version+1,state='open',format=CASE WHEN kind='camera' AND (SELECT count(*) FROM hestia_capture_page WHERE capture_id=$1 AND status='saved')>1 THEN 'pdf' ELSE format END WHERE id=$1 RETURNING *",[id])).rows[0];return {capture:await dto(client,updated),page:pageDto(p)};
@@ -139,10 +163,11 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   if(!acquired)throw conflict("CAPTURE_BUSY","Une préparation est déjà en cours. Réessayez dans un instant.");
   try{return await action();}finally{await client.query("SELECT pg_advisory_unlock(481900001)");}
  }
- async function render(request:Request,c:CaptureRow,selected:PageRow[],format:"pdf"|"image"){
-  return withGeneration(()=>renderer({pages:selected.map(renderPage),format,signal:request.signal,readPage:async(pageId)=>{
-   const p=selected.find(p=>p.id===pageId);if(!p)throw invalid();await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);});
-   const bytes=await readObject(p.object_key,p.size,p.sha256);await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);});return bytes;
+ async function render(request:Request,c:CaptureRow,selected:PageRow[],format:"pdf"|"image",maxLongEdge?:640|1600){
+  const touch=request.method==="GET"?readActivity(request):true;
+  return withGeneration(()=>renderer({pages:selected.map(renderPage),format,maxLongEdge,signal:request.signal,readPage:async(pageId)=>{
+   const p=selected.find(p=>p.id===pageId);if(!p)throw invalid();await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);},touch);
+   const bytes=await readObject(p.object_key,p.size,p.sha256);await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);},touch);return bytes;
   }}));
  }
  async function handleCapturePrepare(request:Request,id:string){return guarded(async()=>{
@@ -151,7 +176,12 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
    try{
     const initial=await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);version(c,input.version);const selected=await pages(client,id);if(!selected.length)throw conflict("CAPTURE_EMPTY","Ajoutez au moins une page enregistrée.");
      const existing=(await client.query<ArtifactRow>("SELECT a.* FROM hestia_capture_artifact a JOIN hestia_capture_object o ON o.object_key=a.object_key WHERE a.capture_id=$1 AND a.capture_version=$2 AND o.ready AND o.deleted_at IS NULL AND NOT o.purge",[id,c.version])).rows[0];
-     if(existing)return {c,selected,existing};if(c.kind==="camera")key=await reserve(client,c,"artifact",limits.fileBytes,`originals/${randomUUID()}`);
+     if(existing&&existing.manifest_sha===manifest(c,selected)&&existing.content_sha===contentManifest(c.format,selected))return {c,selected,existing};
+     // Old engines (including N-1) have no current content attestation. Retire
+     // the old confirmation identity before rebuilding, without touching sources.
+     await invalidate(client,c);
+     await client.query("DELETE FROM hestia_capture_artifact WHERE capture_id=$1 AND capture_version=$2",[id,c.version]);
+     if(c.kind==="camera")key=await reserve(client,c,"artifact",limits.fileBytes,`originals/${randomUUID()}`);
      await client.query("UPDATE hestia_capture SET state='preparing' WHERE id=$1",[id]);return {c,selected,existing:null};
     });
     if(initial.existing)return response({capture:await withActor(request,async(client,actor)=>dto(client,await owned(client,actor,id))),artifact:artifactDto(initial.existing)});
@@ -164,30 +194,42 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
     }
     return response(await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);version(c,initial.c.version);await deps.budget.lock(client);
      if(key)await client.query("UPDATE hestia_capture_object SET ready=true,size=$2,charged_bytes=$2,sha256=$3 WHERE object_key=$1",[key,size,sha]);
-     const a=(await client.query<ArtifactRow>("INSERT INTO hestia_capture_artifact(id,capture_id,capture_version,manifest_sha,object_key,media_type,file_name,size,sha256,page_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *",[randomUUID(),id,c.version,manifest(c,initial.selected),objectKey,type,fileName,size,sha,initial.selected.length])).rows[0];await client.query("UPDATE hestia_capture SET state='open' WHERE id=$1",[id]);return {capture:await dto(client,{...c,state:"open"}),artifact:artifactDto(a)};
+     const a=(await client.query<ArtifactRow>("INSERT INTO hestia_capture_artifact(id,capture_id,capture_version,manifest_sha,object_key,media_type,file_name,size,sha256,page_count,content_sha) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *",[randomUUID(),id,c.version,manifest(c,initial.selected),objectKey,type,fileName,size,sha,initial.selected.length,contentManifest(c.format,initial.selected)])).rows[0];await client.query("UPDATE hestia_capture SET state='open' WHERE id=$1",[id]);return {capture:await dto(client,{...c,state:"open"}),artifact:artifactDto(a)};
     }));
    }catch(error){await transaction(async client=>{if(key)await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1 AND NOT promoted",[key]);await client.query("UPDATE hestia_capture SET state='open' WHERE id=$1 AND state='preparing'",[id]);});throw error;}
   }))!;
  });}
- async function adjustedPreview(request:Request,c:CaptureRow,p:PageRow):Promise<{key:string;size:number;sha:string;type:CaptureMediaType}>{
+ async function adjustedPreview(request:Request,c:CaptureRow,p:PageRow,variant:CapturePreviewVariant|null):Promise<{key:string;size:number;sha:string;type:CaptureMediaType}>{
   if(c.kind!=="camera")throw unavailable();
-  if(p.preview_key&&p.preview_version===p.version){const found=(await db().query<ObjectRow>("SELECT * FROM hestia_capture_object WHERE object_key=$1 AND ready AND deleted_at IS NULL AND NOT purge",[p.preview_key])).rows[0];if(found)return {key:found.object_key,size:found.size,sha:found.sha256,type:"image/jpeg"};}
+  const touch=readActivity(request),slot=variant??"preview",oldKey=p[`${slot}_key`];
+  const current=oldKey&&p[`${slot}_version`]===p.version&&(!variant||p[`${variant}_identity`]===previewIdentity(p,variant,oldKey));
+  if(current){const found=(await db().query<ObjectRow>("SELECT * FROM hestia_capture_object WHERE object_key=$1 AND ready AND deleted_at IS NULL AND NOT purge",[oldKey])).rows[0];if(found)return {key:found.object_key,size:found.size,sha:found.sha256,type:"image/jpeg"};}
   let key:string|null=null;
   try{
-   key=await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);return reserve(client,c,"artifact",limits.fileBytes);});
-   const output=await render(request,c,[p],"image");if(!output.bytes.length||output.bytes.length>limits.fileBytes)throw invalid();const sha=digest(output.bytes);
-   await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);});await deps.store.put(key,output.bytes,"image/jpeg");
-   await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);await deps.budget.lock(client);await client.query("UPDATE hestia_capture_object SET size=$2,charged_bytes=$2,sha256=$3,ready=true WHERE object_key=$1",[key,output.bytes.length,sha]);await client.query("UPDATE hestia_capture_page SET preview_key=$2,preview_version=version WHERE id=$1",[p.id,key]);});
+   key=await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);return reserve(client,c,"artifact",limits.fileBytes);},touch);
+   const output=await render(request,c,[p],"image",variant==="thumbnail"?640:variant==="settings"?1600:undefined);if(!output.bytes.length||output.bytes.length>limits.fileBytes)throw invalid();const sha=digest(output.bytes);
+   await withActor(request,async(client,actor)=>{version(await owned(client,actor,c.id),c.version);},touch);await deps.store.put(key,output.bytes,"image/jpeg");
+   await withActor(request,async(client,actor)=>{
+    version(await owned(client,actor,c.id),c.version);await deps.budget.lock(client);
+    await client.query("UPDATE hestia_capture_object SET size=$2,charged_bytes=$2,sha256=$3,ready=true WHERE object_key=$1",[key,output.bytes.length,sha]);
+    // Identifiers come only from the three fixed slots above, never from a URL.
+    if(variant)await client.query(`UPDATE hestia_capture_page SET ${variant}_key=$2,${variant}_version=version,${variant}_identity=$3 WHERE id=$1`,[p.id,key,previewIdentity(p,variant,key!)]);
+    else await client.query("UPDATE hestia_capture_page SET preview_key=$2,preview_version=version WHERE id=$1",[p.id,key]);
+    if(oldKey)await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1 AND NOT promoted",[oldKey]);
+   },touch);
    return {key,size:output.bytes.length,sha,type:"image/jpeg"};
   }catch(error){if(key)await db().query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1",[key]);throw error;}
  }
  async function handleCaptureContent(request:Request,id:string){return guarded(async()=>{
   method(request,"GET");const url=new URL(request.url),pageId=url.searchParams.get("pageId"),artifactId=url.searchParams.get("artifactId");if(Boolean(pageId)===Boolean(artifactId))throw invalid();const offset=integer(Number(url.searchParams.get("offset")),0,MAX),length=integer(Number(url.searchParams.get("length")),1,CHUNK);
+  const rawVariant=url.searchParams.get("variant"),rawVersion=url.searchParams.get("pageVersion"),touch=readActivity(request);
+  if((rawVariant!==null&&!['thumbnail','settings'].includes(rawVariant))||(rawVariant!==null&&(!pageId||rawVersion===null))||(rawVariant===null&&rawVersion!==null))throw invalid();
+  const variant=rawVariant as CapturePreviewVariant|null,expectedPageVersion=rawVersion===null?null:integer(Number(rawVersion),1);
   return (await operation(id,async()=>{
-   const selected=await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);if(pageId){const p=await page(client,id,pageId);if(p.status!=="saved")throw unavailable();return {c,p,a:null};}return {c,p:null,a:await artifact(client,c,artifactId!)};});
-   const object=selected.p?await adjustedPreview(request,selected.c,selected.p):{key:selected.a!.object_key,size:selected.a!.size,sha:selected.a!.sha256,type:selected.a!.media_type};
+   const selected=await withActor(request,async(client,actor)=>{const c=await owned(client,actor,id);if(pageId){const p=await page(client,id,pageId);if(p.status!=="saved")throw unavailable();if(expectedPageVersion!==null&&p.version!==expectedPageVersion)throw conflict("VERSION_CONFLICT","Cette page a changé. Actualisez-la avant de continuer.");return {c,p,a:null};}return {c,p:null,a:await artifact(client,c,artifactId!)};},touch);
+   const object=selected.p?await adjustedPreview(request,selected.c,selected.p,variant):{key:selected.a!.object_key,size:selected.a!.size,sha:selected.a!.sha256,type:selected.a!.media_type};
    if(offset>=object.size)throw new HttpError(416,"INVALID_RANGE","Cette portion est hors du fichier.");const end=Math.min(object.size,offset+length)-1;const bytes=await deps.store.getRange(object.key,offset,end);if(bytes.length!==end-offset+1)throw unavailable();
-   return withActor(request,async(client,actor)=>{version(await owned(client,actor,id),selected.c.version);const headers=privateHeaders();headers.set("Content-Type",object.type);headers.set("Content-Length",String(bytes.length));headers.set("Content-Range",`bytes ${offset}-${end}/${object.size}`);headers.set("Content-Security-Policy","sandbox; default-src 'none'");return new Response(new Uint8Array(bytes),{status:206,headers});});
+   return withActor(request,async(client,actor)=>{version(await owned(client,actor,id),selected.c.version);if(selected.p){const current=await page(client,id,selected.p.id);if(current.status!=="saved"||current.version!==selected.p.version)throw conflict("VERSION_CONFLICT","Cette page a changé. Actualisez-la avant de continuer.");}const headers=privateHeaders();headers.set("Content-Type",object.type);headers.set("Content-Length",String(bytes.length));headers.set("Content-Range",`bytes ${offset}-${end}/${object.size}`);headers.set("Content-Security-Policy","sandbox; default-src 'none'");return new Response(new Uint8Array(bytes),{status:206,headers});},touch);
   }))!;
  });}
  type Plan={preview:Omit<CapturePreviewDto,"previewToken">;policy:string;ownerId:string;folderId:string|null;missing:string[]};
@@ -265,11 +307,22 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
  };
  async function cleanupCaptures(limit:number,maxObjects:number){
   integer(limit,1,100);integer(maxObjects,1,1000);let cleaned=0,failed=0;
-  const candidates=await transaction(async client=>{const now=await clock(client);return (await client.query<{id:string}>("SELECT c.id FROM hestia_capture c WHERE (c.state IN ('open','preparing') AND (c.expires_at<=$1 OR NOT EXISTS(SELECT 1 FROM hestia_member m WHERE m.user_id=c.actor_id AND m.active AND NOT m.recovering AND m.epoch=c.actor_epoch))) OR EXISTS(SELECT 1 FROM hestia_capture_object o WHERE o.capture_id=c.id AND NOT o.promoted AND o.deleted_at IS NULL AND (o.purge OR c.state IN ('finalized','abandoned','expired'))) ORDER BY c.created_at LIMIT $2",[now,limit])).rows;});
+  const candidates=await transaction(async client=>{const now=await clock(client);return (await client.query<{id:string}>(`SELECT c.id FROM hestia_capture c WHERE (c.state IN ('open','preparing') AND (c.expires_at<=$1 OR NOT EXISTS(SELECT 1 FROM hestia_member m WHERE m.user_id=c.actor_id AND m.active AND NOT m.recovering AND m.epoch=c.actor_epoch))) OR EXISTS(SELECT 1 FROM hestia_capture_object o WHERE o.capture_id=c.id AND NOT o.promoted AND o.deleted_at IS NULL AND (o.purge OR c.state IN ('finalized','abandoned','expired'))) OR EXISTS(
+    SELECT 1 FROM hestia_capture_page p JOIN hestia_capture_object o ON
+     (o.object_key=p.thumbnail_key AND (p.status<>'saved' OR p.thumbnail_version<>p.version)) OR
+     (o.object_key=p.settings_key AND (p.status<>'saved' OR p.settings_version<>p.version))
+    WHERE p.capture_id=c.id AND NOT o.promoted AND o.deleted_at IS NULL
+   ) ORDER BY c.created_at LIMIT $2`,[now,limit])).rows;});
   for(const {id} of candidates){if(cleaned>=maxObjects)break;try{await operation(id,async()=>{
    const keys=await transaction(async client=>{await deps.budget.lock(client);const c=(await client.query<CaptureRow>("SELECT * FROM hestia_capture WHERE id=$1 FOR UPDATE",[id])).rows[0];const now=await clock(client);const active=(await client.query("SELECT 1 FROM hestia_member WHERE user_id=$1 AND active AND NOT recovering AND epoch=$2",[c.actor_id,c.actor_epoch])).rowCount;
     if(["open","preparing"].includes(c.state)&&(c.expires_at<=now||!active)){c.state="expired";await client.query("UPDATE hestia_capture SET state='expired' WHERE id=$1",[id]);}
     if(["finalized","abandoned","expired"].includes(c.state))await client.query("UPDATE hestia_capture_object SET purge=true WHERE capture_id=$1 AND NOT promoted",[id]);
+    // An N-1 application cannot mark the new slots after editing/removing a
+    // page. Reconcile these bounded derivatives when N resumes cleanup.
+    const retained=(await client.query<PageRow>("SELECT * FROM hestia_capture_page WHERE capture_id=$1 AND (thumbnail_key IS NOT NULL OR settings_key IS NOT NULL)",[id])).rows;
+    for(const p of retained)for(const variant of ["thumbnail","settings"] as const){const key=p[`${variant}_key`];
+     if(key&&(p.status!=="saved"||p[`${variant}_version`]!==p.version||p[`${variant}_identity`]!==previewIdentity(p,variant,key)))await client.query("UPDATE hestia_capture_object SET purge=true WHERE object_key=$1 AND NOT promoted",[key]);
+    }
     return (await client.query<{object_key:string}>("SELECT object_key FROM hestia_capture_object WHERE capture_id=$1 AND purge AND NOT promoted AND deleted_at IS NULL ORDER BY object_key LIMIT $2",[id,maxObjects-cleaned])).rows;
    });
    for(const {object_key:key} of keys){try{await deps.store.delete(key);await transaction(async client=>{await deps.budget.lock(client);await client.query("UPDATE hestia_capture_object SET deleted_at=$2,charged_bytes=0 WHERE object_key=$1 AND NOT promoted",[key,await clock(client)]);});cleaned++;}catch{failed++;}}

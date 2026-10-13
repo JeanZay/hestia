@@ -11,6 +11,7 @@ import {createStorageBudget} from "../../src/server/storage/quota";
 import {createAccess} from "../../src/server/access";
 import {createAuth} from "../../src/server/auth/options";
 import {createCaptureService} from "../../src/server/capture";
+import {createCaptureRenderer} from "../../src/server/capture/renderer";
 import {issueGrant} from "../../src/server/permissions/service";
 import type {CaptureDto,CaptureArtifactDto,CapturePreviewDto,CaptureFinalizeInput,CaptureDestination} from "../../src/shared/capture-contract";
 const hash=(b:Uint8Array)=>createHash("sha256").update(b).digest("hex");
@@ -69,6 +70,109 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
   expect((await app.handleCapture(req(undefined,1),c.id)).status).toBe(404);expect((await body<{captures:CaptureDto[]}>(await app.handleCaptures(req(undefined,1)))).captures).toHaveLength(0);
   expect((await app.handleCapturePrepare(req({version:c.version}),c.id)).status).toBe(409);c=await add(c);expect(c.pages).toHaveLength(1);
   const resumed=await body<{capture:CaptureDto}>(await app.handleCapture(req(),c.id));expect(resumed.capture).toEqual(c);
+ });
+ it("serves separate bounded derivatives, reuses their objects and keeps passive reads inactive",async()=>{
+  const large=await sharp({create:{width:2400,height:1800,channels:3,background:"#ee4433"}}).png().toBuffer();
+  const c=await add(await make(),large),p=c.pages[0];let renders=0;
+  const service=createCaptureService(pool,access,{store,budget:createStorageBudget(),renderer:input=>{renders++;return createCaptureRenderer()(input);}});
+  const stamp=async()=>(await pool.query('SELECT p.session_id,p.touched_at FROM hestia_session_policy p JOIN session s ON s.id=p.session_id WHERE s."userId"=$1 ORDER BY p.session_id',[users[0].id])).rows;
+  const before=await stamp();
+  async function read(variant:string|null,expected=p.version){const r=req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&offset=0&length=2097152${variant?`&variant=${variant}&pageVersion=${expected}`:""}`);r.headers.set("X-Hestia-Activity","passive");return service.handleCaptureContent(r,c.id);}
+  const hashes:string[]=[];
+  for(const [variant,size] of [["thumbnail",640],["settings",1600]] as const){
+   const first=await read(variant);expect(first.status).toBe(206);expect(first.headers.get("cache-control")).toBe("private, no-store");const bytes=new Uint8Array(await first.arrayBuffer());hashes.push(hash(bytes));
+   const meta=await sharp(bytes).metadata();expect(meta.width).toBe(size);expect(meta.height).toBe(size*3/4);
+   const again=await read(variant);expect(hash(new Uint8Array(await again.arrayBuffer()))).toBe(hash(bytes));
+  }
+  expect(renders).toBe(2);expect(new Set(hashes).size).toBe(2);expect(await stamp()).toEqual(before);
+  const legacy=await read(null);expect((await sharp(new Uint8Array(await legacy.arrayBuffer())).metadata()).width).toBe(2400);expect(renders).toBe(3);
+  expect((await read("thumbnail",p.version+1)).status).toBe(409);expect((await read("unknown")).status).toBe(400);expect(renders).toBe(3);
+  expect((await service.handleCaptureContent(req(undefined,1,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=thumbnail&pageVersion=${p.version}&offset=0&length=2097152`),c.id)).status).toBe(404);
+  expect((await service.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=thumbnail&offset=0&length=2097152`),c.id)).status).toBe(400);
+  const list=req();list.headers.set("X-Hestia-Activity","passive");expect((await service.handleCaptures(list)).status).toBe(200);
+  const detail=req();detail.headers.set("X-Hestia-Activity","passive");expect((await service.handleCapture(detail,c.id)).status).toBe(200);expect(await stamp()).toEqual(before);
+ });
+ it("reconciles new derivative slots after legacy edit/removal SQL without touching original bytes",async()=>{
+  const c=await add(await make()),p=c.pages[0];
+  const read=(variant:string)=>app.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=${variant}&pageVersion=${p.version}&offset=0&length=2097152`),c.id);
+  expect((await read("thumbnail")).status).toBe(206);expect((await read("settings")).status).toBe(206);
+  const before=(await pool.query("SELECT * FROM hestia_capture_page WHERE id=$1",[p.id])).rows[0];
+  // The old application's updates deliberately do not know the two new slots.
+  await pool.query("UPDATE hestia_capture_page SET rotation=90,version=version+1,preview_key=NULL,preview_version=NULL WHERE id=$1",[p.id]);
+  await pool.query("UPDATE hestia_capture SET version=version+1 WHERE id=$1",[c.id]);
+  expect((await read("thumbnail")).status).toBe(409);
+  const newRead=await app.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=thumbnail&pageVersion=${p.version+1}&offset=0&length=2097152`),c.id);expect(newRead.status).toBe(206);
+  const meta=await sharp(new Uint8Array(await newRead.arrayBuffer())).metadata();expect([meta.width,meta.height]).toEqual([80,120]);
+  await app.cleanupCaptures(100,1000);
+  const old=(await pool.query("SELECT deleted_at,charged_bytes FROM hestia_capture_object WHERE object_key=ANY($1::text[])",[[before.thumbnail_key,before.settings_key]])).rows;expect(old).toHaveLength(2);expect(old.every(o=>o.deleted_at&&o.charged_bytes===0)).toBe(true);
+  const current=(await pool.query("SELECT thumbnail_key FROM hestia_capture_page WHERE id=$1",[p.id])).rows[0];
+  await pool.query("UPDATE hestia_capture_page SET status='removed' WHERE id=$1",[p.id]);await app.cleanupCaptures(100,1000);
+  expect((await pool.query("SELECT deleted_at FROM hestia_capture_object WHERE object_key=$1",[current.thumbnail_key])).rows[0].deleted_at).toBeTruthy();
+  expect(hash(await store.getRange(before.object_key,0,image.length-1))).toBe(hash(image));
+ });
+ it("withholds even a cached derivative after revocation during its object read",async()=>{
+  const c=await add(await make()),p=c.pages[0];
+  const read=()=>app.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=thumbnail&pageVersion=${p.version}&offset=0&length=2097152`),c.id);
+  expect((await read()).status).toBe(206);
+  getHook=async()=>{getHook=undefined;await pool.query("UPDATE hestia_member SET active=false WHERE user_id=$1",[users[0].id]);};
+  expect((await read()).status).toBe(401);
+ });
+ it("does not prolong an expired session through automatic preview or draft refresh",async()=>{
+  const c=await add(await make()),p=c.pages[0];
+  await pool.query('UPDATE hestia_session_policy p SET touched_at=clock_timestamp()-interval \'31 minutes\' FROM session s WHERE s.id=p.session_id AND s."userId"=$1',[users[0].id]);
+  const read=req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?pageId=${p.id}&variant=thumbnail&pageVersion=${p.version}&offset=0&length=2097152`);read.headers.set("X-Hestia-Activity","passive");
+  expect((await app.handleCaptureContent(read,c.id)).status).toBe(401);
+  const list=req();list.headers.set("X-Hestia-Activity","passive");expect((await app.handleCaptures(list)).status).toBe(401);
+ });
+ it("keeps no-op artifact bytes and uses new confirmation identity for a title change",async()=>{
+  let c=await add(await make());let renders=0;
+  const service=createCaptureService(pool,access,{store,budget:createStorageBudget(),renderer:input=>{renders++;return createCaptureRenderer()(input);}});
+  const prepared=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));
+  const oldInput=await preview(c,prepared.artifact),p=c.pages[0];
+  const edit=(title:string)=>({version:c.version,title,format:c.format,pages:[{id:p.id,rotation:p.rotation,crop:p.crop}]});
+  const noop=await body<{capture:CaptureDto}>(await app.handleCapture(req(edit(c.title),0,"PATCH"),c.id));expect(noop.capture.version).toBe(c.version);
+  const same=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));expect(same.artifact).toEqual(prepared.artifact);expect(renders).toBe(1);
+  c=(await body<{capture:CaptureDto}>(await app.handleCapture(req(edit("Titre modifié"),0,"PATCH"),c.id))).capture;
+  expect(c.version).toBe(noop.capture.version+1);expect((await app.handleCaptureFinalize(req(oldInput),c.id)).status).toBe(409);
+  const renamed=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));expect(renamed.artifact.sha256).toBe(prepared.artifact.sha256);expect(renamed.artifact.id).not.toBe(prepared.artifact.id);expect(renamed.artifact.fileName).toBe("Titre modifié.pdf");expect(renders).toBe(1);
+  const objects=(await pool.query("SELECT DISTINCT object_key FROM hestia_capture_artifact WHERE capture_id=$1",[c.id])).rows;expect(objects).toHaveLength(1);
+  expect((await service.handleCaptureContent(req(undefined,0,"GET",`/api/hestia/capture/${c.id}/content?artifactId=${renamed.artifact.id}&variant=thumbnail&pageVersion=1&offset=0&length=10`),c.id)).status).toBe(400);
+  c=(await body<{capture:CaptureDto}>(await app.handleCapture(req({...edit(c.title),pages:[{id:p.id,rotation:90,crop:p.crop}]},0,"PATCH"),c.id))).capture;
+  await service.handleCapturePrepare(req({version:c.version}),c.id);expect(renders).toBe(2);
+  expect((await pool.query("SELECT purge FROM hestia_capture_object WHERE object_key=$1",[objects[0].object_key])).rows[0].purge).toBe(true);
+ });
+ it("does not mistake cancellation of an uploading page for a no-op",async()=>{
+  const c=await add(await make()),p=c.pages[0];
+  const pending=await body<{upload:{id:string}}>(await app.handleCapturePages(req({version:c.version,idempotencyKey:randomUUID(),fileName:"pending.png",mediaType:"image/png",size:image.length,sha256:hash(image)}),c.id));
+  const edit={version:c.version,title:c.title,format:c.format,pages:[{id:p.id,rotation:p.rotation,crop:p.crop}]};
+  const patched=await body<{capture:CaptureDto}>(await app.handleCapture(req(edit,0,"PATCH"),c.id));expect(patched.capture.version).toBe(c.version+1);
+  expect((await pool.query("SELECT status FROM hestia_capture_page WHERE id=$1",[pending.upload.id])).rows[0].status).toBe("removed");
+  expect((await app.handleCapture(req(edit,0,"PATCH"),c.id)).status).toBe(409);
+ });
+ it("rebuilds once when an old artifact lacks the current renderer/content attestation",async()=>{
+  const c=await add(await make());let renders=0;
+  const service=createCaptureService(pool,access,{store,budget:createStorageBudget(),renderer:input=>{renders++;return createCaptureRenderer()(input);}});
+  const first=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));
+  const confirmed=await preview(c,first.artifact);
+  await pool.query("UPDATE hestia_capture_artifact SET content_sha=NULL WHERE id=$1",[first.artifact.id]);
+  expect((await app.handleCaptureFinalize(req(confirmed),c.id)).status).toBe(409);
+  const refreshed=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));
+  expect(renders).toBe(2);expect(refreshed.artifact.id).not.toBe(first.artifact.id);
+  const again=await body<{artifact:CaptureArtifactDto}>(await service.handleCapturePrepare(req({version:c.version}),c.id));expect(again.artifact).toEqual(refreshed.artifact);expect(renders).toBe(2);
+  const attested=(await pool.query("SELECT content_sha FROM hestia_capture_artifact WHERE id=$1",[refreshed.artifact.id])).rows[0].content_sha;expect(attested).toMatch(/^[a-f0-9]{64}$/);
+  await pool.query("UPDATE hestia_capture_artifact SET content_sha=$2 WHERE id=$1",[refreshed.artifact.id,"0".repeat(64)]);
+  const renamed=(await body<{capture:CaptureDto}>(await app.handleCapture(req({version:c.version,title:"Après ancien moteur",format:c.format,pages:c.pages.map(p=>({id:p.id,rotation:p.rotation,crop:p.crop}))},0,"PATCH"),c.id))).capture;
+  await body(await service.handleCapturePrepare(req({version:renamed.version}),c.id));expect(renders).toBe(3);
+ });
+ it("rejects a multi-frame camera image after full validation while preserving the same import",async()=>{
+  const pixels=Buffer.alloc(12*8*3,120);pixels.fill(220,12*4*3);
+  const bytes=await sharp(pixels,{raw:{width:12,height:8,channels:3,pageHeight:4}}).webp({loop:0,delay:[100,100]}).toBuffer();
+  for(const kind of ["camera","import"] as const){const c=await make(kind);
+   const pending=await body<{upload:{id:string}}>(await app.handleCapturePages(req({version:c.version,idempotencyKey:randomUUID(),fileName:"animation.webp",mediaType:"image/webp",size:bytes.length,sha256:hash(bytes)}),c.id));
+   expect((await app.handleCapturePageChunk(req(bytes,0,"PUT"),c.id,pending.upload.id,"0")).status).toBe(200);
+   const complete=await app.handleCapturePageComplete(req({version:c.version}),c.id,pending.upload.id);expect(complete.status).toBe(kind==="camera"?422:200);
+   if(kind==="import"){const saved=(await complete.json()).capture as CaptureDto;expect((await prepare(saved)).artifact.sha256).toBe(hash(bytes));}
+  }
  });
  it("imports are transient, not listed, and their final bytes are unchanged",async()=>{
   const c=await add(await make("import"));expect(new Date(c.expiresAt).getTime()-new Date(c.createdAt).getTime()).toBe(3600000);

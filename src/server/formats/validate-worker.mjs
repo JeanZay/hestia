@@ -17,7 +17,7 @@ async function main() {
     chunks.push(chunk);
   }
   const bytes = Buffer.concat(chunks, size);
-  let mediaType;
+  let mediaType, imageInfo;
   if (bytes.subarray(0, 5).toString() === "%PDF-") {
     mediaType = "application/pdf";
     if (declared !== mediaType || !/%%EOF\s*$/.test(bytes.subarray(-1024).toString("latin1"))) reject();
@@ -75,6 +75,7 @@ async function main() {
       const data = new Uint8ClampedArray(width * height * 4);
       const decoded = await new Promise(resolve => image.display({ data, width, height }, resolve));
       if (!decoded) reject();
+      imageInfo ??= { width, height, count: images.length };
       image.free();
     }
   } else {
@@ -88,10 +89,16 @@ async function main() {
     dimensions(metadata.width, metadata.height);
     // raw() forces the compressed image data to be consumed, not just its header.
     await image.raw().toBuffer();
+    const count = metadata.pages ?? 1;
+    const frameHeight = metadata.pageHeight ?? metadata.height;
+    dimensions(metadata.width, frameHeight);
+    if (!Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(frameHeight)) reject();
+    const swapped = metadata.orientation >= 5 && metadata.orientation <= 8;
+    imageInfo = { width: swapped ? frameHeight : metadata.width, height: swapped ? metadata.width : frameHeight, count };
   }
   const measurements = process.argv[3] === "--measure" ? {
     validationMs: Math.round(performance.now() - started), peakRssKiB: process.resourceUsage().maxRSS,
   } : {};
-  process.stdout.write(JSON.stringify({ mediaType, previewSupported: !mediaType.startsWith("image/hei"), ...measurements }));
+  process.stdout.write(JSON.stringify({ mediaType, previewSupported: !mediaType.startsWith("image/hei"), ...(imageInfo ? { image: imageInfo } : {}), ...measurements }));
 }
 main().catch(error => { process.exitCode = error?.code === "ERR_MODULE_NOT_FOUND" ? 2 : 1; });

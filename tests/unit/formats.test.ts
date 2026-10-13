@@ -15,9 +15,11 @@ describe("bounded original format validation", () => {
   ])("decodes %s declared %s without rewriting the original", async (name, mediaType, previewSupported) => {
     const original = fixture(name as string);
     const before = digest(original);
-    expect(await validateOriginal(original, mediaType as string)).toEqual({
+    const validated = await validateOriginal(original, mediaType as string);
+    expect(validated).toMatchObject({
       mediaType: mediaType === "image/heif" ? "image/heic" : mediaType, previewSupported,
     });
+    if (mediaType !== "application/pdf") expect(validated.image).toMatchObject({ count: 1, width: expect.any(Number), height: expect.any(Number) });
     expect(digest(original)).toBe(before);
   });
 
@@ -60,5 +62,18 @@ describe("bounded original format validation", () => {
 
   it("refuses an empty upload", async () => {
     await expect(validateOriginal(new Uint8Array(), "image/png")).rejects.toMatchObject({ code: "invalid_file" });
+  });
+
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])("returns fully decoded oriented dimensions for EXIF %i", async orientation => {
+    const bytes = await sharp({ create: { width: 120, height: 80, channels: 3, background: "white" } }).jpeg().withMetadata({ orientation }).toBuffer();
+    const value = await validateOriginal(bytes, "image/jpeg");
+    expect(value.image).toEqual({ width: orientation >= 5 ? 80 : 120, height: orientation >= 5 ? 120 : 80, count: 1 });
+  });
+
+  it("keeps animated imports admissible but reports their frame count", async () => {
+    const pixels = Buffer.alloc(12 * 8 * 3, 120);
+    pixels.fill(220, 12 * 4 * 3);
+    const animated = await sharp(pixels, { raw: { width: 12, height: 8, channels: 3, pageHeight: 4 } }).webp({ loop: 0, delay: [100, 100] }).toBuffer();
+    expect((await validateOriginal(animated, "image/webp")).image).toEqual({ width: 12, height: 4, count: 2 });
   });
 });

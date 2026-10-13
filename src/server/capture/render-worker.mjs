@@ -20,8 +20,9 @@ async function pipeline(bytes,type){
   const swapped=meta.orientation>=5&&meta.orientation<=8;
   return {image:image.autoOrient(),width:swapped?meta.height:meta.width,height:swapped?meta.width:meta.height};
 }
-async function execute({pages,format,inspect}){
+async function execute({pages,format,inspect,maxLongEdge}){
   check(Array.isArray(pages)&&pages.length>0&&pages.length<=20&&['image','pdf'].includes(format)&&(format==='pdf'||pages.length===1));
+  check(maxLongEdge===undefined||(!inspect&&format==='image'&&[640,1600].includes(maxLongEdge)));
   const pdf=format==='pdf'?await PDFDocument.create():null;let totalPixels=0,totalJpeg=0,output,width=0,height=0;
   for(const page of pages){
     const bytes=await read(page.id);const timer=setTimeout(()=>{process.exit(1);},15000);
@@ -32,7 +33,10 @@ async function execute({pages,format,inspect}){
       const c=page.crop;check(c&&['t','r','b','l'].every(k=>Number.isInteger(c[k])&&c[k]>=0&&c[k]<=40&&c[k]%5===0));
       const left=Math.floor(width*c.l/100),top=Math.floor(height*c.t/100);
       width=width-left-Math.floor(width*c.r/100);height=height-top-Math.floor(height*c.b/100);check(width>0&&height>0);
-      const jpeg=await decoded.image.rotate(page.rotation).extract({left,top,width,height}).flatten({background:'#ffffff'}).jpeg({quality:92,chromaSubsampling:'4:4:4'}).toBuffer();
+      let adjusted=decoded.image.rotate(page.rotation).extract({left,top,width,height}).flatten({background:'#ffffff'});
+      if(maxLongEdge!==undefined)adjusted=adjusted.resize({width:maxLongEdge,height:maxLongEdge,fit:'inside',withoutEnlargement:true});
+      const encoded=await adjusted.jpeg({quality:92,chromaSubsampling:'4:4:4'}).toBuffer({resolveWithObject:true});
+      const jpeg=encoded.data;width=encoded.info.width;height=encoded.info.height;
       totalJpeg+=jpeg.length;check(totalJpeg<=MAX);
       if(pdf){const asset=await pdf.embedJpg(jpeg);const sheet=pdf.addPage([width,height]);sheet.drawImage(asset,{x:0,y:0,width,height});}else output=jpeg;
     }finally{clearTimeout(timer);}

@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureBlob, captureRequest, uploadCapturePage, type PendingPage } from "../../src/components/hestia/capture-client";
+import { captureBlob, captureRequest, uploadCapturePage, clearCaptureClientWork, registerCaptureClientWork, type PendingPage } from "../../src/components/hestia/capture-client";
 import type { CaptureDto } from "../../src/shared/capture-contract";
 import { hasNativeCamera } from "../../src/components/hestia/native-capture";
+import { cameraNormalizer } from "../../src/components/hestia/camera-normalize";
 
 function deferred<T>() { let resolve!: (value:T)=>void; const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve}; }
 const signal=()=>new AbortController().signal;
 const pixels=()=>new Response(new Uint8Array([1,2,3]),{status:206,headers:{"Content-Range":"bytes 0-2/3","Content-Type":"image/jpeg"}});
 const json=(body:unknown={})=>Response.json(body);
 const busy=()=>Response.json({error:{code:"CAPTURE_OPERATION_BUSY",message:"Capture locked before action"}},{status:409});
-afterEach(()=>vi.unstubAllGlobals());
+afterEach(()=>{clearCaptureClientWork();vi.restoreAllMocks();vi.unstubAllGlobals();});
 
 describe("Native camera platform entry",()=>{
   it.each([
@@ -23,6 +24,59 @@ describe("Native camera platform entry",()=>{
 });
 
 describe("Capture client operation ordering",()=>{
+  it("synchronously stops a hashing upload when privacy is cleared before React cleanup",async()=>{
+    const hash=deferred<ArrayBuffer>(),digest=vi.fn(()=>hash.promise),fetcher=vi.fn();vi.stubGlobal("crypto",{subtle:{digest}});vi.stubGlobal("fetch",fetcher);
+    const controller=new AbortController(),unregister=registerCaptureClientWork(controller),pending:PendingPage={file:new File([new Uint8Array([1,2,3])],"synthetic.png",{type:"image/png"}),key:"privacy-key"};
+    const result=uploadCapturePage({id:"private-import",kind:"import"} as CaptureDto,pending,controller.signal,()=>{}),rejected=expect(result).rejects.toMatchObject({name:"AbortError"});
+    await vi.waitFor(()=>expect(digest).toHaveBeenCalledOnce());clearCaptureClientWork();expect(controller.signal.aborted).toBe(true);hash.resolve(new ArrayBuffer(32));await rejected;unregister();expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("binds variant reads to a page version and never marks previews or automatic lists as activity",async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(pixels()).mockResolvedValueOnce(json({captures:[]}));vi.stubGlobal("fetch",fetcher);
+    await captureBlob("preview-version",{pageId:"page",variant:"settings",pageVersion:7},signal());
+    const query=new URL(fetcher.mock.calls[0][0],"http://synthetic.invalid").searchParams;
+    expect(query.get("variant")).toBe("settings");expect(query.get("pageVersion")).toBe("7");
+    expect(fetcher.mock.calls[0][1].headers["X-Hestia-Activity"]).toBe("passive");
+    await captureRequest("/capture",signal());expect(fetcher.mock.calls[1][1].headers["X-Hestia-Activity"]).toBe("passive");
+  });
+  it("preserves the version-conflict response from a stale preview without retry",async()=>{
+    const fetcher=vi.fn().mockResolvedValue(Response.json({error:{code:"VERSION_CONFLICT"}},{status:409}));vi.stubGlobal("fetch",fetcher);
+    await expect(captureBlob("stale-preview",{pageId:"page",variant:"thumbnail",pageVersion:1},signal())).rejects.toMatchObject({status:409,code:"VERSION_CONFLICT"});expect(fetcher).toHaveBeenCalledOnce();
+  });
+  it("freezes camera bytes before hashing and preserves them through a lost completion",async()=>{
+    const camera:CaptureDto={id:"normalized",kind:"camera",version:1,state:"open",createdAt:"2026-10-10T00:00:00Z",expiresAt:"2026-10-10T01:00:00Z",currentFolderId:null,title:"Synthetic",format:"pdf",pages:[]};
+    const chosen=new File([new Uint8Array([4,5,6])],"optimized.jpg",{type:"image/jpeg"}),normalizer=vi.spyOn(cameraNormalizer,"normalize").mockResolvedValue(chosen);
+    const saved={...camera,version:2},fetcher=vi.fn().mockResolvedValueOnce(json({upload:{id:"page",chunkSize:1024},captureVersion:1})).mockResolvedValueOnce(json()).mockRejectedValueOnce(new TypeError("lost completion")).mockResolvedValueOnce(json({capture:saved}));vi.stubGlobal("fetch",fetcher);
+    const pending:PendingPage={file:new File([new Uint8Array(10)],"original.jpeg",{type:"image/jpeg"}),key:"same-key"};
+    await expect(uploadCapturePage(camera,pending,signal(),()=>{})).rejects.toThrow("lost completion");
+    const reservation=JSON.parse(fetcher.mock.calls[0][1].body);expect(reservation).toMatchObject({fileName:"optimized.jpg",mediaType:"image/jpeg",size:3,idempotencyKey:"same-key"});
+    const expectedHash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await chosen.arrayBuffer())),b=>b.toString(16).padStart(2,"0")).join("");expect(reservation.sha256).toBe(expectedHash);
+    expect([...new Uint8Array(await fetcher.mock.calls[1][1].body.arrayBuffer())]).toEqual([4,5,6]);
+    await expect(uploadCapturePage(camera,pending,signal(),()=>{})).resolves.toEqual(saved);expect(normalizer).toHaveBeenCalledOnce();expect(fetcher).toHaveBeenCalledTimes(4);expect(pending.file).toBe(chosen);
+  });
+  it("an abort during conversion sends no reservation even if the worker resolves late",async()=>{
+    const conversion=deferred<File>(),normalizer=vi.spyOn(cameraNormalizer,"normalize").mockReturnValue(conversion.promise),fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
+    const capture={id:"aborted-conversion",kind:"camera"} as CaptureDto,controller=new AbortController(),file=new File([new Uint8Array(10)],"original.jpg",{type:"image/jpeg"}),pending:PendingPage={file,key:"selection"};
+    const result=uploadCapturePage(capture,pending,controller.signal,()=>{}),rejected=expect(result).rejects.toMatchObject({name:"AbortError"});controller.abort();conversion.resolve(new File([new Uint8Array(3)],"small.jpg",{type:"image/jpeg"}));await rejected;
+    expect(normalizer).toHaveBeenCalledOnce();expect(fetcher).not.toHaveBeenCalled();expect(pending.file).toBe(file);expect(pending.reservation).toBeUndefined();
+  });
+  it("freezes a raw fallback through a partial upload retry with one reservation",async()=>{
+    const camera={id:"raw-retry",kind:"camera",version:1} as CaptureDto,file=new File([new Uint8Array([8,7,6,5])],"source.jpeg",{type:"image/jpeg"});
+    const normalizer=vi.spyOn(cameraNormalizer,"normalize").mockResolvedValue(file),pending:PendingPage={file,key:"raw-key"};
+    const fetcher=vi.fn().mockResolvedValueOnce(json({upload:{id:"page",chunkSize:2},captureVersion:1})).mockResolvedValueOnce(json()).mockRejectedValueOnce(new TypeError("chunk interrupted")).mockResolvedValueOnce(Response.json({error:{code:"INCOMPLETE_UPLOAD"}},{status:409})).mockResolvedValueOnce(json()).mockResolvedValueOnce(json()).mockResolvedValueOnce(json({capture:{...camera,version:2}}));vi.stubGlobal("fetch",fetcher);
+    await expect(uploadCapturePage(camera,pending,signal(),()=>{})).rejects.toThrow("chunk interrupted");
+    const originalHash=pending.hash;
+    await expect(uploadCapturePage(camera,pending,signal(),()=>{})).resolves.toMatchObject({version:2});
+    expect(normalizer).toHaveBeenCalledOnce();expect(pending.file).toBe(file);expect(pending.hash).toBe(originalHash);expect(pending.prepared).toBe(true);
+    expect(fetcher.mock.calls.filter(([url])=>url.endsWith("/pages"))).toHaveLength(1);
+    expect([...new Uint8Array(await fetcher.mock.calls[1][1].body.arrayBuffer())]).toEqual([...new Uint8Array(await fetcher.mock.calls[4][1].body.arrayBuffer())]);
+    expect([...new Uint8Array(await fetcher.mock.calls[2][1].body.arrayBuffer())]).toEqual([...new Uint8Array(await fetcher.mock.calls[5][1].body.arrayBuffer())]);
+  });
+  it("never transforms an import or a camera selection with an existing identity",async()=>{
+    const normalizer=vi.spyOn(cameraNormalizer,"normalize"),file=new File([new Uint8Array(10)],"original.jpg",{type:"image/jpeg"});
+    const fetcher=vi.fn().mockResolvedValue(json({capture:{id:"saved"}}));vi.stubGlobal("fetch",fetcher);
+    for(const kind of ["import","camera"] as const){const pending:PendingPage={file,key:"same",hash:"a".repeat(64),reservation:{upload:{id:"page",chunkSize:1024},captureVersion:1}};await uploadCapturePage({id:kind,kind} as CaptureDto,pending,signal(),()=>{});expect(pending.file).toBe(file);}
+    expect(normalizer).not.toHaveBeenCalled();
+  });
   it("waits for the server lock left by an aborted preview before PATCH and prepare",async()=>{
     const abort=new AbortController();let calls=0;
     const fetcher=vi.fn().mockImplementation((_url:string,options:RequestInit)=>{

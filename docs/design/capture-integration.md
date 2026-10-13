@@ -16,3 +16,10 @@ Les corrections de conformité validées conservent la composition du hand-off :
 L’import assisté se trouve dans Photo/Brouillons, y compris sur ordinateur via Moi. « Ajouter un document » conserve l’import multiple historique. L’entrée Photo ne propose aucune galerie ; le sélecteur système de caméra reste soumis aux capacités du navigateur et de l’appareil.
 
 Un catalogue de fournisseurs vide est présenté désactivé. La livraison locale ne qualifie ni tarif réel, ni appel facturable, ni caméra physique. Les preuves détaillées de comparaison, captures synthétiques et essais restent dans le dossier de qualification local ; une capture Playwright ne constitue pas un essai sur appareil.
+
+Le lot photos du 13 octobre 2026 conserve ce hand-off et ses états. La réduction
+des nouvelles photos et le partage des aperçus sont des adaptations techniques :
+aucun écran, réglage de qualité, texte ou composant visuel supplémentaire. Les
+vignettes utilisent la variante 640 pixels et les réglages la variante 1 600
+pixels ; le document final conserve la source caméra retenue et les ajustements
+validés. Le protocole et ses limites sont décrits dans l'[ADR 0011](../adr/0011-capture-derivatives.md).
