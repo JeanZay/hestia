@@ -29,13 +29,14 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
   const [pending,setPending]=useState<PendingPage|null>(null),[progress,setProgress]=useState(0),[artifact,setArtifact]=useState<CaptureArtifactDto|null>(null);
   const [destination,setDestination]=useState<CaptureDestination|null>(null),[browse,setBrowse]=useState(false),[parent,setParent]=useState<string|null>(null);
   const [suggestions,setSuggestions]=useState<ClassificationResultDto|null>(null),[analyzing,setAnalyzing]=useState(false),[late,setLate]=useState(false);
+  const [emptyFeedback,setEmptyFeedback]=useState(false);
   const [preview,setPreview]=useState<CapturePreviewDto|null>(null),[keepDuplicate,setKeepDuplicate]=useState(false),[uncertain,setUncertain]=useState(false),[abandon,setAbandon]=useState<CaptureDto|null>(null);
   const controller=useRef<AbortController|null>(null),current=useRef<CaptureDto|null>(null),running=useRef(false),analysisEpoch=useRef(0),choiceEpoch=useRef(0),seen=useRef(new Set<string>()),heading=useRef<HTMLDivElement>(null);
   const [stale,setStale]=useState(false);
   const [done,setDone]=useState<{folderId:string;title:string}|null>(null);
   const createKey=useRef(crypto.randomUUID());
   const accept=(value:CaptureDto)=>{current.current=value;setCapture(value);setTitle(value.title);setFormat(value.format);};
-  const resetDerived=()=>{setArtifact(null);setPreview(null);setSuggestions(null);setPathDrafts([]);setDestination(null);setKeepDuplicate(false);analysisEpoch.current++;setAnalyzing(false);choiceEpoch.current++;};
+  const resetDerived=()=>{setArtifact(null);setPreview(null);setSuggestions(null);setEmptyFeedback(false);setPathDrafts([]);setDestination(null);setKeepDuplicate(false);analysisEpoch.current++;setAnalyzing(false);choiceEpoch.current++;};
   function fail(error:unknown) {
     if(controller.current?.signal.aborted)return;
     if(error instanceof CaptureError&&error.status===401){onAccessLost();return;}
@@ -102,12 +103,12 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
   async function analyze(){
     if(!capture||!artifact||analyzing||!controller.current)return;
     const signal=controller.current.signal,epoch=++analysisEpoch.current,chosen=choiceEpoch.current,id=capture.id,version=capture.version,deadline=Date.now()+90_000;
-    setAnalyzing(true);setNotice(null);setLate(false);
+    setAnalyzing(true);setEmptyFeedback(false);setNotice(null);setLate(false);
     try{
       let result=await captureRequest<ClassificationAnalysisDto>(`/capture/${id}/analyze`,signal,"POST",{version,artifactId:artifact.id,idempotencyKey:crypto.randomUUID()});
       while(result.status==="pending"&&epoch===analysisEpoch.current&&!signal.aborted&&Date.now()<deadline){await new Promise<void>(resolve=>{const done=()=>{clearTimeout(timer);signal.removeEventListener("abort",done);resolve();};const timer=setTimeout(done,1500);signal.addEventListener("abort",done,{once:true});});if(signal.aborted||epoch!==analysisEpoch.current)return;result=await captureRequest<ClassificationAnalysisDto>(`/capture/${id}/analyses/${result.analysisId}`,signal);}
       if(signal.aborted||epoch!==analysisEpoch.current||current.current?.version!==version)return;
-      if(result.status==="complete"&&result.result){setSuggestions(result.result);setPathDrafts(capturePathDrafts(result.result));setLate(chosen!==choiceEpoch.current);}else setNotice({tone:"warning",title:"Suggestions indisponibles.",text:"Vous pouvez choisir un dossier vous-même."});
+      if(result.status==="complete"&&result.result){setSuggestions(result.result);setEmptyFeedback(!result.result.existing.length&&!result.result.created.length);setPathDrafts(capturePathDrafts(result.result));setLate(chosen!==choiceEpoch.current);}else setNotice({tone:"warning",title:"Suggestions indisponibles.",text:"Vous pouvez choisir un dossier vous-même."});
     }catch(e){if(epoch===analysisEpoch.current&&!signal.aborted){if(e instanceof CaptureError&&e.status===401)onAccessLost();else setNotice({tone:"warning",title:"Suggestions indisponibles.",text:"Vous pouvez choisir un dossier vous-même. Une nouvelle demande nécessite votre action."});}}
     finally{if(epoch===analysisEpoch.current&&!signal.aborted)setAnalyzing(false);}
   }
@@ -160,6 +161,7 @@ export function CaptureWorkspace({userId,folders:providedFolders,currentFolderId
         </section>
         <section className="hc-stack"><h2 className="hc-section-heading">2. Suggestions de dossiers existants</h2><p className="hc-muted">Sur votre demande, le document et les noms des dossiers accessibles où vous pouvez déposer sont transmis au fournisseur. Rien n’est classé automatiquement.</p>
           <div className="hc-row"><Button variant="secondary" icon="lightbulb" disabled={busy} loading={analyzing} onClick={()=>void analyze()}>{suggestions?"Redemander (nouvelle analyse)":"Demander des suggestions"}</Button>{analyzing&&<Button variant="tertiary" onClick={()=>{analysisEpoch.current++;setAnalyzing(false);setNotice({title:"Vous n’attendez plus les suggestions.",text:"La demande peut continuer chez le fournisseur ; son éventuel coût n’est pas annulé."});}}>Ne plus attendre</Button>}</div>
+          {emptyFeedback&&!analyzing&&<span className="hc-muted" role="status" aria-live="polite" aria-label="Aucune suggestion pertinente.">Aucune suggestion pertinente pour ce document. Choisissez un dossier vous-même.</span>}
           {suggestions?.existing.filter(s=>allowed(folders.find(f=>f.id===s.folderId))).map(s=><div className="hc-card" style={{padding:0}} key={s.folderId} role="radiogroup" aria-label="Suggestion"><PickRow label={folderLabel(folders.find(f=>f.id===s.folderId)!)} meta={s.reason} selected={destination?.kind==="existing"&&destination.folderId===s.folderId} disabled={busy} onPick={()=>pick({kind:"existing",folderId:s.folderId})} last/></div>)}
           {late&&<span className="hc-muted">Suggestions arrivées après votre choix : votre sélection n’a pas changé.</span>}
         </section>
