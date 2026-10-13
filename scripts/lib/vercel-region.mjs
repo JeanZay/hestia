@@ -56,11 +56,14 @@ export function assertVercelDeployment({ sourceConfig, deploymentConfig, overrid
   requireCondition(args.filter(arg => arg === '--local-config').length === 1 && args[args.indexOf('--local-config') + 1] === configPath, 'VERCEL_CONFIG_PATH_MISMATCH');
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    requireCondition(!arg.startsWith('--local-config=') && !arg.startsWith('-A'), 'VERCEL_EXTRA_CONFIG_REFUSED');
+    // Vercel accepts grouped short flags such as -yA, which can replace the file.
+    // Qualified operators use long options; reject aliases and option terminators.
+    requireCondition(!/^-[^-]/.test(arg) && arg !== '--' && arg !== '-', 'VERCEL_LONG_OPTIONS_REQUIRED');
+    requireCondition(!arg.startsWith('--local-config='), 'VERCEL_EXTRA_CONFIG_REFUSED');
     requireCondition(arg !== '--prebuilt' && !arg.startsWith('--prebuilt='), 'VERCEL_PREBUILT_NOT_QUALIFIED');
-    if (arg === '--regions' || arg === '-r') {
+    if (arg === '--regions') {
       requireCondition(args[++index] === VERCEL_REGION, 'VERCEL_CLI_REGION_REFUSED');
-    } else if (arg.startsWith('--regions=') || arg.startsWith('-r=')) {
+    } else if (arg.startsWith('--regions=')) {
       requireCondition(arg.slice(arg.indexOf('=') + 1) === VERCEL_REGION, 'VERCEL_CLI_REGION_REFUSED');
     }
   }

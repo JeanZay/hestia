@@ -36,7 +36,7 @@ assertVercelDeployment({
 // Poursuivre uniquement avec ces mêmes args dans le qualifiedRun existant.
 ```
 
-`qualifiedDeploymentArguments` ne doit ajouter aucun autre `--local-config` ni `-A`. L'opérateur conserve et recontrôle l'empreinte du fichier réellement désigné, des choix explicites et de la source ; aucune réécriture ne doit intervenir entre admission et lancement. La comparaison couvre toute la projection et la commande de construction, pas seulement `regions`. Le module ne lance aucune commande, n'accorde aucune permission et ne remplace aucun contrôle existant.
+`qualifiedDeploymentArguments` utilise exclusivement les options longues, sans autre `--local-config` ni séparateur `--`. Le contrôle refuse aussi les alias courts groupés comme `-yA`, qui pourraient remplacer le fichier. L'opérateur conserve et recontrôle l'empreinte du fichier réellement désigné, des choix explicites et de la source ; aucune réécriture ne doit intervenir entre admission et lancement. La comparaison couvre toute la projection et la commande de construction, pas seulement `regions`. Le module ne lance aucune commande, n'accorde aucune permission et ne remplace aucun contrôle existant.
 
 Les anciens opérateurs et reçus sous `artifacts/` restent des preuves figées. Pour un nouveau déploiement, préparer et faire relire un nouvel opérateur consommant ce module, avec une preuve du chemin réellement invoqué. L'ajout du module ne modifie pas rétroactivement ces scripts. Un test unitaire de projection seul ne qualifie pas l'opérateur distant.
 

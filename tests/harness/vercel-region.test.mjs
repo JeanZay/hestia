@@ -83,7 +83,8 @@ test('invalid operator choices cannot silently drop or overwrite controls', () =
 test('the admitted config path must be the unique actual CLI local configuration', () => {
   const projected = projectVercelConfig(config, overrides);
   for (const extra of [{ args: ['deploy', 'source'] }, { configPath: undefined }, { configPath: 'other.json' },
-    ...[['--local-config', 'other.json'], ['--local-config=other.json'], ['-A', 'other.json'], ['-Aother.json']].map(flags => ({ args: [...args, ...flags] }))]) {
+    ...[['--local-config', 'other.json'], ['--local-config=other.json'], ['-A', 'other.json'], ['-Aother.json'], ['-yA', 'other.json'], ['-yAother.json']].map(flags => ({ args: [...args, ...flags] })),
+    { args: ['deploy', 'source', '--', '--local-config', configPath] }]) {
     assert.throws(() => check(projected, extra));
   }
 });
