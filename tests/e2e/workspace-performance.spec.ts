@@ -49,23 +49,25 @@ test("workspace real API navigation benchmark, 100 folders and 1000 documents", 
     finally { client.release(); }
     const actual = (await pool.query("SELECT (SELECT count(*)::int FROM hestia_folder WHERE created_by=$1) AS folders,(SELECT count(*)::int FROM hestia_document WHERE owner_id=$1) AS documents,(SELECT count(*)::int FROM hestia_folder) AS total_graph_folders",[actor])).rows[0];
     expect(actual.folders).toBe(100); expect(actual.documents).toBe(1000);
+    let aggregated = false;
+    page.on("request", request => { if (new URL(request.url()).pathname === "/api/hestia/workspace") aggregated = true; });
     await page.goto("/");
     await expect(page.getByRole("heading",{name:"Dossiers",exact:true})).toBeVisible();
     const samples: {visibleMs:number;requests:string[];httpMs:number[];bodyBytes:number}[] = [];
     for (let index=0;index<SHAPE.warmup+SHAPE.samples;index++) {
       if (index) {
-        const homeResponse = page.waitForResponse(response => {
+        // The legacy home transition is local-only. The aggregate client also
+        // refreshes its counters: finish that preceding read before timing open.
+        const homeResponse = aggregated ? page.waitForResponse(response => {
           const url = new URL(response.url());
-          return response.request().method() === "GET" && (url.pathname === "/api/hestia/folders"
-            || (url.pathname === "/api/hestia/workspace" && !url.searchParams.has("folderId")));
-        });
+          return response.request().method() === "GET" && url.pathname === "/api/hestia/workspace" && !url.searchParams.has("folderId");
+        }) : null;
         await page.getByRole("button",{name:"Dossiers",exact:true}).filter({visible:true}).first().click();
-        await (await homeResponse).finished();
+        if (homeResponse) await (await homeResponse).finished();
         await expect(page.getByRole("heading",{name:"Dossiers",exact:true})).toBeVisible();
       }
       const target = folders[(index*7)%folders.length];
-      await page.evaluate(() => performance.clearResourceTimings());
-      const started = await page.evaluate(() => performance.now());
+      const started = await page.evaluate(() => { performance.clearResourceTimings(); return performance.now(); });
       await page.locator("button.h-document-row").filter({has:page.getByText(target.name,{exact:true})}).click();
       await expect(page.getByRole("heading",{name:target.name,exact:true})).toBeVisible();
       await expect(page.getByText(`${target.name} document 0`,{exact:true})).toBeVisible();
