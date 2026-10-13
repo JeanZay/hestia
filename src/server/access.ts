@@ -56,6 +56,14 @@ export function textField(value: unknown, maximum: number) {
   return result;
 }
 export const isUuid = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+/** Legacy reads keep their previous activity default unless explicitly passive. */
+export function readActivity(request: Request, defaultTouch = true, allowPassive = true) {
+  const value = request.headers.get("X-Hestia-Activity");
+  if (value === null) return defaultTouch;
+  if (value === "interactive") return true;
+  if (allowPassive && value === "passive") return false;
+  throw invalid();
+}
 export type Actor = { id: string; name: string; email: string };
 export function createAccess(pool: Pool, config: ServerConfig, auth: ReturnType<typeof createAuth>) {
   const connection = new AsyncLocalStorage<PoolClient>();

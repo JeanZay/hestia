@@ -16,7 +16,7 @@ async function request<T>(path:string,body:unknown,signal:AbortSignal):Promise<T
   if(!response.ok)throw new MoveError(response.status,data.error?.code??"UNAVAILABLE",data.error?.message??"L’action n’a pas pu aboutir. Réessayez.");
   return data;
 }
-export function MoveWorkspace({source,userId,folders,pendingRef,onClose,onDone,onAccessLost,onUnavailable,onNotRecorded}: {source:MoveSource;userId:string;folders:TreeFolder[];pendingRef:RefObject<PendingMove|null>;onClose:()=>void;onDone:(body:MoveBody)=>Promise<void>;onAccessLost:()=>void;onUnavailable:()=>void;onNotRecorded:()=>void}) {
+export function MoveWorkspace({source,userId,folders,pendingRef,onClose,onDone,onAccessLost,onUnavailable,onNotRecorded,onMutationStart}: {source:MoveSource;userId:string;folders:TreeFolder[];pendingRef:RefObject<PendingMove|null>;onClose:()=>void;onDone:(body:MoveBody)=>Promise<void>;onAccessLost:()=>void;onUnavailable:()=>void;onNotRecorded:()=>void;onMutationStart:()=>void}) {
   const [browse,setBrowse]=useState<string|null>(source.parentId);
   const [destination,setDestination]=useState<string|null|undefined>(undefined);
   const [preview,setPreview]=useState<Preview|null>(null);
@@ -59,7 +59,7 @@ export function MoveWorkspace({source,userId,folders,pendingRef,onClose,onDone,o
     const timer=setTimeout(async()=>{
       if(pendingRef.current){setUncertain(true);setQualifiedDocumentInventory(folders);return;}
       if(!source.name){setQualifiedDocumentInventory(folders);return;}
-      try{const response=await fetch(`/api/hestia/documents/${source.id}`,{credentials:"same-origin",cache:"no-store",signal:check.signal});if(check.signal.aborted)return;
+      try{const response=await fetch(`/api/hestia/documents/${source.id}`,{credentials:"same-origin",cache:"no-store",headers:{"X-Hestia-Activity":"passive"},signal:check.signal});if(check.signal.aborted)return;
         if(response.status===401){onAccessLost();return;}
         if(!response.ok){onUnavailable();return;}
         const data=await response.json();if(check.signal.aborted)return;
@@ -85,7 +85,7 @@ export function MoveWorkspace({source,userId,folders,pendingRef,onClose,onDone,o
   }
   async function reconcile(){
     const operation=pendingRef.current;if(!operation||operation.userId!==userId||running.current)return;
-    const signal=controller.current.signal;running.current=true;setBusy(true);setError(undefined);
+    onMutationStart();const signal=controller.current.signal;running.current=true;setBusy(true);setError(undefined);
     try{const result=await request<{status:"committed"|"not-recorded"}>(`move-operations/${operation.key}`,operation.body,signal);if(signal.aborted)return;
       pendingRef.current=null;setUncertain(false);
       if(result.status==="committed")await onDone(operation.body);
@@ -98,7 +98,7 @@ export function MoveWorkspace({source,userId,folders,pendingRef,onClose,onDone,o
     if(name!==reviewName){await review();return;}
     if(!preview?.allowed||!preview.previewToken)return;
     const operation:PendingMove={key:crypto.randomUUID(),userId,body:{...body(),previewToken:preview.previewToken}};
-    pendingRef.current=operation;const signal=controller.current.signal;running.current=true;setBusy(true);setError(undefined);setStale(false);
+    onMutationStart();pendingRef.current=operation;const signal=controller.current.signal;running.current=true;setBusy(true);setError(undefined);setStale(false);
     let staleResult=false;
     try{await request<{status:"committed"}>("moves",{...operation.body,idempotencyKey:operation.key},signal);if(signal.aborted)return;pendingRef.current=null;await onDone(operation.body);}
     catch(error){if(signal.aborted)return;

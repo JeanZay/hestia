@@ -41,6 +41,29 @@ async function selectFiles(page: Page, paths: string | string[], background = fa
 const panel = (page: Page) => page.getByRole("complementary", { name: "Ajout de documents", exact: true });
 const fileList = async (page: Page, id: string) => (await (await page.request.get(`/api/hestia/documents?folderId=${id}`)).json()).documents;
 
+test("le détail récent et le conflit 409 utilisent la nouvelle version du document",async({page})=>{
+  const id=await folder(page),initial=`Version initiale ${randomUUID().slice(0,8)}`;
+  await selectFiles(page,"tests/fixtures/documents/synthetic.png");await panel(page).getByLabel("Titre du document").fill(initial);
+  await panel(page).getByRole("button",{name:"Enregistrer",exact:true}).click();
+  await expect(panel(page).getByText("Document enregistré.",{exact:true})).toBeVisible();await panel(page).getByRole("button",{name:"Terminé",exact:true}).click();
+  const [doc]=await fileList(page,id),origin={Origin:"http://127.0.0.1:3210"};
+  const remote=async(title:string,version:number)=>{const response=await page.request.patch(`/api/hestia/documents/${doc.id}`,{headers:origin,data:{title,version}});expect(response.status()).toBe(200);return(await response.json()).document;};
+  const second=await remote(`Version distante ${randomUUID().slice(0,8)}`,doc.version);
+  const versions:number[]=[];page.on("request",request=>{if(request.method()==="PATCH"&&request.url().endsWith(`/documents/${doc.id}`))versions.push(request.postDataJSON().version);});
+  await page.getByRole("main").getByRole("button",{name:new RegExp(initial)}).click();
+  const detail=page.getByRole("complementary",{name:"Document",exact:true});
+  await expect(detail.getByRole("heading",{name:second.title,exact:true})).toBeVisible();
+  const rename=async(title:string)=>{await detail.getByRole("button",{name:"Renommer",exact:true}).click();await detail.getByLabel("Titre du document").fill(title);await detail.getByRole("button",{name:"Enregistrer le titre",exact:true}).click();};
+  const thirdTitle=`Version locale ${randomUUID().slice(0,8)}`;await rename(thirdTitle);
+  await expect(detail.getByRole("heading",{name:thirdTitle,exact:true})).toBeVisible();expect(versions).toEqual([second.version]);
+  const third=(await(await page.request.get(`/api/hestia/documents/${doc.id}`)).json()).document;
+  const fourth=await remote(`Conflit concurrent ${randomUUID().slice(0,8)}`,third.version);
+  await rename("Titre en conflit");await expect(detail.getByText("Le document a changé. Le titre à jour a été rechargé.",{exact:true})).toBeVisible();
+  await expect(detail.getByRole("heading",{name:fourth.title,exact:true})).toBeVisible();
+  const final=`Après réconciliation ${randomUUID().slice(0,8)}`;await rename(final);
+  await expect(detail.getByRole("heading",{name:final,exact:true})).toBeVisible();expect(versions).toEqual([second.version,third.version,fourth.version]);
+});
+
 test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async ({ page, isMobile }) => {
   const suffix = randomUUID().slice(0, 8);
   const label = `Étiquette synthétique ${suffix}`;
@@ -69,7 +92,7 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
     await expect(panel(page)).toHaveCount(0);
     await page.evaluate(() => { Object.defineProperty(document,"hidden",{configurable:true,get:()=>false}); });
   }
-  const cancelCheck = page.waitForResponse(r => r.url().endsWith("/api/hestia/folders") && r.request().method() === "GET");
+  const cancelCheck = page.waitForResponse(r => new URL(r.url()).pathname === "/api/hestia/workspace" && r.request().method() === "GET");
   await cancelledPicker.element().dispatchEvent("cancel");
   await cancelCheck;
   await expect(fields).toHaveCount(2);
@@ -105,7 +128,7 @@ test("PNG/PDF : originaux, aperçu, titre, recherche et export intègres", async
   await expect(page.getByRole("main").getByRole("button", { name: new RegExp(renamed) })).toBeVisible();
   await page.getByLabel("Rechercher", {exact: true}).fill("aucun-resultat-" + randomUUID());
   await expect(page.getByRole("heading", {name: "Aucun résultat", exact: true})).toBeVisible();
-  await page.route("**/api/hestia/documents?**", route => route.fulfill({status: 503, json: {error: {message: "Service indisponible."}}}));
+  await page.route("**/api/hestia/workspace?**", route => route.fulfill({status: 503, json: {error: {message: "Service indisponible."}}}));
   await page.getByLabel("Rechercher", {exact: true}).fill("facture");
   await expect(page.getByText("Chargement impossible.", {exact: true})).toBeVisible();
   await expect(page.getByRole("heading", {name: "Aucun résultat", exact: true})).toHaveCount(0);
@@ -167,7 +190,7 @@ test("aperçu sans Exporter, révocation et purge des URLs privées", async ({pa
   await page.route(/\/api\/hestia\/documents\/[^/?]+$/, async route => { const response=await route.fetch(); const body=await response.json(); body.document.capabilities=["consulter"]; await route.fulfill({response,json:body}); });
   // Background inventory refresh must use the same synthetic capability
   // projection as the detail endpoint throughout this UI-only scenario.
-  await page.route(/\/api\/hestia\/documents\?/, async route => { const response=await route.fetch(); const body=await response.json(); body.documents=body.documents.map((document:Record<string,unknown>)=>({...document,capabilities:["consulter"]})); await route.fulfill({response,json:body}); });
+  await page.route(/\/api\/hestia\/workspace\?/, async route => { const response=await route.fetch(); const body=await response.json(); body.documents=body.documents.map((document:Record<string,unknown>)=>({...document,capabilities:["consulter"]})); await route.fulfill({response,json:body}); });
   await page.getByRole("main").getByRole("button",{name:/synthetic/}).click();
   const detail=page.getByRole("complementary",{name:"Document",exact:true});
   await expect(detail.getByRole("img",{name:"Aperçu de synthetic"})).toBeVisible();
@@ -218,7 +241,7 @@ test("les actions restent désactivées jusqu’au rechargement après enregistr
     if (response.ok()) completions++;
     await route.fulfill({response});
   });
-  await page.route("**/api/hestia/documents?**", async route => {
+  await page.route("**/api/hestia/workspace?**", async route => {
     const phase = completions;
     const response = await route.fetch();
     // Block every reload in the phase, including refreshes caused by folder counts.

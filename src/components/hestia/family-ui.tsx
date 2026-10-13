@@ -8,8 +8,11 @@ import "./family.css";
 export class FamilyRequestError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
-export async function familyRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await fetch(path, { method, cache: "no-store", credentials: "same-origin", headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+export async function familyRequest<T>(path: string, method = "GET", body?: unknown, options?: { signal?: AbortSignal; activity?: "passive" | "interactive" }): Promise<T> {
+  const headers = new Headers();
+  if (body !== undefined) headers.set("Content-Type", "application/json");
+  if (options?.activity) headers.set("X-Hestia-Activity", options.activity);
+  const response = await fetch(path, { method, cache: "no-store", credentials: "same-origin", signal: options?.signal, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new FamilyRequestError(response.status, data?.error?.message || "L’action n’a pas pu aboutir. Réessayez.");
   return data as T;

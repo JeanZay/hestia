@@ -209,3 +209,27 @@ test("ouvrir le partage abandonne le dépôt non confirmé et conserve le corps 
     expect(result.documents).toEqual([]);
   } finally { releaseChunk(); await page.unroute("**/api/hestia/uploads/*/chunks/*"); }
 });
+
+test("partage confirmé et snapshot ancien : une seule relecture, puis refresh défaillant sans replay",async({page})=>{
+  const folder=await createFolder(page);await openShare(page);
+  const panel=page.getByRole("complementary",{name:/^Donner accès à/});await panel.getByLabel("Personne du foyer").selectOption({label:"Alex"});
+  let release!:()=>void,reached!:()=>void,delivered!:()=>void;
+  const held=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{reached=resolve;}),sent=new Promise<void>(resolve=>{delivered=resolve;});
+  let reads=0,writes=0,fail=true;
+  page.on("request",request=>{if(request.method()==="POST"&&request.url().endsWith(`/folders/${folder.id}/sharing`))writes++;});
+  await page.route("**/api/hestia/workspace?**",async route=>{
+    const phase=++reads;
+    if(phase===1){const response=await route.fetch();reached();await held;try{await route.fulfill({response});}catch{/* obsolete fetch */}finally{delivered();}}
+    else if(fail)await route.fulfill({status:503,json:{error:{message:"Synthetic refresh failure"}}});else await route.continue();
+  });
+  try{
+    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));await ready;
+    await panel.getByRole("button",{name:"Donner accès",exact:true}).click();
+    await expect(page.getByText("Accès accordé.",{exact:true})).toBeVisible();
+    await expect(page.getByText("Action enregistrée. Actualisation indisponible.",{exact:true})).toBeVisible();
+    release();await sent;expect(reads).toBe(2);expect(writes).toBe(1);
+    await expect(page.getByRole("tabpanel",{name:"Accès",exact:true}).getByText("Alex",{exact:true})).toBeVisible();
+    fail=false;const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==="/api/hestia/workspace");
+    await page.getByRole("button",{name:"Actualiser",exact:true}).click();expect((await refreshed).status()).toBe(200);expect(writes).toBe(1);
+  }finally{release();}
+});

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { type Access, guarded, invalid, isUuid, json, response, unavailable, HttpError } from "../access";
+import { type Access, guarded, invalid, isUuid, json, readActivity, response, unavailable, HttpError } from "../access";
 import { CAPABILITIES } from "./capabilities";
 import { evaluateTreeAccess, type TreeFolder, type Restriction, type ManagementCut } from './tree';
 
@@ -31,7 +31,17 @@ export async function loadFolderAccessGraph(client:PoolClient) {
 }
 export async function getFolderAccessEvaluator(client:PoolClient,actorId:string) {
   const graph=await loadFolderAccessGraph(client);
-  return (folderId:string)=>evaluateTreeAccess(graph,actorId,folderId);
+  return folderAccessEvaluator(graph,actorId);
+}
+export type FolderAccessEvaluator = (folderId:string)=>ReturnType<typeof evaluateTreeAccess>;
+/** Reuse only within the policy-locked transaction that loaded this graph. */
+export function folderAccessEvaluator(graph:Awaited<ReturnType<typeof loadFolderAccessGraph>>,actorId:string):FolderAccessEvaluator {
+  const evaluated=new Map<string,ReturnType<typeof evaluateTreeAccess>>();
+  return folderId=>{
+    let rights=evaluated.get(folderId);
+    if(!rights){rights=evaluateTreeAccess(graph,actorId,folderId);evaluated.set(folderId,rights);}
+    return rights;
+  };
 }
 export async function getFolderAccess(client:PoolClient, actorId:string, folderId:string) {
   return (await getFolderAccessEvaluator(client,actorId))(folderId);
@@ -175,7 +185,7 @@ export function createSharing(access:Access) {
           members:[...state.members.values()].filter(m=>m.active).map(m=>({id:m.user_id,name:m.name,
             capabilities:state.effectiveFor(m.user_id).capabilities.filter(c=>m.user_id===actor.id||Boolean(state.authorityFor([c],m.user_id))),
             restrictableCapabilities:CAPABILITIES.filter(c=>state.restrictionAuthority(m.user_id,[c]))}))};
-      }));
+      },readActivity(request)));
     });
   }
   function handleRevokeAccess(request:Request,folderId:string,grantId:string) {
