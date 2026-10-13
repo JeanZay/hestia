@@ -54,7 +54,13 @@ test("workspace real API navigation benchmark, 100 folders and 1000 documents", 
     const samples: {visibleMs:number;requests:string[];httpMs:number[];bodyBytes:number}[] = [];
     for (let index=0;index<SHAPE.warmup+SHAPE.samples;index++) {
       if (index) {
+        const homeResponse = page.waitForResponse(response => {
+          const url = new URL(response.url());
+          return response.request().method() === "GET" && (url.pathname === "/api/hestia/folders"
+            || (url.pathname === "/api/hestia/workspace" && !url.searchParams.has("folderId")));
+        });
         await page.getByRole("button",{name:"Dossiers",exact:true}).filter({visible:true}).first().click();
+        await (await homeResponse).finished();
         await expect(page.getByRole("heading",{name:"Dossiers",exact:true})).toBeVisible();
       }
       const target = folders[(index*7)%folders.length];
@@ -63,7 +69,7 @@ test("workspace real API navigation benchmark, 100 folders and 1000 documents", 
       await page.locator("button.h-document-row").filter({has:page.getByText(target.name,{exact:true})}).click();
       await expect(page.getByRole("heading",{name:target.name,exact:true})).toBeVisible();
       await expect(page.getByText(`${target.name} document 0`,{exact:true})).toBeVisible();
-      const measured = await page.evaluate(startTime => ({visibleMs:performance.now()-startTime,resources:performance.getEntriesByType("resource").filter(entry=>entry.name.includes("/api/hestia/")).map(entry=>{
+      const measured = await page.evaluate(startTime => ({visibleMs:performance.now()-startTime,resources:performance.getEntriesByType("resource").filter(entry=>entry.startTime>=startTime&&entry.name.includes("/api/hestia/")).map(entry=>{
         const resource=entry as PerformanceResourceTiming;
         return {path:new URL(resource.name).pathname,duration:resource.duration,body:resource.encodedBodySize};
       })}),started);
