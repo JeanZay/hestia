@@ -53,14 +53,26 @@ test("le détail récent et le conflit 409 utilisent la nouvelle version du docu
   await page.getByRole("main").getByRole("button",{name:new RegExp(initial)}).click();
   const detail=page.getByRole("complementary",{name:"Document",exact:true});
   await expect(detail.getByRole("heading",{name:second.title,exact:true})).toBeVisible();
-  const rename=async(title:string)=>{await detail.getByRole("button",{name:"Renommer",exact:true}).click();await detail.getByLabel("Titre du document").fill(title);await detail.getByRole("button",{name:"Enregistrer le titre",exact:true}).click();};
-  const thirdTitle=`Version locale ${randomUUID().slice(0,8)}`;await rename(thirdTitle);
+  const rename=async(title:string,version:number,status:number)=>{
+    await detail.getByRole("button",{name:"Renommer",exact:true}).click();await detail.getByLabel("Titre du document").fill(title);
+    const response=page.waitForResponse(result=>result.request().method()==="PATCH"&&result.url().endsWith(`/documents/${doc.id}`));
+    await detail.getByRole("button",{name:"Enregistrer le titre",exact:true}).click();
+    const result=await response;expect(result.status()).toBe(status);expect(result.request().postDataJSON().version).toBe(version);
+  };
+  const refreshed=page.waitForResponse(response=>{const url=new URL(response.url());return response.request().method()==="GET"&&url.pathname==="/api/hestia/workspace"&&url.searchParams.get("folderId")===id;});
+  const thirdTitle=`Version locale ${randomUUID().slice(0,8)}`;await rename(thirdTitle,second.version,200);
   await expect(detail.getByRole("heading",{name:thirdTitle,exact:true})).toBeVisible();expect(versions).toEqual([second.version]);
+  // Bound the next concurrent write after this mutation's reconciliation,
+  // otherwise that read can legitimately observe the newer remote version.
+  const refreshedResponse=await refreshed;expect(refreshedResponse.status()).toBe(200);await refreshedResponse.finished();
+  await expect(detail.getByRole("button",{name:"Renommer",exact:true})).toBeEnabled();
   const third=(await(await page.request.get(`/api/hestia/documents/${doc.id}`)).json()).document;
   const fourth=await remote(`Conflit concurrent ${randomUUID().slice(0,8)}`,third.version);
-  await rename("Titre en conflit");await expect(detail.getByText("Le document a changé. Le titre à jour a été rechargé.",{exact:true})).toBeVisible();
+  await rename("Titre en conflit",third.version,409);
+  await expect(detail.getByRole("alert")).toBeVisible();
+  await expect(detail.getByRole("alert")).toHaveText("Action impossible. Le document a changé. Le titre à jour a été rechargé.");
   await expect(detail.getByRole("heading",{name:fourth.title,exact:true})).toBeVisible();
-  const final=`Après réconciliation ${randomUUID().slice(0,8)}`;await rename(final);
+  const final=`Après réconciliation ${randomUUID().slice(0,8)}`;await rename(final,fourth.version,200);
   await expect(detail.getByRole("heading",{name:final,exact:true})).toBeVisible();expect(versions).toEqual([second.version,third.version,fourth.version]);
 });
 
