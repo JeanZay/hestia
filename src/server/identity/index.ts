@@ -15,7 +15,7 @@ const limited=()=>new HttpError(429,"RATE_LIMITED","Trop de tentatives. Réessay
 const emailValue=(value:unknown)=>{const email=textField(value,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw invalid();return email;};
 const passwordValue=(value:unknown)=>{
   if(typeof value!=="string")throw invalid();
-  if(value.length<15||value.length>128)throw new HttpError(400,"PASSWORD_LENGTH_INVALID","Le mot de passe doit contenir entre 15 et 128 caractères.");
+  if(value.length<10||value.length>128)throw new HttpError(400,"PASSWORD_LENGTH_INVALID","Le mot de passe doit contenir entre 10 et 128 caractères.");
   return value;
 };
 const uuid=(value:unknown)=>{if(!isUuid(value))throw invalid();return value;};

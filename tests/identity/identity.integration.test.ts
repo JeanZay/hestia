@@ -65,10 +65,10 @@ describe("durable family identity using PostgreSQL and real Better Auth",()=>{
       codes:(await pool.query("SELECT count(*) n FROM hestia_recovery_code")).rows[0].n,
     });
     const before=await snapshot();
-    for(const length of [0,14,129]) {
+    for(const length of [0,9,129]) {
       const result=await pub("prepare",{password:"x".repeat(length)},cookie);
       expect(result.status).toBe(400);
-      expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 15 et 128 caractères."}});
+      expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 10 et 128 caractères."}});
       expect(await snapshot()).toEqual(before);
     }
     for(const value of [undefined,null,42,{},[]]) {
@@ -77,7 +77,7 @@ describe("durable family identity using PostgreSQL and real Better Auth",()=>{
       expect(await result.json()).toEqual({error:{code:"INVALID_INPUT",message:"Vérifiez les informations saisies."}});
       expect(await snapshot()).toEqual(before);
     }
-    for(const length of [15,128]) {
+    for(const length of [10,14,128]) {
       const result=await pub("prepare",{password:"x".repeat(length)},cookie);
       expect(result.status).toBe(200);expect((await result.json()).codes).toHaveLength(8);
       expect((await snapshot()).users).toBe("0");
@@ -91,14 +91,14 @@ describe("durable family identity using PostgreSQL and real Better Auth",()=>{
       (SELECT count(*) FROM hestia_recovery_code) AS codes,
       (SELECT count(*) FROM hestia_mail_outbox) AS mail`)).rows[0];
     const before=await snapshot();
-    for(const length of [14,129]) {
+    for(const length of [9,129]) {
       const value="x".repeat(length);
       const results=[
         await pub("finish",{password:value,requestId:randomUUID()}),
         await identity.handleConfirmReadmission(req("/api/hestia/household/readmissions/confirm",{memberId:ownerId,password:value,requestId:randomUUID()},ownerCookie)),
         await identity.handleMeRecoveryCodes(req("/api/hestia/me/recovery-codes/prepare",{password:value},ownerCookie),"prepare"),
       ];
-      for(const result of results){expect(result.status).toBe(400);expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 15 et 128 caractères."}});}
+      for(const result of results){expect(result.status).toBe(400);expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 10 et 128 caractères."}});}
       expect(await snapshot()).toEqual(before);
     }
   });

@@ -63,12 +63,12 @@ async function activate(page: Page, link: string, email: string, secret: string,
   await page.getByLabel("Code reçu par e-mail").fill(await collect(email, "otp"));
   await page.getByRole("button", { name: "Continuer", exact: true }).click();
   if (checkPasswordLength) {
-    await page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]")).fill("x".repeat(14));
-    await page.getByLabel("Saisissez-le de nouveau").fill("x".repeat(14));
+    await page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]")).fill("x".repeat(9));
+    await page.getByLabel("Saisissez-le de nouveau").fill("x".repeat(9));
     const refused = page.waitForResponse(response => response.url().endsWith("/api/hestia/identity/prepare"));
     await page.getByRole("button", { name: "Continuer", exact: true }).click();
     expect((await refused).status()).toBe(400);
-    await expect(page.getByRole("alert").filter({ hasText: "Le mot de passe doit contenir entre 15 et 128 caractères." })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "Le mot de passe doit contenir entre 10 et 128 caractères." })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Choisissez votre mot de passe", exact: true })).toBeVisible();
     await expect(page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]"))).toHaveValue("");
     await expect(page.getByLabel("Saisissez-le de nouveau")).toHaveValue("");
@@ -87,7 +87,7 @@ async function activate(page: Page, link: string, email: string, secret: string,
 test("inviter, activer, récupérer puis renouveler depuis Moi", async ({ page, browser, isMobile }) => {
   test.setTimeout(180_000);
   const suffix = randomUUID().slice(0, 8), email = `family-${suffix}@example.invalid`, name = `Morgan ${suffix}`;
-  const secret = `Synthetic family ${randomUUID()}!`, renewed = `Synthetic renewed ${randomUUID()}!`;
+  const secret = randomUUID().replaceAll("-", "").slice(0, 10), renewed = randomUUID().replaceAll("-", "").slice(0, 14);
   await login(page, "alex@hestia.invalid");
   await clickVisible(page, "Foyer");
   await page.getByRole("button", { name: "Inviter une personne", exact: true }).click();
