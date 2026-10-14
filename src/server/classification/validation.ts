@@ -26,7 +26,7 @@ function plain(value: unknown, maximum: number) {
   return text;
 }
 /** Hostile model output has no tool channel and cannot carry arbitrary extra fields. */
-export function parseClassificationResult(value: unknown, folders: readonly AuthorizedFolder[], maxBytes: number, maximum: number, canCreateRoot = false): ClassificationResultDto {
+export function parseClassificationResult(value: unknown, folders: readonly AuthorizedFolder[], maxBytes: number, maximum: number, canCreateRoot = false, preparationComment = ""): ClassificationResultDto {
   const encoded = typeof value === "string" ? value : JSON.stringify(value);
   if (!encoded || Buffer.byteLength(encoded) > maxBytes) throw invalid();
   const root = record(JSON.parse(encoded), ["existing", "created", "summary", "contradiction"]);
@@ -52,6 +52,8 @@ export function parseClassificationResult(value: unknown, folders: readonly Auth
     });
     return { parentId: row.parentId, levels, reason: plain(row.reason, 500) };
   }).filter(item => item.parentId === null ? canCreateRoot === true : allowed.get(item.parentId)?.canCreate);
+  // Validate even an inapplicable field: absent context must not admit hostile output.
+  const contradiction = root.contradiction === undefined ? undefined : plain(root.contradiction, 1000);
   return { existing, created, ...(root.summary === undefined ? {} : { summary: plain(root.summary, 1000) }),
-    ...(root.contradiction === undefined ? {} : { contradiction: plain(root.contradiction, 1000) }) };
+    ...(contradiction === undefined || !preparationComment.trim() ? {} : { contradiction }) };
 }
