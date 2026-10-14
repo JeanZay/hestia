@@ -51,6 +51,57 @@ describe("durable family identity using PostgreSQL and real Better Auth",()=>{
     expect((await pool.query("SELECT count(*) n FROM hestia_recovery_code WHERE user_id=$1 AND revoked_at IS NULL",[ownerId])).rows[0].n).toBe("8");
     expect((await pool.query("SELECT prepared_ciphertext,prepared_password_hash FROM hestia_identity_flow WHERE target_id=$1 AND status='completed'",[ownerId])).rows.every(r=>r.prepared_ciphertext===null&&r.prepared_password_hash===null)).toBe(true);
   });
+  it("explains password length without changing activation state, then accepts both inclusive bounds",async()=>{
+    const email=`password-bounds-${randomUUID()}@example.invalid`;
+    const created=await identity.handleInvitations(req("/api/hestia/household/invitations",{email,name:"Bornes synthétiques",requestId:randomUUID()},ownerCookie));
+    expect(created.status).toBe(201);const {id}=await created.json();await drain();
+    const cookie=await entry(mail(email,"invitation").url!);
+    expect((await pub("send-otp",{},cookie)).status).toBe(200);await drain();
+    expect((await pub("verify-email",{otp:mail(email,"otp").otp},cookie)).status).toBe(200);
+    const snapshot=async()=>({
+      flow:(await pool.query("SELECT status,email_verified,prepared_password_hash IS NOT NULL AS prepared,prepared_batch FROM hestia_identity_flow WHERE id=$1",[id])).rows[0],
+      users:(await pool.query('SELECT count(*) n FROM "user" WHERE email=$1',[email])).rows[0].n,
+      mail:(await pool.query("SELECT count(*) n FROM hestia_mail_outbox WHERE flow_id=$1",[id])).rows[0].n,
+      codes:(await pool.query("SELECT count(*) n FROM hestia_recovery_code")).rows[0].n,
+    });
+    const before=await snapshot();
+    for(const length of [0,14,129]) {
+      const result=await pub("prepare",{password:"x".repeat(length)},cookie);
+      expect(result.status).toBe(400);
+      expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 15 et 128 caractères."}});
+      expect(await snapshot()).toEqual(before);
+    }
+    for(const value of [undefined,null,42,{},[]]) {
+      const result=await pub("prepare",{password:value},cookie);
+      expect(result.status).toBe(400);
+      expect(await result.json()).toEqual({error:{code:"INVALID_INPUT",message:"Vérifiez les informations saisies."}});
+      expect(await snapshot()).toEqual(before);
+    }
+    for(const length of [15,128]) {
+      const result=await pub("prepare",{password:"x".repeat(length)},cookie);
+      expect(result.status).toBe(200);expect((await result.json()).codes).toHaveLength(8);
+      expect((await snapshot()).users).toBe("0");
+    }
+  });
+  it("explains length consistently for recovery and authenticated confirmations without effects",async()=>{
+    const snapshot=async()=>(await pool.query(`SELECT
+      (SELECT count(*) FROM hestia_identity_flow) AS flows,
+      (SELECT count(*) FROM hestia_identity_confirmation) AS confirmations,
+      (SELECT count(*) FROM hestia_identity_receipt) AS receipts,
+      (SELECT count(*) FROM hestia_recovery_code) AS codes,
+      (SELECT count(*) FROM hestia_mail_outbox) AS mail`)).rows[0];
+    const before=await snapshot();
+    for(const length of [14,129]) {
+      const value="x".repeat(length);
+      const results=[
+        await pub("finish",{password:value,requestId:randomUUID()}),
+        await identity.handleConfirmReadmission(req("/api/hestia/household/readmissions/confirm",{memberId:ownerId,password:value,requestId:randomUUID()},ownerCookie)),
+        await identity.handleMeRecoveryCodes(req("/api/hestia/me/recovery-codes/prepare",{password:value},ownerCookie),"prepare"),
+      ];
+      for(const result of results){expect(result.status).toBe(400);expect(await result.json()).toEqual({error:{code:"PASSWORD_LENGTH_INVALID",message:"Le mot de passe doit contenir entre 15 et 128 caractères."}});}
+      expect(await snapshot()).toEqual(before);
+    }
+  });
   it("rejects GET side effects, unknown fields, queries and cross origin",async()=>{
     const before=(await pool.query("SELECT count(*) n FROM hestia_mail_outbox")).rows[0].n;
     expect((await pub("recover")).status).toBe(404);

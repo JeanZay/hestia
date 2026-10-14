@@ -54,7 +54,7 @@ async function login(page: Page, email: string, secret = password!, delayInitial
   }
   await expect(page.getByRole("heading", { name: "Dossiers", exact: true })).toBeVisible();
 }
-async function activate(page: Page, link: string, email: string, secret: string) {
+async function activate(page: Page, link: string, email: string, secret: string, checkPasswordLength = false) {
   await page.goto(link);
   await expect(page.getByRole("heading", { name: /Rejoindre le foyer|Revenir dans le foyer/ })).toBeVisible();
   // Reading or preloading the capability never creates a user/session.
@@ -62,6 +62,18 @@ async function activate(page: Page, link: string, email: string, secret: string)
   await page.getByRole("button", { name: "Commencer", exact: true }).click();
   await page.getByLabel("Code reçu par e-mail").fill(await collect(email, "otp"));
   await page.getByRole("button", { name: "Continuer", exact: true }).click();
+  if (checkPasswordLength) {
+    await page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]")).fill("x".repeat(14));
+    await page.getByLabel("Saisissez-le de nouveau").fill("x".repeat(14));
+    const refused = page.waitForResponse(response => response.url().endsWith("/api/hestia/identity/prepare"));
+    await page.getByRole("button", { name: "Continuer", exact: true }).click();
+    expect((await refused).status()).toBe(400);
+    await expect(page.getByRole("alert").filter({ hasText: "Le mot de passe doit contenir entre 15 et 128 caractères." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Choisissez votre mot de passe", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]"))).toHaveValue("");
+    await expect(page.getByLabel("Saisissez-le de nouveau")).toHaveValue("");
+    expect((await pool.query('SELECT count(*) n FROM "user" WHERE email=$1', [email])).rows[0].n).toBe("0");
+  }
   await page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]")).fill(secret);
   await page.getByLabel("Saisissez-le de nouveau").fill(secret);
   await page.getByRole("button", { name: "Continuer", exact: true }).click();
@@ -85,7 +97,7 @@ test("inviter, activer, récupérer puis renouveler depuis Moi", async ({ page, 
   const recipient = await browser.newContext({ baseURL: config.origin, ...(isMobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : {}) });
   try {
     const member = await recipient.newPage();
-    await activate(member, await collect(email, "url"), email, secret);
+    await activate(member, await collect(email, "url"), email, secret, true);
     await login(member, email, secret, true);
     await expect(member.getByRole("button", { name: "Foyer", exact: true })).toHaveCount(0);
     await clickVisible(member, "Moi");
