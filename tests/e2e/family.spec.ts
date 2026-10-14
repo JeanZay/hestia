@@ -68,9 +68,9 @@ async function activate(page: Page, link: string, email: string, secret: string,
     const refused = page.waitForResponse(response => response.url().endsWith("/api/hestia/identity/prepare"));
     await page.getByRole("button", { name: "Continuer", exact: true }).click();
     expect((await refused).status()).toBe(400);
-    await expect(page.getByText("Le mot de passe doit contenir entre 15 et 128 caractères.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "Le mot de passe doit contenir entre 15 et 128 caractères." })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Choisissez votre mot de passe", exact: true })).toBeVisible();
-    await expect(page.getByLabel("Nouveau mot de passe", { exact: true })).toHaveValue("");
+    await expect(page.getByLabel("Nouveau mot de passe", { exact: true }).and(page.locator("input[type=password]"))).toHaveValue("");
     await expect(page.getByLabel("Saisissez-le de nouveau")).toHaveValue("");
     expect((await pool.query('SELECT count(*) n FROM "user" WHERE email=$1', [email])).rows[0].n).toBe("0");
   }
