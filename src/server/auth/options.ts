@@ -12,7 +12,7 @@ export function authOptions(pool: Pool, config: ServerConfig) {
     logger: { disabled: true },
     emailAndPassword: {
       enabled: true, disableSignUp: true, requireEmailVerification: true,
-      autoSignIn: false, minPasswordLength: 15, maxPasswordLength: 128,
+      autoSignIn: false, minPasswordLength: 10, maxPasswordLength: 128,
       revokeSessionsOnPasswordReset: true,
     },
     session: { expiresIn: 43_200, disableSessionRefresh: true, cookieCache: { enabled: false } },

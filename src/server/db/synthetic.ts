@@ -11,7 +11,7 @@ export async function provisionSyntheticMember(pool: Pool, input: {
   const url = new URL(config.databaseUrl);
   if (config.environment !== "local" || !/^\/hestia_test_[a-z0-9_]+$/.test(url.pathname)
     || !/^[^@\s]+@[^@\s]+\.invalid$/.test(input.email)) throw new Error("Synthetic provisioning requires an isolated local test database and .invalid email");
-  if (input.password.length < 15 || input.password.length > 128) throw new Error("Synthetic password length must be 15–128");
+  if (input.password.length < 10 || input.password.length > 128) throw new Error("Synthetic password length must be 10–128");
   const id = randomUUID(), password = await hashPassword(input.password);
   const client = await pool.connect();
   try {
