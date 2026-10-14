@@ -15,4 +15,3 @@ La réception exacte et la revue sont conservées dans les artifacts privés du 
 Adaptations techniques : minuteur isolé ; révision de commentaire indépendante des pixels ; autosauvegarde coalescée ; protection des réponses anciennes ; bouton Dicter désactivé avec la variante existante tant qu'un résultat attend ajout/abandon. Ces adaptations corrigent les courses de la simulation sans inventer d'écran.
 
 Les dépendances React/Babel CDN, données de simulation, modèle B fictif, police distante et HTML exécutable ne sont pas importés. Le produit conserve ses bibliothèques et polices locales. Les trois tracés Lucide sont attribués dans THIRD-PARTY-NOTICES.md. Les images de téléphone et les résultats de simulation ne constituent aucune preuve de performance ou de transcription réelle.
-
