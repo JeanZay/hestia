@@ -102,7 +102,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
       // Reasons and summary are free text. A vanished catalogue entry may also
       // occur in that text, so invalidate the whole response when it changes.
       if (hash(folders) !== hash(row.folders)) return { ...basic, status: "stale" };
-      const result = parseClassificationResult(row.result, folders, deps.maxResultBytes, deps.maxSuggestions, true);
+      const result = parseClassificationResult(row.result, folders, deps.maxResultBytes, deps.maxSuggestions, true, row.identity.comment);
       // If a former destination disappeared, keep surviving suggestions only.
       return { ...basic, result };
     } catch (error) {
@@ -203,7 +203,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
       try {
         const outcome = await bounded(signal => reservation.selected.analyze(configured(reservation.config), reservation.payload, credential, signal));
         actual = outcome.actualMicros;
-        const result = parseClassificationResult(outcome.value, reservation.payload.folders, deps.maxResultBytes, deps.maxSuggestions, reservation.payload.canCreateRoot);
+        const result = parseClassificationResult(outcome.value, reservation.payload.folders, deps.maxResultBytes, deps.maxSuggestions, reservation.payload.canCreateRoot, reservation.payload.comment);
         await settle(reservation.row.id, actual, result, "complete");
       } catch { await settle(reservation.row.id, actual, null, "failed"); }
       return handleCaptureAnalysis(new Request(request.url, { headers: request.headers }), captureId, reservation.row.id);

@@ -68,6 +68,26 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
   const ledger=(await pool.query("SELECT identity,folders,result,actual_micros FROM hestia_classification_request WHERE actor_id=$1 AND idempotency_key=$2",[users[0].id,selection.idempotencyKey])).rows[0];
   expect(ledger).toEqual({identity:null,folders:null,result:null,actual_micros:"10"});
  });
+ it.each([""," \t\n"])("does not expose comment divergence without context (%j), including old stored results",async comment=>{
+  let calls=0;
+  const falseDivergence="Le document est une facture et garantie d'un lave-linge, avec une mention de justificatif de dépense et d'entretien ; la page de couverture ne contredit pas le classement.";
+  const analyzedApp=createApplication(pool,config,{store,classification:{providers:[{id:"synthetic",mode:"synthetic",models:[{id:"context-v1",label:"Synthétique"}],quote:()=>({maximumMicros:100,currency:"EUR"}),quoteCheck:()=>null,check:async()=>({status:"unreachable",actualMicros:0}),analyze:async()=>{calls++;return {actualMicros:10,value:{existing:[{folderId,reason:"Facture synthétique"}],created:[],contradiction:falseDivergence}};}}]}});
+  const settings=(await body<{settings:{version:number}}>(await analyzedApp.handleClassificationSettings(req(undefined,1)))).settings;
+  await body(await analyzedApp.handleClassificationSettings(req({version:settings.version,provider:"synthetic",model:"context-v1",enabled:true,monthlyLimitMicros:1000,apiKey:"synthetic-context-key"},1,"PUT")));
+  const c=await add(await make()),prepared=await prepare(c);
+  if(comment)await body(await app.handleCaptureComment(req({commentVersion:0,comment},0,"PATCH"),c.id));
+  const selection={version:prepared.capture.version,artifactId:prepared.artifact.id,commentVersion:comment?1:0,idempotencyKey:randomUUID()};
+  const result=await body<{analysisId:string;status:string;result:unknown}>(await analyzedApp.handleCaptureAnalyze(req(selection),c.id));
+  const expected={existing:[{folderId,reason:"Facture synthétique"}],created:[]};
+  expect(result.status).toBe("complete");expect(result.result).toEqual(expected);expect(calls).toBe(1);
+  const readLedger=async()=>(await pool.query("SELECT result,actual_micros FROM hestia_classification_request WHERE id=$1",[result.analysisId])).rows[0];
+  expect(await readLedger()).toEqual({result:expected,actual_micros:"10"});
+  // A result stored by the previous application is filtered at the same boundary.
+  await pool.query("UPDATE hestia_classification_request SET result=$2 WHERE id=$1",[result.analysisId,{...expected,contradiction:falseDivergence}]);
+  const reread=await body<{status:string;result:unknown}>(await analyzedApp.handleCaptureAnalysis(req(),c.id,result.analysisId));
+  expect(reread.status).toBe("complete");expect(reread.result).toEqual(expected);expect(calls).toBe(1);
+  expect((await readLedger()).actual_micros).toBe("10");
+ });
  it("saves context independently of uploads and pixels and invalidates an old confirmation",async()=>{
   const c=await add(await make()),prepared=await prepare(c),oldPreview=await preview(prepared.capture,prepared.artifact);
   const before=(await pool.query("SELECT object_key,kind,size,sha256,purge FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows;

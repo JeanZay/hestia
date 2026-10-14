@@ -4,6 +4,8 @@ Décision du 14 octobre 2026, issue #4 et brief commentaire/voix v1 validé.
 
 Le commentaire aide une demande explicite de suggestions. Il reste une donnée non fiable, ne donne aucun droit et ne classe rien. Une contradiction est expliquée avec les alternatives proposées. La confirmation humaine demeure obligatoire.
 
+Sans commentaire non vide après retrait des espaces, aucune divergence document/commentaire n'est exposée. Cette règle commune s'applique à la réponse du fournisseur et à la relecture d'un résultat ancien, avec l'instantané du commentaire de l'analyse. La forme de la réponse reste strictement validée ; destinations, coûts et gardes de péremption sont conservés, sans appel supplémentaire ni filtrage lexical du texte de l'IA.
+
 ## Identités et durée de vie
 
 `comment_version` est indépendant de `capture.version` et des versions de pages. Le PATCH dédié modifie seulement le texte et sa révision sous le verrou du brouillon ; il ne rejoue pas un manifeste de pages. Les uploads, miniatures et artefacts inchangés restent valides. Les confirmations et analyses précédentes sont invalidées. L'analyse lie explicitement la révision et l'instantané du commentaire.
