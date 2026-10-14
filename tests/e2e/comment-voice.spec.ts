@@ -78,6 +78,8 @@ test("Commentaire caméra : seule sauvegarde confirmée reprise, échéance inch
   await page.getByRole("button", { name: "Moi", exact: true }).click(); await page.getByRole("button", { name: "Brouillons", exact: true }).last().click();
   await page.locator("li.hc-card").filter({ hasText: draft.title }).getByRole("button", { name: "Reprendre", exact: true }).click();
   await page.getByRole("button", { name: "Continuer", exact: true }).click(); await page.getByRole("button", { name: "Choisir où ranger", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Où ranger ce document ?", exact: true })).toBeVisible();
+  await expect(comment(page)).toBeVisible();
   await expect(comment(page)).toHaveValue("Commentaire caméra synthétique enregistré"); expect((await capture(page, draft.id)).expiresAt).toBe(before.expiresAt);
 });
 

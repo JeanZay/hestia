@@ -1,18 +1,44 @@
 import { randomUUID } from "node:crypto";
-import { expect, test as base, type Page, type Route } from "@playwright/test";
+import { expect, test as base, type APIRequestContext, type Page, type Route } from "@playwright/test";
 import type { CaptureDto } from "../../../src/shared/capture-contract";
 
 export const origin = { origin: "http://127.0.0.1:3210" };
 export const comment = (page: Page) => page.getByLabel("Commentaire pour les suggestions (facultatif)", { exact: true });
+/** Only explicit pre-action conflicts permit another DELETE. An unknown outcome
+ * fails with bounded metadata; no response text, credential or raw error leaks. */
+export async function cleanupCapture(request: Pick<APIRequestContext, "get" | "delete">, id: string) {
+  const events: { method: string; status: number; code: string }[] = [];
+  const fail = (cause: string): never => { throw new Error(`CAPTURE_TEST_CLEANUP ${JSON.stringify({ cause, events })}`); };
+  const knownCodes = new Set(["VERSION_CONFLICT", "CAPTURE_OPERATION_BUSY", "CAPTURE_EXPIRED"]);
+  async function perform(method: "get" | "delete", version?: number) {
+    let response;
+    try { response = await request[method](`/api/hestia/capture/${id}`, { timeout: 2000, ...(method === "delete" ? { headers: origin, data: { version } } : {}) }); }
+    catch { events.push({ method: method.toUpperCase(), status: 0, code: "TRANSPORT_UNKNOWN" }); return fail(`${method.toUpperCase()}_OUTCOME_UNKNOWN`); }
+    const event = { method: method.toUpperCase(), status: response.status(), code: "BODY_UNREADABLE" }; events.push(event);
+    let body;
+    try { body = await response.json(); } catch { return fail(`${method.toUpperCase()}_BODY_UNREADABLE`); }
+    const code = typeof body?.error?.code === "string" && knownCodes.has(body.error.code) ? body.error.code as string : response.ok() ? "OK" : "OTHER";
+    event.code = code;
+    return { status: response.status(), code, capture: body?.capture as CaptureDto | undefined };
+  }
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const current = await perform("get");
+    if (current.status === 410 && current.code === "CAPTURE_EXPIRED") return events;
+    if (current.status !== 200 || !current.capture || !Number.isSafeInteger(current.capture.version)) return fail("READ_NOT_CONFIRMED");
+    const deleted = await perform("delete", current.capture.version);
+    if (deleted.status === 200 && deleted.capture?.state === "abandoned") return events;
+    if (deleted.status === 410 && deleted.code === "CAPTURE_EXPIRED") return events;
+    if (deleted.status !== 409 || !["VERSION_CONFLICT", "CAPTURE_OPERATION_BUSY"].includes(deleted.code)) return fail("DELETE_NOT_CONFIRMED");
+    if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+  return fail("EXPLICIT_CONFLICT_LIMIT");
+}
 export const test = base.extend<{ captures: string[] }>({
   captures: async ({ page }, provide) => {
     const ids: string[] = []; await provide(ids);
-    for (const id of ids) {
-      const response = await page.request.get(`/api/hestia/capture/${id}`);
-      if (!response.ok()) continue;
-      const { capture } = await response.json() as { capture: CaptureDto };
-      if (capture.state === "open") expect((await page.request.delete(`/api/hestia/capture/${id}`, { headers: origin, data: { version: capture.version } })).ok()).toBe(true);
-    }
+    const request = page.context().request;
+    if (!page.isClosed()) await page.close(); // Stop browser effects before reading the cleanup version.
+    for (const id of ids) await cleanupCapture(request, id);
   },
 });
 export async function login(page: Page, email = "camille@hestia.invalid") {
