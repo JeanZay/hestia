@@ -14,6 +14,7 @@ export type CaptureDto = {
   state: "open" | "preparing" | "finalized" | "abandoned" | "expired";
   createdAt: string; expiresAt: string; currentFolderId: string | null;
   title: string; format: CaptureFormat; pages: CapturePageDto[];
+  comment: string; commentVersion: number;
 };
 export type CaptureArtifactDto = {
   id: string; version: number; mediaType: CaptureMediaType; fileName: string;
@@ -49,6 +50,7 @@ export type ClassificationResultDto = {
   existing: { folderId: string; reason: string }[];
   created: { parentId: string | null; levels: string[]; reason: string }[];
   summary?: string;
+  contradiction?: string;
 };
 export type ClassificationAnalysisDto = {
   analysisId: string; status: "pending" | "complete" | "failed" | "stale";

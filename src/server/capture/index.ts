@@ -15,7 +15,8 @@ export type {CaptureDependencies,CaptureService,CaptureAnalysisBridge,AnalysisId
 const CHUNK=2*1024*1024, MAX=20*1024*1024;
 const TYPES:CaptureMediaType[]=["application/pdf","image/jpeg","image/png","image/webp","image/heic","image/heif"];
 export const DEFAULT_CAPTURE_LIMITS:CaptureLimits={fileBytes:MAX,imagePixels:40_000_000,pages:20,totalPixels:200_000_000,sourceBytes:200*1024*1024,generationTimeoutMs:90_000,maxDraftsPerActor:20,maxConcurrentGenerations:1};
-type CaptureRow={id:string;actor_id:string;actor_epoch:number;kind:"camera"|"import";version:number;state:CaptureDto["state"];created_at:Date;expires_at:Date;current_folder_id:string|null;title:string;format:CaptureDto["format"];identity_sha:string};
+import { isValidComment } from "../../shared/capture-comment";
+type CaptureRow={comment:string;comment_version:number;id:string;actor_id:string;actor_epoch:number;kind:"camera"|"import";version:number;state:CaptureDto["state"];created_at:Date;expires_at:Date;current_folder_id:string|null;title:string;format:CaptureDto["format"];identity_sha:string};
 type PageRow={id:string;capture_id:string;identity_sha:string;expected_version:number;replace_page_id:string|null;file_name:string;media_type:CaptureMediaType;size:number;sha256:string;status:string;object_key:string;version:number;position:number;rotation:CaptureRotation;crop:CaptureCrop;width:number;height:number;saved_at:Date|null;preview_key:string|null;preview_version:number|null;thumbnail_key:string|null;thumbnail_version:number|null;thumbnail_identity:string|null;settings_key:string|null;settings_version:number|null;settings_identity:string|null};
 type ArtifactRow={id:string;capture_id:string;capture_version:number;manifest_sha:string;content_sha:string|null;object_key:string;media_type:CaptureMediaType;file_name:string;size:number;sha256:string;page_count:number};
 type ObjectRow={object_key:string;size:number;sha256:string;ready:boolean;deleted_at:Date|null;promoted:boolean};
@@ -45,7 +46,7 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   if(open&&(row.expires_at<=(await clock(client))||!["open","preparing"].includes(row.state)))throw closed();return row;
  }
  async function pages(client:PoolClient,id:string){return (await client.query<PageRow>("SELECT * FROM hestia_capture_page WHERE capture_id=$1 AND status='saved' ORDER BY position,id",[id])).rows;}
- async function dto(client:PoolClient,c:CaptureRow):Promise<CaptureDto>{return {id:c.id,kind:c.kind,version:c.version,state:c.state,createdAt:c.created_at.toISOString(),expiresAt:c.expires_at.toISOString(),currentFolderId:c.current_folder_id,title:c.title,format:c.format,pages:(await pages(client,c.id)).map(pageDto)};}
+ async function dto(client:PoolClient,c:CaptureRow):Promise<CaptureDto>{return {id:c.id,kind:c.kind,version:c.version,state:c.state,createdAt:c.created_at.toISOString(),expiresAt:c.expires_at.toISOString(),currentFolderId:c.current_folder_id,title:c.title,format:c.format,comment:c.comment,commentVersion:c.comment_version,pages:(await pages(client,c.id)).map(pageDto)};}
  async function operation<T>(id:string,action:()=>Promise<T>,skip=false):Promise<T|undefined>{
   const client=await pool.connect();let locked=false;
   try{locked=(await client.query("SELECT pg_try_advisory_lock(hashtextextended($1,4819)) AS locked",[id])).rows[0].locked;
@@ -113,6 +114,18 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
    await invalidate(client,c,reusable?.object_key);const updated=(await client.query<CaptureRow>("UPDATE hestia_capture SET title=$2,format=$3,version=version+1,state='open' WHERE id=$1 RETURNING *",[id,title,format])).rows[0];
    if(reusable)await client.query("INSERT INTO hestia_capture_artifact(id,capture_id,capture_version,manifest_sha,object_key,media_type,file_name,size,sha256,page_count,content_sha) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",[randomUUID(),id,updated.version,manifest(updated,await pages(client,id)),reusable.object_key,reusable.media_type,c.kind==="camera"?title+(reusable.media_type==="application/pdf"?".pdf":".jpg"):reusable.file_name,reusable.size,reusable.sha256,reusable.page_count,reusable.content_sha]);
    return {capture:await dto(client,updated)};
+  }))))!;
+ });}
+ async function handleCaptureComment(request:Request,id:string){return guarded(async()=>{
+  method(request,"PATCH");origin(request);const input=await destinationJson(request,["commentVersion","comment"]);
+  if(!isValidComment(input.comment)||!Number.isSafeInteger(input.commentVersion)||Number(input.commentVersion)<0)throw invalid();
+  return (await operation(id,async()=>response(await withActor(request,async(client,actor)=>{
+   const c=await owned(client,actor,id);
+   if(c.comment_version!==input.commentVersion)throw conflict("COMMENT_CONFLICT","Le commentaire a changé dans une autre fenêtre. Votre saisie est conservée ; rechargez le brouillon avant de recommencer.");
+   if(c.comment===input.comment)return {comment:c.comment,commentVersion:c.comment_version};
+   if(c.comment_version>=2147483647)throw conflict("COMMENT_CONFLICT","Rechargez le brouillon avant de continuer.");
+   const updated=(await client.query<{comment:string;comment_version:number}>("UPDATE hestia_capture SET comment=$2,comment_version=comment_version+1 WHERE id=$1 RETURNING comment,comment_version",[id,input.comment])).rows[0];
+   return {comment:updated.comment,commentVersion:updated.comment_version};
   }))))!;
  });}
  async function handleCapturePages(request:Request,id:string){return guarded(async()=>{
@@ -301,13 +314,13 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   return response(checked??{status:"in-progress"});
  });}
  const analysis={
-  async inspect(client:PoolClient,actor:Actor,selection:AnalysisSelection):Promise<AnalysisIdentity>{const c=await owned(client,actor,selection.captureId);version(c,selection.version);const a=await artifact(client,c,selection.artifactId);return {...selection,actorId:actor.id,actorEpoch:c.actor_epoch,manifestSha256:a.manifest_sha,sha256:a.sha256,mediaType:a.media_type,size:a.size,expiresAt:c.expires_at.toISOString()};},
+  async inspect(client:PoolClient,actor:Actor,selection:AnalysisSelection):Promise<AnalysisIdentity>{const c=await owned(client,actor,selection.captureId);version(c,selection.version);const a=await artifact(client,c,selection.artifactId);if((selection.commentVersion??0)!==c.comment_version)throw conflict("VERSION_CONFLICT","Le commentaire a changé depuis la demande d’analyse.");return {...selection,commentVersion:c.comment_version,comment:c.comment,actorId:actor.id,actorEpoch:c.actor_epoch,manifestSha256:a.manifest_sha,sha256:a.sha256,mediaType:a.media_type,size:a.size,expiresAt:c.expires_at.toISOString()};},
   async assertCurrent(client:PoolClient,actor:Actor,identity:AnalysisIdentity){const current=await analysis.inspect(client,actor,identity);if((Object.keys(current) as (keyof AnalysisIdentity)[]).some(key=>current[key]!==identity[key]))throw conflict("VERSION_CONFLICT","Le document a changé depuis la demande d’analyse.");},
   async readBytes(request:Request,identity:AnalysisIdentity){return (await operation(identity.captureId,async()=>{const a=await withActor(request,async(client,actor)=>{await analysis.assertCurrent(client,actor,identity);return artifact(client,await owned(client,actor,identity.captureId),identity.artifactId);});const bytes=await readObject(a.object_key,a.size,a.sha256);await withActor(request,async(client,actor)=>analysis.assertCurrent(client,actor,identity));return bytes;}))!;},
  };
  async function cleanupCaptures(limit:number,maxObjects:number){
   integer(limit,1,100);integer(maxObjects,1,1000);let cleaned=0,failed=0;
-  const candidates=await transaction(async client=>{const now=await clock(client);return (await client.query<{id:string}>(`SELECT c.id FROM hestia_capture c WHERE (c.state IN ('open','preparing') AND (c.expires_at<=$1 OR NOT EXISTS(SELECT 1 FROM hestia_member m WHERE m.user_id=c.actor_id AND m.active AND NOT m.recovering AND m.epoch=c.actor_epoch))) OR EXISTS(SELECT 1 FROM hestia_capture_object o WHERE o.capture_id=c.id AND NOT o.promoted AND o.deleted_at IS NULL AND (o.purge OR c.state IN ('finalized','abandoned','expired'))) OR EXISTS(
+  const candidates=await transaction(async client=>{const now=await clock(client);return (await client.query<{id:string}>(`SELECT c.id FROM hestia_capture c WHERE (c.comment<>'' AND c.state IN ('finalized','abandoned','expired')) OR (c.state IN ('open','preparing') AND (c.expires_at<=$1 OR NOT EXISTS(SELECT 1 FROM hestia_member m WHERE m.user_id=c.actor_id AND m.active AND NOT m.recovering AND m.epoch=c.actor_epoch))) OR EXISTS(SELECT 1 FROM hestia_capture_object o WHERE o.capture_id=c.id AND NOT o.promoted AND o.deleted_at IS NULL AND (o.purge OR c.state IN ('finalized','abandoned','expired'))) OR EXISTS(
     SELECT 1 FROM hestia_capture_page p JOIN hestia_capture_object o ON
      (o.object_key=p.thumbnail_key AND (p.status<>'saved' OR p.thumbnail_version<>p.version)) OR
      (o.object_key=p.settings_key AND (p.status<>'saved' OR p.settings_version<>p.version))
@@ -316,7 +329,7 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   for(const {id} of candidates){if(cleaned>=maxObjects)break;try{await operation(id,async()=>{
    const keys=await transaction(async client=>{await deps.budget.lock(client);const c=(await client.query<CaptureRow>("SELECT * FROM hestia_capture WHERE id=$1 FOR UPDATE",[id])).rows[0];const now=await clock(client);const active=(await client.query("SELECT 1 FROM hestia_member WHERE user_id=$1 AND active AND NOT recovering AND epoch=$2",[c.actor_id,c.actor_epoch])).rowCount;
     if(["open","preparing"].includes(c.state)&&(c.expires_at<=now||!active)){c.state="expired";await client.query("UPDATE hestia_capture SET state='expired' WHERE id=$1",[id]);}
-    if(["finalized","abandoned","expired"].includes(c.state))await client.query("UPDATE hestia_capture_object SET purge=true WHERE capture_id=$1 AND NOT promoted",[id]);
+    if(["finalized","abandoned","expired"].includes(c.state)){await client.query("UPDATE hestia_capture SET comment='' WHERE id=$1",[id]);await client.query("UPDATE hestia_capture_object SET purge=true WHERE capture_id=$1 AND NOT promoted",[id]);}
     // An N-1 application cannot mark the new slots after editing/removing a
     // page. Reconcile these bounded derivatives when N resumes cleanup.
     const retained=(await client.query<PageRow>("SELECT * FROM hestia_capture_page WHERE capture_id=$1 AND (thumbnail_key IS NOT NULL OR settings_key IS NOT NULL)",[id])).rows;
@@ -329,6 +342,6 @@ export function createCaptureService(pool:Pool,access:Access,deps:CaptureDepende
   },true);}catch{failed++;}}
   return {cleaned,failed};
  }
- return {handleCaptures,handleCapture,handleCapturePages,handleCapturePageChunk,handleCapturePageComplete,handleCapturePrepare,handleCaptureContent,handleCapturePreview,handleCaptureFinalize,handleCaptureOperation,cleanupCaptures,analysis};
+ return {handleCaptures,handleCapture,handleCaptureComment,handleCapturePages,handleCapturePageChunk,handleCapturePageComplete,handleCapturePrepare,handleCaptureContent,handleCapturePreview,handleCaptureFinalize,handleCaptureOperation,cleanupCaptures,analysis};
 }
 

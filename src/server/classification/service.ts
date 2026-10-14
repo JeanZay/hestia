@@ -157,9 +157,10 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
   async function handleCaptureAnalyze(request: Request, captureId: string) {
     return guarded(async () => {
       if (request.method !== "POST" || !isUuid(captureId)) throw invalid(); access.origin(request);
-      const body = await json(request, ["version", "artifactId", "idempotencyKey"]);
+      const body = await json(request, ["version", "artifactId", "idempotencyKey", "commentVersion"]);
       if (!isUuid(body.artifactId) || !isUuid(body.idempotencyKey)) throw invalid();
-      const selection = { captureId, version: version(body.version), artifactId: body.artifactId }, key = body.idempotencyKey;
+      if(body.commentVersion!==undefined&&(!Number.isSafeInteger(body.commentVersion)||Number(body.commentVersion)<0))throw invalid();
+      const selection = { captureId, version: version(body.version), artifactId: body.artifactId, commentVersion: Number(body.commentVersion??0) }, key = body.idempotencyKey;
       const identityHash = hash(selection);
       const initial = await access.withActor(request, async (client, actor) => {
         const old = (await client.query<RequestRow>("SELECT * FROM hestia_classification_request WHERE actor_id=$1 AND idempotency_key=$2", [actor.id, key])).rows[0];
@@ -180,7 +181,7 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
         if (row.version !== initial.configVersion) throw conflict();
         // Every currently admitted actor may propose their own private root.
         // Only Capture's later preview/confirmation may actually create it.
-        const payload: ProviderPayload = { bytes, mediaType: identity.mediaType, folders, canCreateRoot: true };
+        const payload: ProviderPayload = { bytes, mediaType: identity.mediaType, folders, canCreateRoot: true, comment: identity.comment??"" };
         const saved = await reserve(client, actor, row, key, "analysis", identityHash, identity, selected.quote(configured(row), payload));
         if (saved.fresh) await client.query("UPDATE hestia_classification_request SET folders=$2 WHERE id=$1", [saved.row.id, JSON.stringify(folders)]);
         return { ...saved, config: row, selected, payload };

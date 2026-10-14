@@ -53,6 +53,50 @@ describe("Capture author-only drafts, physical objects and atomic publication",(
  beforeEach(async()=>{const f=await body<{folder:{id:string}}>(await app.handleFolders(req({name:`Capture ${randomUUID()}`})),201);folderId=f.folder.id;});
  afterEach(async()=>{putHook=undefined;getHook=undefined;deleteHook=undefined;fixedNow=undefined;await pool.query("UPDATE hestia_member SET active=true,recovering=false WHERE user_id=ANY($1::text[])",[users.map(u=>u.id)]);for(let i=0;i<users.length;i++)await login(i);await pool.query("UPDATE hestia_capture SET state='abandoned' WHERE actor_id=ANY($1::text[]) AND state IN ('open','preparing')",[users.map(u=>u.id)]);await app.cleanupCaptures(100,1000);});
  afterAll(async()=>{await pool.end();});
+ it("binds analysis to the saved comment and purges its text when changed",async()=>{
+  let context:string|undefined,calls=0;
+  const analyzedApp=createApplication(pool,config,{store,classification:{providers:[{id:"synthetic",mode:"synthetic",models:[{id:"context-v1",label:"Synthétique"}],quote:()=>({maximumMicros:100,currency:"EUR"}),quoteCheck:()=>null,check:async()=>({status:"unreachable",actualMicros:0}),analyze:async(_config,payload)=>{calls++;context=payload.comment;return {actualMicros:10,value:{existing:[{folderId,reason:"Selon le contexte synthétique"}],created:[],contradiction:"Le commentaire et le document divergent."}};}}]}});
+  const settings=(await body<{settings:{version:number}}>(await analyzedApp.handleClassificationSettings(req(undefined,1)))).settings;
+  await body(await analyzedApp.handleClassificationSettings(req({version:settings.version,provider:"synthetic",model:"context-v1",enabled:true,monthlyLimitMicros:1000,apiKey:"synthetic-context-key"},1,"PUT")));
+  const c=await add(await make()),prepared=await prepare(c);
+  await body(await app.handleCaptureComment(req({commentVersion:0,comment:"Véhicule Boréal synthétique"},0,"PATCH"),c.id));
+  const selection={version:prepared.capture.version,artifactId:prepared.artifact.id,commentVersion:1,idempotencyKey:randomUUID()};
+  const result=await body<{status:string;result:{contradiction:string}}>(await analyzedApp.handleCaptureAnalyze(req(selection),c.id));
+  expect(result.status).toBe("complete");expect(result.result.contradiction).toBe("Le commentaire et le document divergent.");expect(context).toBe("Véhicule Boréal synthétique");expect(calls).toBe(1);
+  await body(await app.handleCaptureComment(req({commentVersion:1,comment:"Autre contexte"},0,"PATCH"),c.id));
+  expect((await analyzedApp.handleCaptureAnalyze(req({...selection,idempotencyKey:randomUUID()}),c.id)).status).toBe(409);expect(calls).toBe(1);
+  const ledger=(await pool.query("SELECT identity,folders,result,actual_micros FROM hestia_classification_request WHERE actor_id=$1 AND idempotency_key=$2",[users[0].id,selection.idempotencyKey])).rows[0];
+  expect(ledger).toEqual({identity:null,folders:null,result:null,actual_micros:"10"});
+ });
+ it("saves context independently of uploads and pixels and invalidates an old confirmation",async()=>{
+  const c=await add(await make()),prepared=await prepare(c),oldPreview=await preview(prepared.capture,prepared.artifact);
+  const before=(await pool.query("SELECT object_key,kind,size,sha256,purge FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows;
+  const saved=await body<{comment:string;commentVersion:number}>(await app.handleCaptureComment(req({commentVersion:0,comment:"Contexte synthétique 😀\nSeconde ligne"},0,"PATCH"),c.id));
+  expect(saved.commentVersion).toBe(1);
+  const current=(await body<{capture:CaptureDto}>(await app.handleCapture(req(),c.id))).capture;
+  expect(current.version).toBe(prepared.capture.version);expect(current.pages).toEqual(c.pages);expect(current.expiresAt).toBe(c.expiresAt);
+  expect((await pool.query("SELECT object_key,kind,size,sha256,purge FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows).toEqual(before);
+  expect((await app.handleCaptureFinalize(req(oldPreview),c.id)).status).toBe(409);
+  expect((await app.handleCaptureComment(req({commentVersion:0,comment:"Ancienne fenêtre"},0,"PATCH"),c.id)).status).toBe(409);
+  const freshPreview=await preview(current,prepared.artifact);await finalize(current,freshPreview);
+  expect((await pool.query("SELECT comment FROM hestia_capture WHERE id=$1",[c.id])).rows[0].comment).toBe("");
+ });
+ it("does not cancel a pending page upload when its comment is saved",async()=>{
+  const c=await make();
+  const reservation=await body<{upload:{id:string};captureVersion:number}>(await app.handleCapturePages(req({version:c.version,idempotencyKey:randomUUID(),fileName:"synthetic.png",mediaType:"image/png",size:image.length,sha256:hash(image)}),c.id));
+  await body(await app.handleCaptureComment(req({commentVersion:0,comment:"Texte concurrent"},0,"PATCH"),c.id));
+  expect((await app.handleCapturePageChunk(req(image,0,"PUT"),c.id,reservation.upload.id,"0")).status).toBe(200);
+  const completed=await body<{capture:CaptureDto}>(await app.handleCapturePageComplete(req({version:reservation.captureVersion}),c.id,reservation.upload.id));
+  expect(completed.capture.pages).toHaveLength(1);expect(completed.capture.comment).toBe("Texte concurrent");
+ });
+ it("bounds Unicode comments and purges context even through an old-version state update",async()=>{
+  const c=await make(),comment="😀".repeat(2000);
+  await body(await app.handleCaptureComment(req({commentVersion:0,comment},0,"PATCH"),c.id));
+  expect((await app.handleCaptureComment(req({commentVersion:1,comment:comment+"x"},0,"PATCH"),c.id)).status).toBe(400);
+  expect((await app.handleCaptureComment(req({commentVersion:1,comment:"Secret"},1,"PATCH"),c.id)).status).toBe(404);
+  await pool.query("UPDATE hestia_capture SET state='abandoned' WHERE id=$1",[c.id]);
+  expect((await pool.query("SELECT comment FROM hestia_capture WHERE id=$1",[c.id])).rows[0].comment).toBe("");
+ });
  it("distinguishes a pre-action capture lock refusal without reserving bytes or changing the draft",async()=>{
   const c=await add(await make()),holder=await pool.connect();
   const before=(await pool.query("SELECT object_key,charged_bytes FROM hestia_capture_object WHERE capture_id=$1 ORDER BY object_key",[c.id])).rows;

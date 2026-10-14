@@ -10,8 +10,8 @@ export type RenderPage = { id: string; version: number; mediaType: CaptureMediaT
 export type RenderRequest = { pages: readonly RenderPage[]; format: "pdf" | "image"; maxLongEdge?: 640 | 1600; readPage: (id: string) => Promise<Uint8Array>; signal: AbortSignal };
 export type RenderResult = { bytes: Uint8Array; mediaType: "application/pdf" | "image/jpeg"; pageCount: number; width: number; height: number; peakRssKiB: number };
 export type CaptureRenderer = (input: RenderRequest) => Promise<RenderResult>;
-export type AnalysisSelection = Readonly<{ captureId: string; version: number; artifactId: string }>;
-export type AnalysisIdentity = AnalysisSelection & Readonly<{ actorId: string; actorEpoch: number; manifestSha256: string; sha256: string; mediaType: CaptureMediaType; size: number; expiresAt: string }>;
+export type AnalysisSelection = Readonly<{ captureId: string; version: number; artifactId: string; commentVersion?: number }>;
+export type AnalysisIdentity = AnalysisSelection & Readonly<{ actorId: string; actorEpoch: number; manifestSha256: string; sha256: string; mediaType: CaptureMediaType; size: number; expiresAt: string; comment?: string }>;
 export interface CaptureAnalysisBridge {
   inspect(client: PoolClient, actor: Actor, selection: AnalysisSelection): Promise<AnalysisIdentity>;
   assertCurrent(client: PoolClient, actor: Actor, identity: AnalysisIdentity): Promise<void>;
@@ -24,6 +24,7 @@ export type CaptureDependencies = {
 export interface CaptureService {
   handleCaptures(request: Request): Promise<Response>;
   handleCapture(request: Request, id: string): Promise<Response>;
+  handleCaptureComment(request: Request, id: string): Promise<Response>;
   handleCapturePages(request: Request, id: string): Promise<Response>;
   handleCapturePageChunk(request: Request, id: string, pageId: string, index: string): Promise<Response>;
   handleCapturePageComplete(request: Request, id: string, pageId: string): Promise<Response>;

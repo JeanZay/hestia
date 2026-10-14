@@ -24,6 +24,13 @@ describe("Native camera platform entry",()=>{
 });
 
 describe("Capture client operation ordering",()=>{
+  it("serializes a text-only comment after an upload operation without sending the page manifest",async()=>{
+    const first=deferred<Response>(),fetcher=vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce(json({comment:"Synthetic guidance",commentVersion:1}));vi.stubGlobal("fetch",fetcher);
+    const upload=captureRequest("/capture/comment-order/pages",signal(),"POST",{version:7});
+    const comment=captureRequest("/capture/comment-order/comment",signal(),"PATCH",{commentVersion:0,comment:"Synthetic guidance"});
+    expect(fetcher).toHaveBeenCalledOnce();first.resolve(json());await upload;await comment;
+    expect(fetcher).toHaveBeenCalledTimes(2);expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({commentVersion:0,comment:"Synthetic guidance"});
+  });
   it("synchronously stops a hashing upload when privacy is cleared before React cleanup",async()=>{
     const hash=deferred<ArrayBuffer>(),digest=vi.fn(()=>hash.promise),fetcher=vi.fn();vi.stubGlobal("crypto",{subtle:{digest}});vi.stubGlobal("fetch",fetcher);
     const controller=new AbortController(),unregister=registerCaptureClientWork(controller),pending:PendingPage={file:new File([new Uint8Array([1,2,3])],"synthetic.png",{type:"image/png"}),key:"privacy-key"};
@@ -43,7 +50,7 @@ describe("Capture client operation ordering",()=>{
     await expect(captureBlob("stale-preview",{pageId:"page",variant:"thumbnail",pageVersion:1},signal())).rejects.toMatchObject({status:409,code:"VERSION_CONFLICT"});expect(fetcher).toHaveBeenCalledOnce();
   });
   it("freezes camera bytes before hashing and preserves them through a lost completion",async()=>{
-    const camera:CaptureDto={id:"normalized",kind:"camera",version:1,state:"open",createdAt:"2026-10-10T00:00:00Z",expiresAt:"2026-10-10T01:00:00Z",currentFolderId:null,title:"Synthetic",format:"pdf",pages:[]};
+    const camera:CaptureDto={id:"normalized",kind:"camera",version:1,state:"open",createdAt:"2026-10-10T00:00:00Z",expiresAt:"2026-10-10T01:00:00Z",currentFolderId:null,comment:"",commentVersion:0,title:"Synthetic",format:"pdf",pages:[]};
     const chosen=new File([new Uint8Array([4,5,6])],"optimized.jpg",{type:"image/jpeg"}),normalizer=vi.spyOn(cameraNormalizer,"normalize").mockResolvedValue(chosen);
     const saved={...camera,version:2},fetcher=vi.fn().mockResolvedValueOnce(json({upload:{id:"page",chunkSize:1024},captureVersion:1})).mockResolvedValueOnce(json()).mockRejectedValueOnce(new TypeError("lost completion")).mockResolvedValueOnce(json({capture:saved}));vi.stubGlobal("fetch",fetcher);
     const pending:PendingPage={file:new File([new Uint8Array(10)],"original.jpeg",{type:"image/jpeg"}),key:"same-key"};
@@ -155,7 +162,7 @@ describe("Capture client operation ordering",()=>{
     await expect(captureRequest("/capture/queue-finalize/finalize",signal(),"POST",{})).rejects.toThrow("Synthetic response loss");expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("reconciles a lost page completion before sending any chunks",async()=>{
-    const capture:CaptureDto={id:"queue-complete",kind:"import",version:1,state:"open",createdAt:"2026-10-10T00:00:00Z",expiresAt:"2026-10-10T01:00:00Z",currentFolderId:null,title:"Synthetic",format:"original",pages:[]};
+    const capture:CaptureDto={id:"queue-complete",kind:"import",version:1,state:"open",createdAt:"2026-10-10T00:00:00Z",expiresAt:"2026-10-10T01:00:00Z",currentFolderId:null,comment:"",commentVersion:0,title:"Synthetic",format:"original",pages:[]};
     const saved={...capture,version:2};const fetcher=vi.fn().mockResolvedValue(json({capture:saved}));vi.stubGlobal("fetch",fetcher);
     const pending:PendingPage={file:new File([new Uint8Array([1,2,3])],"synthetic.png",{type:"image/png"}),key:"synthetic-key",hash:"f".repeat(64),reservation:{upload:{id:"synthetic-upload",chunkSize:1024},captureVersion:1}};
     await expect(uploadCapturePage(capture,pending,signal(),()=>{})).resolves.toEqual(saved);expect(fetcher).toHaveBeenCalledTimes(1);expect(fetcher.mock.calls[0][0]).toBe("/api/hestia/capture/queue-complete/pages/synthetic-upload/complete");

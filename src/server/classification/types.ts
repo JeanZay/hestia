@@ -3,10 +3,10 @@ import type { Actor } from "../access";
 import type { CaptureMediaType } from "../../shared/capture-contract";
 
 export type ServerClock = (client: PoolClient) => Promise<Date>;
-export type AnalysisSelection = Readonly<{ captureId: string; version: number; artifactId: string }>;
+export type AnalysisSelection = Readonly<{ captureId: string; version: number; artifactId: string; commentVersion?: number }>;
 export type AnalysisIdentity = AnalysisSelection & Readonly<{
   actorId: string; actorEpoch: number; manifestSha256: string; sha256: string;
-  mediaType: CaptureMediaType; size: number; expiresAt: string;
+  mediaType: CaptureMediaType; size: number; expiresAt: string; comment?: string;
 }>;
 export interface CaptureAnalysisBridge {
   inspect(client: PoolClient, actor: Actor, selection: AnalysisSelection): Promise<AnalysisIdentity>;
@@ -24,6 +24,7 @@ export type ProviderPayload = Readonly<{
   bytes: Uint8Array; mediaType: CaptureMediaType; folders: readonly AuthorizedFolder[];
   /** Server admission only; an omitted capability never permits a root proposal. */
   canCreateRoot?: boolean;
+  comment?: string;
 }>;
 export type ProviderCost = Readonly<{ maximumMicros: number; currency: string }>;
 export type ProviderOutcome = Readonly<{ value: unknown; actualMicros: number | null }>;

@@ -29,7 +29,7 @@ function plain(value: unknown, maximum: number) {
 export function parseClassificationResult(value: unknown, folders: readonly AuthorizedFolder[], maxBytes: number, maximum: number, canCreateRoot = false): ClassificationResultDto {
   const encoded = typeof value === "string" ? value : JSON.stringify(value);
   if (!encoded || Buffer.byteLength(encoded) > maxBytes) throw invalid();
-  const root = record(JSON.parse(encoded), ["existing", "created", "summary"]);
+  const root = record(JSON.parse(encoded), ["existing", "created", "summary", "contradiction"]);
   if (!Array.isArray(root.existing) || !Array.isArray(root.created) || root.existing.length + root.created.length > maximum) throw invalid();
   const allowed = new Map(folders.map(folder => [folder.id, folder]));
   const seen = new Set<string>();
@@ -52,5 +52,6 @@ export function parseClassificationResult(value: unknown, folders: readonly Auth
     });
     return { parentId: row.parentId, levels, reason: plain(row.reason, 500) };
   }).filter(item => item.parentId === null ? canCreateRoot === true : allowed.get(item.parentId)?.canCreate);
-  return { existing, created, ...(root.summary === undefined ? {} : { summary: plain(root.summary, 1000) }) };
+  return { existing, created, ...(root.summary === undefined ? {} : { summary: plain(root.summary, 1000) }),
+    ...(root.contradiction === undefined ? {} : { contradiction: plain(root.contradiction, 1000) }) };
 }

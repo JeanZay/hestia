@@ -217,7 +217,10 @@ describe("classification SQL budget, admission and write-only configuration", ()
     await save(); await analyze();
     if (state === "departed") await pool.query("UPDATE hestia_member SET active=false WHERE user_id=$1", [actorId]);
     else await pool.query("UPDATE hestia_capture SET state=$2 WHERE id=$1", [captureId, state]);
-    expect(await service.cleanupClassification(1)).toEqual({ cleaned: 1 });
+    // Closing a capture now purges synchronously, including through N-1 SQL.
+    // Departure still uses the bounded maintenance sweep.
+    if(state!=="departed")expect((await ledger())[0]).toMatchObject({status:"stale",identity:null,result:null,folders:null,actual_micros:"20"});
+    expect(await service.cleanupClassification(1)).toEqual({ cleaned: state==="departed"?1:0 });
     expect((await ledger())[0]).toMatchObject({ status: "stale", identity: null, result: null, folders: null, actual_micros: "20" });
   });
   it("never emits for a disabled remote provider or unbounded currency quote", async () => {

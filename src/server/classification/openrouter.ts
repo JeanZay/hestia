@@ -108,9 +108,11 @@ const schema = {
   "additionalProperties": false,
   "required": [
     "existingFolderSuggestions",
-    "newFolderPathSuggestions"
+    "newFolderPathSuggestions",
+    "contradiction"
   ],
   "properties": {
+    "contradiction": { "type": ["string", "null"], "description": "Divergence entre le document et le contexte de préparation, explicitée sans trancher ; null en l’absence de contradiction." },
     "existingFolderSuggestions": {
       "type": "array",
       "description": "Alternatives de classement dans des dossiers existants du catalogue. Liste vide si aucune destination existante ne convient.",
@@ -173,7 +175,7 @@ export const OPENROUTER_CLASSIFICATION_CONTRACT_SHA256 = createHash("sha256")
   .update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions, schema })).digest("hex");
 /** Legacy field maxFolderBytes now bounds all text context, including guide,
  * instructions and structured schema. The quote still reserves the full context. */
-export function openRouterClassificationContextBytes(payload: Pick<ProviderPayload, "folders" | "canCreateRoot">): number {
+export function openRouterClassificationContextBytes(payload: Pick<ProviderPayload, "folders" | "canCreateRoot" | "comment">): number {
   return Buffer.byteLength(classificationContext(payload)) + Buffer.byteLength(instructions) + Buffer.byteLength(JSON.stringify(schema));
 }
 async function boundedResponse(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {

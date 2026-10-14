@@ -15,7 +15,8 @@ export type QualifiedOpenAIProfile = Readonly<{
   actualCost: (usage: unknown) => number | null;
 }>;
 const schema = {
-  type: "object", additionalProperties: false, required: ["existing", "created"], properties: {
+  type: "object", additionalProperties: false, required: ["existing", "created", "contradiction"], properties: {
+    contradiction: { type: ["string", "null"] },
     existing: { type: "array", items: { type: "object", additionalProperties: false, required: ["folderId", "reason", "relevance"], properties: { folderId: { type: "string" }, reason: { type: "string" }, relevance: CLASSIFICATION_RELEVANCE_SCHEMA } } },
     created: { type: "array", items: { type: "object", additionalProperties: false, required: ["parentId", "levels", "reason", "relevance"], properties: { parentId: { type: ["string", "null"] }, levels: { type: "array", maxItems: CAPTURE_PATH_MAX_LEVELS, items: { type: "string" } }, reason: { type: "string" }, relevance: CLASSIFICATION_RELEVANCE_SCHEMA } } },
   },
@@ -23,7 +24,7 @@ const schema = {
 const instructions = classificationInstructions("existing", "created");
 export const OPENAI_CLASSIFICATION_CONTRACT_SHA256 = createHash("sha256")
   .update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions, schema })).digest("hex");
-function contextBytes(payload: Pick<ProviderPayload, "folders" | "canCreateRoot">) {
+function contextBytes(payload: Pick<ProviderPayload, "folders" | "canCreateRoot" | "comment">) {
   return Buffer.byteLength(classificationContext(payload)) + Buffer.byteLength(instructions) + Buffer.byteLength(JSON.stringify(schema));
 }
 async function boundedResponse(response: Response) {

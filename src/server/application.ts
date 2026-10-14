@@ -19,6 +19,8 @@ import type { CaptureDependencies } from "./capture/types";
 import { createClassificationService } from "./classification/service";
 import { createClassificationCredentialCipher } from "./classification/cipher";
 import { DEFAULT_CLASSIFICATION_LIMITS, type ClassificationDependencies } from "./classification/types";
+import { createTranscriptionService } from "./transcription/service";
+import { DEFAULT_TRANSCRIPTION_LIMITS, type TranscriptionDependencies } from "./transcription/types";
 const folderName = (value: unknown) => textField(value, 120);
 type Folder = WorkspaceFolder;
 type FolderRow = { id:string; name:string; version:number; parent_folder_id:string|null; document_count:string; created_at:Date; creator_name:string };
@@ -38,6 +40,7 @@ function renameOperation(id:string,input:Record<string,unknown>):FolderOperation
 export type ApplicationDependencies = DocumentDependencies & {
   capture?: Omit<CaptureDependencies, "store" | "budget">;
   classification?: Partial<Omit<ClassificationDependencies, "capture">>;
+  transcription?: Partial<Omit<TranscriptionDependencies, "capture">>;
 };
 export function createApplication(pool: Pool, config: ServerConfig, dependencies?: ApplicationDependencies) {
   const auth = createAuth(pool, config);
@@ -259,9 +262,26 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
     providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
   });
   const folderTrash=createFolderTrash(access, { now: dependencies?.now });
+  const transcription=createTranscriptionService(pool,access,{
+    clock, credentialCipher:createClassificationCredentialCipher(config.secret),
+    readAuthorizedFolders:async(client,actor)=>(await foldersFor(client,actor))
+      .filter(folder=>folder.capabilities.includes("déposer"))
+      .map(folder=>({id:folder.id,name:folder.name,path:[],canCreate:folder.capabilities.includes("modifier")})),
+    providers:[],allowRemote:false,...DEFAULT_TRANSCRIPTION_LIMITS,...dependencies?.transcription,
+    capture:{async assertAvailable(client,actor,captureId){
+      if(!isUuid(captureId))throw unavailable();
+      const now=await clock(client);
+      const row=(await client.query<{id:string;actor_epoch:number;expires_at:Date}>(
+        `SELECT c.id,c.actor_epoch,c.expires_at FROM hestia_capture c JOIN hestia_member m ON m.user_id=c.actor_id
+         WHERE c.id=$1 AND c.actor_id=$2 AND c.actor_epoch=m.epoch AND m.active AND NOT m.recovering
+           AND c.state IN ('open','preparing') AND c.expires_at>$3 FOR UPDATE OF c`,[captureId,actor.id,now])).rows[0];
+      if(!row)throw unavailable();
+      return {captureId:row.id,actorId:actor.id,actorEpoch:Number(row.actor_epoch),expiresAt:row.expires_at.toISOString()};
+    }},
+  });
   return { handleAuth, handleSession, handleWorkspace, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
-    ...documents, ...folderTrash, ...captureHandlers, ...classification,
+    ...documents, ...folderTrash, ...captureHandlers, ...classification, ...transcription,
     async cleanupTrash(limit:number) {
       const result=await documents.cleanupTrash(limit);
       await folderTrash.cleanupFolderTrash(limit);

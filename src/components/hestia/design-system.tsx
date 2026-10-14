@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes } from "react";
+import type { CSSProperties, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 
@@ -7,6 +7,9 @@ export function Logo({ dark = false }: { dark?: boolean }) {
   return <span className="h-logo"><svg width="32" height="32" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hestia"><path d="M9 44V24a15 15 0 0 1 9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M39 44V24a15 15 0 0 0-9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M20.5 4.5h7l3 9.5h-13z" fill={dark ? "#5FB3C6" : "var(--cdv-action)"}/></svg><span aria-hidden="true">Hestia</span></span>;
 }
 const paths: Record<string, ReactNode> = {
+  mic: <><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></>,
+  "mic-off": <><line x1="2" x2="22" y1="2" y2="22"/><path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2"/><path d="M5 10v2a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12"/><line x1="12" x2="12" y1="19" y2="22"/></>,
+  square: <rect width="14" height="14" x="5" y="5" rx="2"/>,
   // Clé de voûte 1.4 P16, validated Capture hand-off; Lucide ISC.
   "rotate-cw": <><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></>,
   crop: <><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></>,
@@ -58,6 +61,11 @@ export function Button({ variant = "primary", icon, loading, compact, children, 
 export function TextField({ label, hint, error, id, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; error?: string }) {
   const generated = useId(); const fieldId = id || generated;
   return <div className="h-field"><label htmlFor={fieldId}>{label}</label>{hint && <div className="h-hint" id={`${fieldId}-hint`}>{hint}</div>}<input {...props} id={fieldId} className="cdv-focus" aria-invalid={!!error || undefined} aria-describedby={[hint && `${fieldId}-hint`, error && `${fieldId}-error`].filter(Boolean).join(" ") || undefined}/>{error && <div className="h-field-error" id={`${fieldId}-error`} role="alert"><Icon name="alert" size={18}/>{error}</div>}</div>;
+}
+// Validated DS TextArea, without truncation; the comment owns its quiet P22 counter.
+export function TextArea({ label, hint, error, id, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string; error?: string }) {
+  const generated = useId(), fieldId = id || generated;
+  return <div className="h-field"><label htmlFor={fieldId}>{label}</label>{hint && <div className="h-hint" id={`${fieldId}-hint`}>{hint}</div>}<textarea {...props} id={fieldId} className="cdv-focus hc-textarea" aria-invalid={!!error || undefined} aria-describedby={[hint && `${fieldId}-hint`, error && `${fieldId}-error`].filter(Boolean).join(" ") || undefined}/>{error && <div className="h-field-error" id={`${fieldId}-error`}><Icon name="alert" size={18}/>{error}</div>}</div>;
 }
 export function Banner({ tone = "info", title, children, action, onAction }: { tone?: "info" | "danger" | "success" | "warning"; title: string; children?: ReactNode; action?: string; onAction?: () => void }) {
   return <div role={tone === "danger" || tone === "warning" ? "alert" : "status"} className={`h-banner h-banner-${tone}`} style={tone === "warning" ? {background:"var(--cdv-warning-tint)",borderColor:"var(--cdv-warning)"} : undefined}><Icon name={tone === "danger" ? "x" : tone === "success" ? "check" : tone === "warning" ? "alert" : "info"}/><div><strong>{title} </strong>{children}{action && <button type="button" className="cdv-focus" onClick={onAction} style={{marginLeft:6,border:0,background:"transparent",padding:0,color:"var(--cdv-action)",fontWeight:700,fontSize:15,textDecoration:"underline",textUnderlineOffset:3,textDecorationThickness:2,cursor:"pointer",fontFamily:"inherit"}}>{action}</button>}</div></div>;
