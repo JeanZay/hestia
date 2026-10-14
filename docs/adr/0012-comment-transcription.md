@@ -24,6 +24,8 @@ L'audio transite en mémoire, jamais dans le stockage objet ou les reçus SQL. L
 
 Les réservations couvrent le maximum d'une dictée avant émission ; un coût inconnu reste réservé après changement de mois. Une nouvelle configuration concerne les prochains appels. Les droits et l'échéance sont revérifiés avant émission et restitution. Le vocabulaire est limité aux noms des dossiers consultables et déposables, dédupliqué et borné ; aucun ancêtre masqué n'est envoyé.
 
+Un échec STT peut produire un événement opérationnel serveur borné : identifiant de transcription existant, étape et raison choisies localement, statut HTTP fournisseur numérique éventuel et indicateur de coût connu. Aucun audio, vocabulaire, texte, corps, en-tête, identité d'acteur, clé, hash de clé ou erreur brute n'est journalisé. Les métadonnées peuvent être conservées par l'hébergeur ; ce diagnostic ne revendique pas une rétention nulle. Un succès ne produit aucun nouvel événement. La panne du journal n'affecte ni la réponse, ni la comptabilisation, ni la politique sans retry. Le payload fournisseur, sa confidentialité, ses délais et son devis restent inchangés.
+
 ## Profil réel et qualification
 
 L'adaptateur initial vise MAI-Transcribe 2 via OpenRouter. Il impose ZDR et le refus de collecte, sans prétendre annuler un réglage de journalisation du compte. Formats, vocabulaire, français/négations, coûts, latence et conditions effectives doivent être éprouvés avant activation. Les profils portent un contrat et des références de qualification, prix, change et confidentialité ; leur validation structurelle ne prouve pas l'authenticité des preuves. Profil absent ou périmé : dictée indisponible, clavier disponible.

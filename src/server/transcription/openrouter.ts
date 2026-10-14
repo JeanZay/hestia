@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { TranscriptionProvider } from "./types";
 import { inspectDictationWav, transcriptText } from "./validation";
+import { transcriptionFailure } from "./diagnostics";
 
 export const OPENROUTER_TRANSCRIPTION_MODEL = "microsoft/mai-transcribe-2";
 const contract = { model: OPENROUTER_TRANSCRIPTION_MODEL, format: "wav-pcm16-mono-16000", maximumSeconds: 120,
@@ -15,7 +16,6 @@ export type QualifiedTranscriptionProfile = Readonly<{
   qualifiedAt: string; expiresAt: string; currency: "EUR"; usdPerHour: string; usdToEurUpperBound: string;
 }>;
 const scale = 1_000_000_000_000n;
-const unavailable = () => new Error("Transcription provider unavailable");
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 function decimal(value: unknown): bigint | null {
   if (typeof value !== "string" || !/^(0|[1-9]\d{0,6})(\.\d{1,12})?$/u.test(value)) return null;
@@ -51,18 +51,25 @@ function actualMicros(usage: unknown, profile: QualifiedTranscriptionProfile): n
   const cost = ceil(numerator, denominator); return cost <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(cost) : null;
 }
 async function readResponse(response: Response, signal: AbortSignal) {
-  const reader = response.body?.getReader(); if (!reader) throw unavailable();
+  const reader = response.body?.getReader(); if (!reader) throw transcriptionFailure("response", "EMPTY_BODY");
   const buffers: Uint8Array[] = []; let total = 0;
   const cancel = () => { void reader.cancel().catch(() => {}); };
   signal.addEventListener("abort", cancel, { once: true });
   try {
     for (;;) {
-      if (signal.aborted) throw unavailable();
-      const part = await reader.read(); if (signal.aborted) throw unavailable(); if (part.done) break;
-      total += part.value.byteLength; if (total > 131_072) { await reader.cancel(); throw unavailable(); }
+      if (signal.aborted) throw transcriptionFailure("timeout", "TIMEOUT");
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try { part = await reader.read(); } catch { throw transcriptionFailure(signal.aborted ? "timeout" : "response", signal.aborted ? "TIMEOUT" : "READ_FAILED"); }
+      if (signal.aborted) throw transcriptionFailure("timeout", "TIMEOUT"); if (part.done) break;
+      total += part.value.byteLength; if (total > 131_072) {
+        try { await reader.cancel(); } catch { /* Preserve the bounded size diagnosis. */ }
+        throw transcriptionFailure("response", "TOO_LARGE");
+      }
       buffers.push(part.value);
     }
-    const value: unknown = JSON.parse(Buffer.concat(buffers).toString("utf8")); if (!record(value)) throw unavailable(); return value;
+    let value: unknown;
+    try { value = JSON.parse(Buffer.concat(buffers).toString("utf8")); } catch { throw transcriptionFailure("response", "INVALID_JSON"); }
+    if (!record(value)) throw transcriptionFailure("response", "INVALID_SHAPE"); return value;
   } finally { signal.removeEventListener("abort", cancel); reader.releaseLock(); }
 }
 export function createOpenRouterTranscriptionProvider(profiles: readonly QualifiedTranscriptionProfile[], transport: typeof fetch = fetch, now: () => Date = () => new Date()): TranscriptionProvider {
@@ -73,16 +80,23 @@ export function createOpenRouterTranscriptionProvider(profiles: readonly Qualifi
     get models() { return qualified.filter(profile => current(profile.model)).map(profile => ({ id: profile.model, label: "MAI-Transcribe 2", vocabularySupported: true })); },
     quote(config) { const profile = current(config.model); return profile ? { maximumMicros: maximumMicros(profile), currency: "EUR" } : null; },
     async transcribe(config, payload, credential, signal) {
-      const profile = current(config.model); if (!profile || signal.aborted || payload.mediaType !== "audio/wav" || inspectDictationWav(payload.bytes) !== payload.durationMs
-        || payload.vocabulary.length > 64 || payload.vocabulary.reduce((sum, term) => sum + Buffer.byteLength(term), 0) > 2048) throw unavailable();
+      const profile = current(config.model); if (!profile || signal.aborted) throw transcriptionFailure("preflight", "UNAVAILABLE");
+      try {
+        if (payload.mediaType !== "audio/wav" || inspectDictationWav(payload.bytes) !== payload.durationMs) throw new Error();
+      } catch { throw transcriptionFailure("preflight", "INVALID_AUDIO"); }
+      if (payload.vocabulary.length > 64 || payload.vocabulary.reduce((sum, term) => sum + Buffer.byteLength(term), 0) > 2048) throw transcriptionFailure("preflight", "INVALID_VOCABULARY");
       // No generic prompt, fallback model or automatic retry. The STT API ignores
       // provider.order/only, so qualification covers this model's ZDR endpoint.
-      const result = await transport("https://openrouter.ai/api/v1/audio/transcriptions", {
+      let result: Response;
+      try { result = await transport("https://openrouter.ai/api/v1/audio/transcriptions", {
         method: "POST", redirect: "error", headers: { "Authorization": `Bearer ${credential}`, "Content-Type": "application/json" }, signal,
         body: JSON.stringify({ model: profile.model, input_audio: { data: Buffer.from(payload.bytes).toString("base64"), format: "wav" }, response_format: "json",
           provider: { ...contract.privacy, options: { azure: { ...contract.options.azure, phraseList: { phrases: payload.vocabulary } } } } }),
-      });
-      if (!result.ok) { await result.body?.cancel(); throw unavailable(); }
+      }); } catch { throw transcriptionFailure(signal.aborted ? "timeout" : "transport", signal.aborted ? "TIMEOUT" : "REQUEST_FAILED"); }
+      if (!result.ok) {
+        try { await result.body?.cancel(); } catch { /* Do not read the provider error body. */ }
+        throw transcriptionFailure("http", "HTTP_ERROR", result.status);
+      }
       const body = await readResponse(result, signal);
       // Preserve cost even when the transcript is malformed; the common service
       // validates the text after it has received this accounting observation.

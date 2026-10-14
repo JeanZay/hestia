@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { dictationVocabulary, inspectDictationWav, transcriptText } from "../../src/server/transcription/validation";
 import { createOpenRouterTranscriptionProvider, OPENROUTER_TRANSCRIPTION_CONTRACT_SHA256, OPENROUTER_TRANSCRIPTION_MODEL, parseQualifiedTranscriptionProfile, type QualifiedTranscriptionProfile } from "../../src/server/transcription/openrouter";
 import { readTranscriptionDeployment } from "../../src/server/transcription/deployment";
+import { reportTranscriptionFailure, transcriptionFailure, transcriptionFailureMetadata } from "../../src/server/transcription/diagnostics";
 
 function wav(seconds = 1) {
   const value = Buffer.alloc(44 + seconds * 32_000);
@@ -36,6 +37,63 @@ describe("dictation input and vocabulary boundaries", () => {
   it("returns overlong text without truncating so it can be corrected, but rejects unbounded/invalid output", () => {
     const long = "é".repeat(2500); expect(transcriptText(long)).toBe(long); expect(transcriptText("   ")).toBe("");
     expect(() => transcriptText("x".repeat(16385))).toThrow(); expect(() => transcriptText("bad\u0000text")).toThrow();
+  });
+});
+
+describe("content-free transcription failure diagnostics", () => {
+  const sentinel = "SYNTHETIC_SECRET_DO_NOT_LOG";
+  const payload = () => ({ bytes: wav(), durationMs: 1000, mediaType: "audio/wav" as const, vocabulary: [sentinel] });
+  async function failure(transport: typeof fetch) {
+    const provider = createOpenRouterTranscriptionProvider([profile], transport, () => now);
+    try { await provider.transcribe(config, payload(), sentinel, new AbortController().signal); }
+    catch (error) { return error; }
+    throw new Error("Expected failure");
+  }
+  it.each([400, 401, 429, 500, 503])("records HTTP %i without reading its body or headers and without retry", async status => {
+    const body = new ReadableStream({ pull() { throw new Error(sentinel); } });
+    const transport = vi.fn(async () => new Response(body, { status, headers: { "x-private": sentinel } }));
+    const error = await failure(transport);
+    expect(transcriptionFailureMetadata(error)).toEqual({ stage: "http", reason: "HTTP_ERROR", httpStatus: status });
+    expect(transport).toHaveBeenCalledTimes(1); expect(String(error)).not.toContain(sentinel);
+  });
+  it("distinguishes transport, response structure and bounded read failures without arbitrary error strings", async () => {
+    const cases: [typeof fetch, string][] = [
+      [async () => { throw new Error(sentinel); }, "REQUEST_FAILED"],
+      [async () => new Response(null), "EMPTY_BODY"],
+      [async () => new Response(sentinel), "INVALID_JSON"],
+      [async () => Response.json([sentinel]), "INVALID_SHAPE"],
+      [async () => new Response("x".repeat(131073)), "TOO_LARGE"],
+      [async () => new Response(new ReadableStream({ start(controller) { controller.error(new Error(sentinel)); } })), "READ_FAILED"],
+    ];
+    for (const [transport, reason] of cases) {
+      const error = await failure(transport); expect(transcriptionFailureMetadata(error).reason).toBe(reason);
+      expect(String(error)).not.toContain(sentinel);
+    }
+  });
+  it("marks abort and preflight locally without an extra request", async () => {
+    const controller = new AbortController();
+    const transport = vi.fn(async () => { controller.abort(); throw new Error(sentinel); });
+    const provider = createOpenRouterTranscriptionProvider([profile], transport, () => now);
+    let caught: unknown;
+    try { await provider.transcribe(config, payload(), sentinel, controller.signal); } catch (error) { caught = error; }
+    expect(transcriptionFailureMetadata(caught)).toEqual({ stage: "timeout", reason: "TIMEOUT" });
+    expect(transport).toHaveBeenCalledTimes(1);
+    await expect(provider.transcribe(config, { ...payload(), durationMs: 2000 }, sentinel, new AbortController().signal)).rejects.toThrow();
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("cannot forge metadata with error properties, never inspects getters and ignores logger failure", () => {
+    const id = "ea97a430-a9bf-4ae5-8aca-697cbb288e7f";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const hostile = { get message() { throw new Error(sentinel); }, stage: sentinel, reason: sentinel, httpStatus: 401, cause: sentinel, stack: sentinel };
+      reportTranscriptionFailure(id, hostile, null);
+      expect(warn).toHaveBeenLastCalledWith(JSON.stringify({ event: "hestia.transcription.failed", transcriptionId: id, stage: "service", reason: "UNEXPECTED_FAILURE", costKnown: false }));
+      reportTranscriptionFailure(id, transcriptionFailure("http", "HTTP_ERROR", 429), 17);
+      expect(warn).toHaveBeenLastCalledWith(JSON.stringify({ event: "hestia.transcription.failed", transcriptionId: id, stage: "http", reason: "HTTP_ERROR", httpStatus: 429, costKnown: true }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(sentinel);
+      warn.mockImplementation(() => { throw new Error(sentinel); });
+      expect(() => reportTranscriptionFailure(id, hostile, null)).not.toThrow();
+    } finally { warn.mockRestore(); }
   });
 });
 
