@@ -8,6 +8,10 @@ Les tracés des icônes rotate-cw, crop, file-text, lightbulb et arrow-up sont r
 
 Les composants PageTile et CropStepper proviennent de l'extension Clé de voûte 1.4 validée. Les autres composants, jetons et polices réemploient le système existant. Aucun binaire, police distante, bundle exécutable, photographie ou contenu d'exemple du handoff n'est ajouté par ce lot. La correction de PageTile remplace le clip CSS simulé par les pixels ajustés et contrôlés côté serveur.
 
+## Interface Capture, Clé de voûte 1.6
+
+Les icônes `mic`, `mic-off` et `square` de Clé de voûte 1.6 proviennent des tracés Lucide du hand-off commentaire/voix validé le 14 octobre 2026. Les mentions ISC et MIT de [LUCIDE-LICENSE.txt](src/components/hestia/LUCIDE-LICENSE.txt) s'appliquent également à ces trois tracés.
+
 ## pdf-lib 1.17.1
 
 Paquet npm verrouillé : pdf-lib 1.17.1. Notice recopiée de node_modules/pdf-lib/LICENSE.md le 10 octobre 2026. La licence ci-dessous reste distincte de celle du produit Hestia.

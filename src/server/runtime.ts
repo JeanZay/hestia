@@ -5,6 +5,7 @@ import { readServerConfig } from "./config";
 import { createResendTransport } from "./identity/transport";
 import { runMailBatch } from "./identity/worker";
 import { readClassificationDeployment } from "./classification/deployment";
+import { readTranscriptionDeployment } from "./transcription/deployment";
 
 let application: ReturnType<typeof createApplication> | undefined;
 export function getApplication() {
@@ -12,7 +13,7 @@ export function getApplication() {
     const config = readServerConfig();
     application = createApplication(new Pool({ connectionString: config.databaseUrl, max: 5,
       connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 }), config, { store: createObjectStore(),
-      classification: readClassificationDeployment(config.environment) });
+      classification: readClassificationDeployment(config.environment), transcription: readTranscriptionDeployment(config.environment) });
   }
   return application;
 }

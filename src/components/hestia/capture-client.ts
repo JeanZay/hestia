@@ -49,7 +49,7 @@ function captureTurn<T>(captureId:string, signal:AbortSignal, priority:"read"|"w
   return result;
 }
 export async function captureRequest<T>(path: string, signal: AbortSignal, method = "GET", body?: unknown, options: { activity?: "passive" | "interactive" } = {}): Promise<T> {
-  const aggregate=path.match(/^\/capture\/([^/?]+)(?:\/(?:pages(?:\/[^/?]+\/complete)?|prepare|preview|finalize))?$/)?.[1];
+  const aggregate=path.match(/^\/capture\/([^/?]+)(?:\/(?:pages(?:\/[^/?]+\/complete)?|comment|prepare|preview|finalize))?$/)?.[1];
   const serializedBody=body===undefined?undefined:JSON.stringify(body);
   const send=async()=>{
     const request=()=>fetch('/api/hestia'+path, { method, signal:AbortSignal.any([signal,AbortSignal.timeout(100_000)]), credentials: "same-origin", cache: "no-store", headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(method === "GET" && options.activity !== "interactive" ? { "X-Hestia-Activity": "passive" } : {}) }, body: serializedBody });
