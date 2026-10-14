@@ -30,6 +30,8 @@ L'adaptateur initial vise MAI-Transcribe 2 via OpenRouter. Il impose ZDR et le r
 
 La modification du contrat de classement impose également sa requalification avant renouvellement de son profil ; son modèle n'est pas remplacé par le modèle vocal. Deux adaptateurs synthétiques vérifient la séparation, sans devenir des modèles du catalogue de Production.
 
+Les justifications visibles expliquent brièvement le lien entre la destination et un fait du document ou du commentaire, en identifiant cette source. Les permissions et le guide générique restent des contraintes internes, jamais des justifications inventées. Un préfixe existant pertinent et autorisé est réemployé même si son nom diffère du guide ; une capacité de création ne suffit pas à rendre ce préfixe pertinent. Cette consigne ne remplace pas les contrôles de droits du serveur et exige une qualification réelle du contrat de classement.
+
 ## Livraison et retour arrière
 
 Migrations 014 et 015 additives. Retour applicatif à N-1 en conservant le schéma : le trigger continue de purger le commentaire, le service STT peut rester désactivé et son registre financier est conservé. Aucun effacement de dette ni down-migration destructive. La qualification vérifie réemploi des rendus, uploads concurrents, purge et reprise N-1/N sur ressources jetables. Les mesures avant/après distinguent interaction locale et délai fournisseur ; elles ne certifient pas un téléphone physique.
