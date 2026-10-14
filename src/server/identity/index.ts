@@ -13,7 +13,11 @@ type Flow={id:string;kind:string;actor_id:string|null;actor_epoch:number|null;ac
 const conflict=()=>new HttpError(409,"IDENTITY_CONFLICT","Ce parcours a changé. Recommencez depuis son point d’entrée.");
 const limited=()=>new HttpError(429,"RATE_LIMITED","Trop de tentatives. Réessayez plus tard.");
 const emailValue=(value:unknown)=>{const email=textField(value,254).toLowerCase();if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))throw invalid();return email;};
-const passwordValue=(value:unknown)=>{if(typeof value!=="string"||value.length<15||value.length>128)throw invalid();return value;};
+const passwordValue=(value:unknown)=>{
+  if(typeof value!=="string")throw invalid();
+  if(value.length<15||value.length>128)throw new HttpError(400,"PASSWORD_LENGTH_INVALID","Le mot de passe doit contenir entre 15 et 128 caractères.");
+  return value;
+};
 const uuid=(value:unknown)=>{if(!isUuid(value))throw invalid();return value;};
 const codeAAD=(f:Flow)=>`codes|${f.id}|${f.version}|${f.prepared_batch}`;
 const fail=(error:HttpError)=>response({error:{code:error.code,message:error.message}},error.status);
