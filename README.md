@@ -40,6 +40,21 @@ Le lancement persistant via `npm run dev` ou `npm run build` puis `npm start` re
 
 Le fichier Compose fournit uniquement un PostgreSQL local jetable, au port loopback 5435, avec mot de passe éphémère obligatoire. Le pilote automatisé n'utilise pas ce service : il réserve ses propres ports, conteneur et réseau. L'image Docker applicative reste construisible ; son déploiement et son raccordement à une base hébergée sont qualifiés séparément.
 
+### Comptes Gmail techniques — état au 15 octobre 2026
+
+La réception des pièces jointes par mail est en préparation ([besoin #9](https://github.com/JeanZay/hestia/issues/9)). Elle utilisera deux boîtes Gmail gratuites dédiées, séparées entre Dev et Production, sans accès aux boîtes personnelles des membres.
+
+| Environnement | Compte | État | Mot de passe dans le coffre Cryptomator |
+| --- | --- | --- | --- |
+| Dev | `hestia.macaire.dev@gmail.com` — Hestia Dev | Compte créé | `D:/Hestia/Dev/gmail-technical-account.json` |
+| Production | `hestia.macaire.prod@gmail.com` — Hestia Production | Compte créé | `D:/Hestia/Production/gmail-technical-account.json` |
+
+**Un compte créé ne signifie pas que la réception Hestia fonctionne.** Les scripts Google et le serveur Hestia ne sont pas encore raccordés ni qualifiés. La récupération de compte et la double authentification restent à configurer. Pour les deux comptes, les historiques Web et applications/YouTube ainsi que les annonces personnalisées sont désactivés.
+
+La conservation acceptée pour le futur raccordement est la suivante : Google garde la copie complète du mail jusqu'au résultat durable et réconcilié de son traitement par Hestia, puis pendant 30 jours en corbeille. Un traitement bloqué peut donc prolonger sa conservation. Cette règle est à implémenter ; elle ne décrit pas une purge déjà active.
+
+Les mots de passe restent exclusivement dans le coffre Cryptomator, hors Git ; seuls leurs chemins sont indiqués ici. Ne consigner dans ce dépôt aucun secret, code de vérification ou de récupération, téléphone ni date de naissance utilisés pour créer les comptes.
+
 ## Repères
 
 Le [workflow produit](docs/product-workflow.md) décrit les besoins larges, le refinement approfondi et les US juste-à-temps ; [la reprise inter-tâches](docs/continuity.md) indique comment retrouver sources, décisions et preuves depuis un nouveau chat. Les agents prennent en charge code et revues ; Amaury décide l'usage. `verify` découvre `artifacts/active-work.json` s'il existe ; `--checkpoint <chemin>` permet une sélection explicite. Sans checkpoint présent ou désigné, le rapport ne certifie aucun dossier local ignoré.
