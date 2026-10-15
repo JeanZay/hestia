@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import { createApplication } from "../../src/server/application";
 import { createAuth } from "../../src/server/auth/options";
@@ -11,6 +11,7 @@ import { createClassificationCredentialCipher } from "../../src/server/classific
 import type { AuthorizedFolder } from "../../src/server/classification/types";
 import { createTranscriptionService } from "../../src/server/transcription/service";
 import type { TranscriptionDependencies, TranscriptionPayload } from "../../src/server/transcription/types";
+import { transcriptionFailure } from "../../src/server/transcription/diagnostics";
 
 function wav() {
   const value = Buffer.alloc(32044); value.write("RIFF", 0); value.writeUInt32LE(value.length - 8, 4); value.write("WAVEfmt ", 8);
@@ -166,5 +167,26 @@ describe("dictation SQL lifecycle and independent budget", () => {
     const fast = createTranscriptionService(pool, access, { ...deps, requestTimeoutMs: 20 });
     expect(await (await transcribe(randomUUID(), fast)).json()).toMatchObject({ status: "failed" });
     expect(calls).toHaveLength(1); expect((await ledger())[0].actual_micros).toBeNull();
+  });
+  it("logs one bounded event per failed call, never on success, preserving known and unknown costs", async () => {
+    const sentinel = "SYNTHETIC_PRIVATE_ERROR_TRANSCRIPT";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await save(); expect((await (await transcribe()).json()).status).toBe("complete"); expect(warn).not.toHaveBeenCalled();
+      outcome = async () => { throw transcriptionFailure("http", "HTTP_ERROR", 503); };
+      const failed = await (await transcribe()).json();
+      expect(failed.status).toBe("failed"); expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenLastCalledWith(JSON.stringify({ event: "hestia.transcription.failed", transcriptionId: failed.transcriptionId, stage: "http", reason: "HTTP_ERROR", httpStatus: 503, costKnown: false }));
+      expect((await ledger()).find(row => row.id === failed.transcriptionId).actual_micros).toBeNull();
+      outcome = async () => ({ text: sentinel + "\u0000", actualMicros: 23 });
+      const malformed = await (await transcribe()).json();
+      expect(malformed.status).toBe("failed"); expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenLastCalledWith(JSON.stringify({ event: "hestia.transcription.failed", transcriptionId: malformed.transcriptionId, stage: "transcript", reason: "INVALID_TEXT", costKnown: true }));
+      expect(Number((await ledger()).find(row => row.id === malformed.transcriptionId).actual_micros)).toBe(23);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(sentinel); expect(calls).toHaveLength(3);
+      warn.mockImplementation(() => { throw new Error(sentinel); }); outcome = async () => { throw new Error(sentinel); };
+      expect((await (await transcribe()).json()).status).toBe("failed"); expect(calls).toHaveLength(4);
+      expect((await (await settings()).json()).settings.reservedMicros).toBe(200);
+    } finally { warn.mockRestore(); }
   });
 });

@@ -5,6 +5,7 @@ import { bodyBytes, guarded, HttpError, invalid, isUuid, json, response, textFie
 import { micros, utcMonth, version } from "../classification/validation";
 import type { TranscriptionConfiguration, TranscriptionDependencies, TranscriptionIdentity, TranscriptionPayload } from "./types";
 import { dictationVocabulary, inspectDictationWav, transcriptText } from "./validation";
+import { reportTranscriptionFailure, transcriptionFailure } from "./diagnostics";
 
 type ConfigRow = { version: string; provider: string; model: string; enabled: boolean; monthly_limit_micros: string; credential_sealed: string | null; key_set_at: Date | null };
 type Receipt = { id: string; actor_epoch: string; identity_hash: string; status: TranscriptionResultDto["status"] };
@@ -108,7 +109,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
   async function bounded<T>(action: (signal: AbortSignal) => Promise<T>) {
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
     try { return await Promise.race([action(controller.signal), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { controller.abort(); reject(new Error("Transcription timeout")); }, deps.requestTimeoutMs);
+      timer = setTimeout(() => { controller.abort(); reject(transcriptionFailure("timeout", "TIMEOUT")); }, deps.requestTimeoutMs);
     })]); } finally { clearTimeout(timer); }
   }
   async function handleTranscriptions(request: Request) {
@@ -172,14 +173,16 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
             await client.query("UPDATE hestia_transcription_request SET sent_at=$2 WHERE id=$1", [id, await deps.clock(client)]);
             return value;
           });
-        } catch (error) { await settle(id, 0, "failed"); throw error; }
+        } catch (error) { reportTranscriptionFailure(id, error, 0); await settle(id, 0, "failed"); throw error; }
         let actual: unknown = null, text: string | undefined, status: TranscriptionResultDto["status"] = "failed";
         try {
           const payload: TranscriptionPayload = { bytes, mediaType: "audio/wav", durationMs, vocabulary };
           const outcome = await bounded(signal => selected.transcribe(configured(row), payload, credential, signal));
-          actual = outcome.actualMicros; text = transcriptText(outcome.text);
+          actual = outcome.actualMicros;
+          try { text = transcriptText(outcome.text); } catch { throw transcriptionFailure("transcript", "INVALID_TEXT"); }
           status = await settle(id, actual, "complete");
-        } catch { status = await settle(id, actual, "failed"); }
+          if (status === "failed") reportTranscriptionFailure(id, transcriptionFailure("service", "SETTLEMENT_FAILED"), actual);
+        } catch (error) { reportTranscriptionFailure(id, error, actual); status = await settle(id, actual, "failed"); }
         // Configuration changes affect subsequent calls only. Rights and lifetime
         // are authoritative again after provider I/O; no transaction spans I/O.
         return access.withActor(request, async (client, actor) => {
