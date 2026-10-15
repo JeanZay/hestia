@@ -2,6 +2,10 @@ import { TRANSCRIPTION_MAX_AUDIO_BYTES, TRANSCRIPTION_MAX_DURATION_MS } from "..
 import { invalid } from "../access";
 import type { AuthorizedFolder } from "../classification/types";
 
+// Conservative local bound: ASCII 50 was accepted and 51 rejected in provider
+// qualification. This does not assert a universal Unicode limit upstream.
+export const TRANSCRIPTION_MAX_TERM_BYTES = 50;
+
 /** Only the canonical PCM envelope emitted by our recorder is accepted. This
  * validates duration without trusting client clocks or decoding on the server. */
 export function inspectDictationWav(bytes: Uint8Array): number {
@@ -24,9 +28,10 @@ export function dictationVocabulary(folders: readonly AuthorizedFolder[]): strin
   const seen = new Set<string>(), phrases: string[] = []; let size = 0;
   for (const folder of folders) {
     const name = folder.name.normalize("NFC").trim();
-    if (!name || [...name].length > 64 || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(name)) continue;
+    const bytes = Buffer.byteLength(name);
+    if (!name || bytes > TRANSCRIPTION_MAX_TERM_BYTES || /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(name)) continue;
     const key = name.toLocaleLowerCase("fr"); if (seen.has(key)) continue;
-    seen.add(key); const bytes = Buffer.byteLength(name);
+    seen.add(key);
     if (size + bytes > 2048) continue;
     phrases.push(name); size += bytes;
     if (phrases.length === 64) break;
