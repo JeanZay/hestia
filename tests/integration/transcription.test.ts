@@ -110,6 +110,18 @@ describe("dictation SQL lifecycle and independent budget", () => {
     expect(await ledger()).toEqual(before); expect(calls).toEqual(["one"]);
     expect((await pool.query("SELECT credential_sealed FROM hestia_transcription_config")).rows[0].credential_sealed).toBe(sealed);
   });
+  it("excludes overlong authorized vocabulary without blocking dictation or changing its settlement", async () => {
+    folders = ["x".repeat(59), "é".repeat(26), "Véhicule B", "e\u0301".repeat(25)]
+      .map(name => ({ id: randomUUID(), name, path: [], canCreate: true }));
+    await save();
+    expect(await (await transcribe()).json()).toMatchObject({ status: "complete", text: "Texte synthétique, pas le véhicule A." });
+    expect(captured?.vocabulary).toEqual(["Véhicule B", "é".repeat(25)]);
+    expect(calls).toEqual(["one"]); expect(Number((await ledger())[0].actual_micros)).toBe(20);
+    folders = [{ id: randomUUID(), name: "x".repeat(59), path: [], canCreate: true }];
+    expect((await (await transcribe()).json()).status).toBe("complete");
+    expect(captured?.vocabulary).toEqual([]); expect(calls).toEqual(["one", "one"]);
+    expect((await (await settings()).json()).settings).toMatchObject({ spentMicros: 40, reservedMicros: 0 });
+  });
   it("rejects bad media before reserving or sending", async () => {
     await save(); expect((await transcribe(randomUUID(), service, Buffer.from("not wave"))).status).toBe(400);
     expect(calls).toHaveLength(0); expect(await ledger()).toHaveLength(0);

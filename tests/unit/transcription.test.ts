@@ -38,6 +38,20 @@ describe("dictation input and vocabulary boundaries", () => {
     const long = "é".repeat(2500); expect(transcriptText(long)).toBe(long); expect(transcriptText("   ")).toBe("");
     expect(() => transcriptText("x".repeat(16385))).toThrow(); expect(() => transcriptText("bad\u0000text")).toThrow();
   });
+  it("excludes whole terms over 50 UTF8 bytes after normalization and keeps eligible Unicode intact", () => {
+    const names = ["a".repeat(51), "a".repeat(50), "é".repeat(26), "  " + "e\u0301".repeat(25) + "  ",
+      "é".repeat(25), "😀".repeat(13), "😀".repeat(12), "Véhicule-B", "Maëlys"];
+    const folders = names.map((name, index) => ({ id: String(index), name, path: [], canCreate: true }));
+    expect(dictationVocabulary(folders)).toEqual(["a".repeat(50), "é".repeat(25), "😀".repeat(12), "Véhicule-B", "Maëlys"]);
+    expect(folders.map(folder => folder.name)).toEqual(names);
+    expect(dictationVocabulary(folders.filter(folder => Buffer.byteLength(folder.name.normalize("NFC").trim()) > 50))).toEqual([]);
+  });
+  it("keeps the 2048 byte total budget and continues past an oversized remaining term", () => {
+    const names = [...Array.from({ length: 40 }, (_, i) => String(i).padStart(2, "0") + "a".repeat(48)), "b".repeat(49), "c".repeat(48), "d"];
+    const vocabulary = dictationVocabulary(names.map((name, index) => ({ id: String(index), name, path: [], canCreate: true })));
+    expect(vocabulary).toEqual([...names.slice(0, 40), "c".repeat(48)]);
+    expect(vocabulary.reduce((sum, term) => sum + Buffer.byteLength(term), 0)).toBe(2048);
+  });
 });
 
 describe("content-free transcription failure diagnostics", () => {
@@ -100,6 +114,9 @@ describe("content-free transcription failure diagnostics", () => {
 describe("qualified MAI adapter", () => {
   it("requires complete, fresh qualification bound to this exact contract", () => {
     expect(parseQualifiedTranscriptionProfile(profile, now)).not.toBeNull();
+    const priorContractSha256 = "77e90e14ae29a176cbd2dfd0f2d2d49afcd17c2332ded597b79af2909200dd0f";
+    expect(OPENROUTER_TRANSCRIPTION_CONTRACT_SHA256).not.toBe(priorContractSha256);
+    expect(parseQualifiedTranscriptionProfile({ ...profile, contractSha256: priorContractSha256 }, now)).toBeNull();
     for (const change of [{ model: "other/model" }, { contractSha256: "0".repeat(64) }, { currency: "USD" }, { usdPerHour: "0" }, { extra: true },
       { qualifiedAt: "2026-10-15T00:00:00.000Z" }, { expiresAt: "2026-10-13T00:00:00.000Z" }, { expiresAt: "2027-10-20T00:00:00.000Z" }, { privacySourceRef: "" }]) {
       expect(parseQualifiedTranscriptionProfile({ ...profile, ...change }, now)).toBeNull();
@@ -108,6 +125,25 @@ describe("qualified MAI adapter", () => {
     const env = { HESTIA_TRANSCRIPTION_REMOTE: "openrouter-stt-production", HESTIA_TRANSCRIPTION_PROFILES: JSON.stringify([profile]) };
     expect(readTranscriptionDeployment("production", env, () => now).allowRemote).toBe(true);
     expect(readTranscriptionDeployment("dev", env, () => now).allowRemote).toBe(false);
+  });
+  it.each(["a".repeat(51), "é".repeat(26), "😀".repeat(13)])("rejects an overlong term before any provider request", async term => {
+    const transport = vi.fn(async () => Response.json({ text: "Texte synthétique", usage: { cost: 0.0001 } }));
+    const provider = createOpenRouterTranscriptionProvider([profile], transport, () => now);
+    let caught: unknown;
+    try { await provider.transcribe(config, { bytes: wav(), durationMs: 1000, mediaType: "audio/wav", vocabulary: ["Court", term] }, "synthetic-key", new AbortController().signal); }
+    catch (error) { caught = error; }
+    expect(transcriptionFailureMetadata(caught)).toEqual({ stage: "preflight", reason: "INVALID_VOCABULARY" });
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it("sends normalized boundary terms unchanged and also accepts empty optional vocabulary", async () => {
+    const transport = vi.fn(async () => Response.json({ text: "Texte synthétique", usage: { cost: 0.0001 } }));
+    const provider = createOpenRouterTranscriptionProvider([profile], transport, () => now);
+    for (const vocabulary of [["a".repeat(50), "é".repeat(25), "😀".repeat(12)], []]) {
+      await provider.transcribe(config, { bytes: wav(), durationMs: 1000, mediaType: "audio/wav", vocabulary }, "synthetic-key", new AbortController().signal);
+      const call = transport.mock.calls.at(-1) as unknown as [string, RequestInit];
+      expect(JSON.parse(String(call[1].body)).provider.options.azure.phraseList.phrases).toEqual(vocabulary);
+    }
+    expect(transport).toHaveBeenCalledTimes(2);
   });
   it("sends one bounded WAV and vocabulary with mandatory privacy and verbatim options; reserves full duration with exact rounding", async () => {
     const transport = vi.fn(async () => Response.json({ text: "Non, véhicule B, pas A.", usage: { cost: 0.0001 } }));

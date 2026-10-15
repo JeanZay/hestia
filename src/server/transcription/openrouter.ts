@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import type { TranscriptionProvider } from "./types";
-import { inspectDictationWav, transcriptText } from "./validation";
+import { inspectDictationWav, transcriptText, TRANSCRIPTION_MAX_TERM_BYTES } from "./validation";
 import { transcriptionFailure } from "./diagnostics";
 
 export const OPENROUTER_TRANSCRIPTION_MODEL = "microsoft/mai-transcribe-2";
 const contract = { model: OPENROUTER_TRANSCRIPTION_MODEL, format: "wav-pcm16-mono-16000", maximumSeconds: 120,
   privacy: { zdr: true, data_collection: "deny" }, options: { azure: { enhancedMode: { enabled: true, model: "MAI-Transcribe-2", modelOptions: { transcribeStyle: "verbatim" } } } },
-  vocabulary: { field: "provider.options.azure.phraseList.phrases", maximumTerms: 64, maximumBytes: 2048 }, responseFormat: "json" };
+  vocabulary: { field: "provider.options.azure.phraseList.phrases", maximumTerms: 64, maximumBytes: 2048, maximumTermBytes: TRANSCRIPTION_MAX_TERM_BYTES }, responseFormat: "json" };
 export const OPENROUTER_TRANSCRIPTION_CONTRACT_SHA256 = createHash("sha256").update(JSON.stringify(contract)).digest("hex");
 /** No credential. Each referenced qualification must cover the exact contract,
  * WAV decoding, vocabulary, privacy and the total hourly price including fees. */
@@ -84,7 +84,12 @@ export function createOpenRouterTranscriptionProvider(profiles: readonly Qualifi
       try {
         if (payload.mediaType !== "audio/wav" || inspectDictationWav(payload.bytes) !== payload.durationMs) throw new Error();
       } catch { throw transcriptionFailure("preflight", "INVALID_AUDIO"); }
-      if (payload.vocabulary.length > 64 || payload.vocabulary.reduce((sum, term) => sum + Buffer.byteLength(term), 0) > 2048) throw transcriptionFailure("preflight", "INVALID_VOCABULARY");
+      if (payload.vocabulary.length > 64) throw transcriptionFailure("preflight", "INVALID_VOCABULARY");
+      let vocabularyBytes = 0;
+      for (const term of payload.vocabulary) {
+        const bytes = Buffer.byteLength(term); vocabularyBytes += bytes;
+        if (bytes > TRANSCRIPTION_MAX_TERM_BYTES || vocabularyBytes > 2048) throw transcriptionFailure("preflight", "INVALID_VOCABULARY");
+      }
       // No generic prompt, fallback model or automatic retry. The STT API ignores
       // provider.order/only, so qualification covers this model's ZDR endpoint.
       let result: Response;
