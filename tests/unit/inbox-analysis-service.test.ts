@@ -56,11 +56,11 @@ async function run(options:Options={}){
 describe('Inbox divergence through the real worker and persistence, synthetic SQL/store/provider',()=>{
  it.each([{body:'Assurance logement',comment:''},{subject:'Assurance logement',body:'',comment:''},{body:'',comment:'Assurance logement'},{body:'Contexte disponible assurance',partial:true},{body:'Assurance',comment:'Correction humaine : eau.'}])('publishes full private divergence for genuine context %j',async options=>{
   const r=await run(options);expect(r.batch).toEqual({processed:1});expect(r.calls).toBe(1);expect(r.published).toEqual({status:'ready',contradiction:divergence,suggestions:[{destination:{kind:'create',parentId:null,levels:['Eau']},label:'Eau',reason:'Le document est une facture d’eau. '+divergence}]});
-  expect(JSON.parse(r.analysisPayload!.comment!).comment).toBe(options.comment??'');expect(r.settlement).toEqual({actual:20,status:'complete'});expect(r.reservationIdentities).toEqual([{contentId}]);
+  expect(r.analysisPayload!.comment).toBeUndefined();expect(r.analysisPayload!.inboxContext?.comment).toBe(options.comment??'');expect(r.analysisPayload!.inboxContext?.mail).toEqual({subject:options.subject??'',body:options.body??'Assurance logement',partial:options.partial===true});expect(r.settlement).toEqual({actual:20,status:'complete'});expect(r.reservationIdentities).toEqual([{contentId}]);
   expect(r.queries.some(q=>/UPDATE hestia_classification_config|DELETE|hestia_folder/.test(q))).toBe(false);
  });
  it('does not keep a contradiction from an empty envelope or partial flag only',async()=>{
-  const r=await run({body:'',subject:' ',comment:' ',partial:true});expect(r.analysisPayload!.comment).toBe('');expect(r.published).not.toHaveProperty('contradiction');expect(r.published!.suggestions[0].reason).toBe('Le document est une facture d’eau.');
+  const r=await run({body:'',subject:' ',comment:' ',partial:true});expect(r.analysisPayload!.comment).toBeUndefined();expect(r.analysisPayload!.inboxContext).toBeUndefined();expect(r.published).not.toHaveProperty('contradiction');expect(r.published!.suggestions[0].reason).toBe('Le document est une facture d’eau.');
  });
  it('settles known cost but refuses ready when a divergence has no admitted suggestion',async()=>{
   const r=await run({raw:{existingFolderSuggestions:[],newFolderPathSuggestions:[],contradiction:divergence}});expect(r.calls).toBe(1);expect(r.published).toEqual({status:'unavailable',suggestions:[]});expect(r.settlement).toEqual({actual:20,status:'failed'});

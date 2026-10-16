@@ -1,13 +1,17 @@
 import { unavailable } from '../access';
-import type { AuthorizedFolder } from '../classification/types';
+import type { AuthorizedFolder, InboxClassificationContext } from '../classification/types';
 import { parseClassificationResult } from '../classification/validation';
 import type { InboxAnalysisDto, InboxSuggestionDto } from '../../shared/inbox-contract';
 
-/** These private fields describe suggestions only, never the document summary. */
-export function inboxAnalysisContext(input: { subject?: string; body?: string; partial?: boolean; comment?: string }): string {
+/** Construct only from explicit server Inbox fields; never inspect Capture text. */
+export function typedInboxAnalysisContext(input: { subject?: string; body?: string; partial?: boolean; comment?: string }): InboxClassificationContext | undefined {
  const subject=input.subject??'',body=input.body??'',comment=input.comment??'';
- if(!subject.trim()&&!body.trim()&&!comment.trim())return '';
- return JSON.stringify({mail:{subject,body,partial:input.partial===true},comment});
+ if(!subject.trim()&&!body.trim()&&!comment.trim())return undefined;
+ return Object.freeze({mail:Object.freeze({subject,body,partial:input.partial===true}),comment});
+}
+/** Compatibility context for the existing private projection, never a summary. */
+export function inboxAnalysisContext(input: { subject?: string; body?: string; partial?: boolean; comment?: string }): string {
+ const context=typedInboxAnalysisContext(input);return context?JSON.stringify(context):'';
 }
 
 // The provider fields remain independently capped at 500 and 1000 Unicode points.

@@ -349,13 +349,31 @@ export const CLASSIFICATION_REFERENCE = Object.freeze({
   boundaries: Object.freeze(boundaries.map(boundary => Object.freeze(boundary))),
 });
 
-/** Exactly the server-authorized projection; missing root permission denies it. */
-export function classificationContext(payload: Pick<ProviderPayload, "folders" | "canCreateRoot" | "comment">): string {
+/** Input encoding is explicit; free Capture text is never parsed for origin. */
+type ContextPayload = Pick<ProviderPayload, "folders" | "canCreateRoot" | "comment" | "inboxContext">;
+function preparationContext(payload: ContextPayload) {
+  if (payload.comment !== undefined && payload.inboxContext !== undefined) throw new Error("Ambiguous classification context");
+  if (payload.comment !== undefined && typeof payload.comment !== "string") throw new Error("Invalid classification context");
+  const context = payload.inboxContext;
+  if (context === undefined) return payload.comment;
+  const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => value !== null && typeof value === "object"
+    && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  if (!exact(context, ["mail", "comment"]) || !exact(context.mail, ["subject", "body", "partial"])
+    || typeof context.mail.subject !== "string" || typeof context.mail.body !== "string"
+    || typeof context.mail.partial !== "boolean" || typeof context.comment !== "string") throw new Error("Invalid classification context");
+  return context.mail.subject.trim() || context.mail.body.trim() || context.comment.trim() ? context : undefined;
+}
+/** Same authorized guide/catalogue/capability projection in both encodings.
+ * Default preserves the byte-exact legacy preparationComment string for OpenAI. */
+export function classificationContext(payload: ContextPayload, encoding: "legacy-string" | "structured-inbox" = "legacy-string"): string {
   const folders = payload.folders.map(({ id, name, path, canCreate }) => ({
     id, name, path: path.map(({ id, name }) => ({ id, name })), canCreate: canCreate === true,
   }));
-  return JSON.stringify({ referenceGuide: CLASSIFICATION_REFERENCE, folders, canCreateRoot: payload.canCreateRoot === true,
-    ...(payload.comment ? { preparationComment: payload.comment } : {}) });
+  const context = preparationContext(payload);
+  const preparationComment = typeof context === "object" && encoding === "legacy-string" ? JSON.stringify(context) : context;
+  const field = preparationComment ? { preparationComment } : {};
+  const projection = { referenceGuide: CLASSIFICATION_REFERENCE, folders, canCreateRoot: payload.canCreateRoot === true };
+  return JSON.stringify(encoding === "structured-inbox" ? { ...field, ...projection } : { ...projection, ...field });
 }
 export function classificationInstructions(existingKey: string, createdKey: string): string {
   return [

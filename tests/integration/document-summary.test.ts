@@ -313,7 +313,7 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   // Other suites may also have queued synthetic originals in this shared bench.
   // Drain a bounded number while identifying only this arrival's own provider call.
   for(let batch=0;batch<20&&captured.length===0;batch++)await contextual.runSummaryBatch(10);
-  expect(captured).toHaveLength(1);expect(JSON.parse(captured[0].comment!)).toEqual({mail:{subject:'Sujet privé synthétique',body:'Corps privé synthétique',partial:true},comment:'Commentaire privé synthétique'});
+  expect(captured).toHaveLength(1);expect(captured[0].comment).toBeUndefined();expect(captured[0].inboxContext).toEqual({mail:{subject:'Sujet privé synthétique',body:'Corps privé synthétique',partial:true},comment:'Commentaire privé synthétique'});
   expect(summaryKeys).toEqual(['bytes','mediaType']);expect(calls).toHaveLength(1);expect(await row(content.id)).toMatchObject({status:'ready',text:'Résumé issu des seuls octets.'});
   const receipts=(await pool.query('SELECT * FROM hestia_classification_request WHERE actor_id=$1',[actorId])).rows;expect(receipts).toHaveLength(2);expect(JSON.stringify(receipts)).not.toMatch(/Sujet privé|Corps privé|Commentaire privé|NOM_PRIVE/);
   const document=await mail(content.id);await pool.query("UPDATE hestia_inbox_attachment SET state='placed',document_id=$2 WHERE id=$1",[attachmentId,document.documentId]);
@@ -347,7 +347,7 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   await pool.query("UPDATE hestia_inbox_event SET subject='Assurance logement',context='Contexte privé du mail',context_partial=true WHERE id=(SELECT event_id FROM hestia_inbox_attachment WHERE id=$1)",[attachmentId]);
   await pool.query("UPDATE hestia_inbox_attachment SET comment='' WHERE id=$1",[attachmentId]);
   await pool.query("UPDATE hestia_inbox_analysis_job SET updated_at='2000-01-01T00:00:00Z' WHERE attachment_id=$1",[attachmentId]);let analyses=0;
-  const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),async analyze(_config,payload){if(!ownedHashes.has(digest(payload.bytes)))return{value:{existing:[],created:[]},actualMicros:1};analyses++;expect(JSON.parse(payload.comment!)).toEqual({mail:{subject:'Assurance logement',body:'Contexte privé du mail',partial:true},comment:''});return{value:{existing:[{folderId,reason}],created:[],contradiction},actualMicros:30};}};
+  const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),async analyze(_config,payload){if(!ownedHashes.has(digest(payload.bytes)))return{value:{existing:[],created:[]},actualMicros:1};analyses++;expect(payload.comment).toBeUndefined();expect(payload.inboxContext).toEqual({mail:{subject:'Assurance logement',body:'Contexte privé du mail',partial:true},comment:''});return{value:{existing:[{folderId,reason}],created:[],contradiction},actualMicros:30};}};
   const contextual=createSummaryService(access,{...deps,providers:[classifier],readAuthorizedFolders:async()=>[{id:folderId,name:'Dossier',path:[{id:folderId,name:'Dossier'}],canCreate:true}]});
   for(let batch=0;batch<20&&analyses===0;batch++)await contextual.runSummaryBatch(10);expect(analyses).toBe(1);
   const load=async()=>((await data(await app.handleInboxAttachment(req(),attachmentId))).attachment);

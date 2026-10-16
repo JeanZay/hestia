@@ -1,9 +1,9 @@
 import { CLASSIFICATION_REFERENCE, classificationContext } from "../../src/server/classification/reference-tree";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
+import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
 import { parseClassificationResult } from "../../src/server/classification/validation";
-import { inboxAnalysisContext, projectInboxAnalysis } from "../../src/server/inbox/analysis";
+import { inboxAnalysisContext, typedInboxAnalysisContext, projectInboxAnalysis } from "../../src/server/inbox/analysis";
 import { SUMMARY_CONTRACT_SHA256 } from "../../src/server/summary/provider";
 
 const date = new Date("2026-10-10T12:00:00.000Z");
@@ -125,10 +125,10 @@ describe("OpenRouter qualified profile gate", () => {
 
 describe("partial private context through the actual provider request, with no semantic-output rewriting", () => {
   it.each([
-    { origin: "Capture comment", context: "Le contexte partiel concerne une assurance synthétique." },
-    { origin: "Inbox mail only", context: inboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }) },
-    { origin: "Inbox mail and human correction", context: inboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }) },
-  ])("sends $origin as data, binds the strengthened contract and preserves even a bad mocked reply", async ({ context }) => {
+    { origin: "Capture comment", context: "Le contexte partiel concerne une assurance synthétique.", inboxContext: undefined },
+    { origin: "Inbox mail only", context: inboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }), inboxContext: typedInboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }) },
+    { origin: "Inbox mail and human correction", context: inboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }), inboxContext: typedInboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }) },
+  ])("sends $origin as data, binds the strengthened contract and preserves even a bad mocked reply", async ({ context, inboxContext }) => {
     // This deliberately bad completion demonstrates transport/projection only.
     // A real model making this categorical assertion must still fail semantic review.
     const contradiction = "Le contexte partiel ne s'applique pas à ce document.";
@@ -136,14 +136,13 @@ describe("partial private context through the actual provider request, with no s
     const content = JSON.stringify({ existingFolderSuggestions: [{ folderId: folder.id, reason, relevance: "relevant" }], newFolderPathSuggestions: [], contradiction });
     const { provider, transport } = setup(body(content));
     const folders = [{ ...folder, path: [{ id: folder.id, name: folder.name }] }];
-    const outcome = await provider.analyze(config, { ...payload, mediaType: "image/jpeg", folders, canCreateRoot: true, comment: context }, "synthetic", signal());
+    const outcome = await provider.analyze(config, { ...payload, mediaType: "image/jpeg", folders, canCreateRoot: true, ...(inboxContext ? { inboxContext } : { comment: context }) }, "synthetic", signal());
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
     expect(request.messages[0].role).toBe("system");
-    expect(request.messages[0].content).toContain("sans trancher, même explicitement");
-    expect(request.messages[0].content).toContain("ne prouve ni sa pertinence ni son inapplicabilité");
+    expect(request.response_format.json_schema.schema.required).toEqual(["existingFolderSuggestions", "newFolderPathSuggestions", "contradiction"]);
     expect(request.messages[0].content).not.toContain(context);
-    expect(JSON.parse(request.messages[1].content[0].text)).toMatchObject({ preparationComment: context, canCreateRoot: true });
-    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schema: request.response_format.json_schema.schema })).digest("hex");
+    expect(JSON.parse(request.messages[1].content[0].text)).toMatchObject({ preparationComment: inboxContext ?? context, canCreateRoot: true });
+    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schema: request.response_format.json_schema.schema, inputContract: OPENROUTER_CLASSIFICATION_INPUT_CONTRACT })).digest("hex");
     expect(requestContract).toBe(OPENROUTER_CLASSIFICATION_CONTRACT_SHA256);
     expect(requestContract).not.toBe("5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013");
     expect(SUMMARY_CONTRACT_SHA256).toBe("912acd656c07fc4cfd46c77a148492f31f01bc6c6b9f52d372a66052e3ecfb2c");
@@ -384,7 +383,7 @@ describe("OpenRouter cost settlement and unusable suggestions", () => {
     const { provider, transport } = setup(body(external({ existing: [], created: [] })));
     expect(await provider.check(config, "synthetic", signal())).toEqual({ status: "accepted", actualMicros: 2 });
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
-    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existingFolderSuggestions":[],"newFolderPathSuggestions":[]}.' }]);
+    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"contradiction":null}.' }]);
     expect(request.plugins).toEqual([]); expect(request.max_tokens).toBe(profile.maxOutputTokens);
     expect(await setup(body(external({ existing: [], created: [] }), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
     expect((await setup(body("OK")).provider.check(config, "synthetic", signal())).status).toBe("unreachable");

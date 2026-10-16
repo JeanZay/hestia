@@ -7,7 +7,7 @@ import type { DocumentSummaryDto, InboxSuggestionDto } from '../../shared/inbox-
 import type { ClassificationConfiguration, ClassificationDependencies, ProviderOutcome, ProviderPayload } from '../classification/types';
 import type { CaptureMediaType } from '../../shared/capture-contract';
 import { utcMonth } from '../classification/validation';
-import { inboxAnalysisContext, projectInboxAnalysis } from '../inbox/analysis';
+import { typedInboxAnalysisContext, projectInboxAnalysis } from '../inbox/analysis';
 import { parseSummary, type SummaryProvider } from './provider';
 
 export type SummaryDependencies = Pick<ClassificationDependencies,'clock'|'credentialCipher'|'readAuthorizedFolders'|'providers'|'allowRemote'|'deploymentLimitMicros'|'requestTimeoutMs'> & {store:ObjectStore;summaryProviders:readonly SummaryProvider[];monotonicNow?:()=>number};
@@ -143,8 +143,9 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
   try{bytes=await readBytes(work.c,deadline-deps.requestTimeoutMs);
    // This private context is limited to placement suggestions. It never enters
    // the summary provider, durable financial identity or published document.
-   const context=inboxAnalysisContext({subject:work.a.mail_subject,body:work.a.mail_context,partial:work.a.mail_context_partial,comment:work.a.comment});
-   const payload:ProviderPayload={bytes,mediaType:work.c.media_type,folders:work.folders,canCreateRoot:true,comment:context};
+   const inboxContext=typedInboxAnalysisContext({subject:work.a.mail_subject,body:work.a.mail_context,partial:work.a.mail_context_partial,comment:work.a.comment});
+   const context=inboxContext?JSON.stringify(inboxContext):'';
+   const payload:ProviderPayload={bytes,mediaType:work.c.media_type,folders:work.folders,canCreateRoot:true,...(inboxContext?{inboxContext}:{})};
    reservation=await access.transaction(async client=>{await assertCurrent(client);requireTime(deadline,deps.requestTimeoutMs);const saved=await reserve(client,work.c,'inbox_analysis',payload);if(saved)await client.query('UPDATE hestia_inbox_analysis_job SET request_id=$2 WHERE attachment_id=$1',[id,saved.id]);return saved;});
    if(reservation){const provider=deps.providers.find(p=>p===reservation!.provider)!;const outcome=await bounded(signal=>provider.analyze(configured(reservation!.config),payload,reservation!.credential,signal));
     actual=typeof outcome.actualMicros==='number'&&Number.isSafeInteger(outcome.actualMicros)&&outcome.actualMicros>=0?outcome.actualMicros:null;
