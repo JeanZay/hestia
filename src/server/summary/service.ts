@@ -6,7 +6,8 @@ import { getFolderAccess } from '../permissions/service';
 import type { DocumentSummaryDto, InboxSuggestionDto } from '../../shared/inbox-contract';
 import type { ClassificationConfiguration, ClassificationDependencies, ProviderOutcome, ProviderPayload } from '../classification/types';
 import type { CaptureMediaType } from '../../shared/capture-contract';
-import { parseClassificationResult, utcMonth } from '../classification/validation';
+import { utcMonth } from '../classification/validation';
+import { inboxAnalysisContext, projectInboxAnalysis } from '../inbox/analysis';
 import { parseSummary, type SummaryProvider } from './provider';
 
 export type SummaryDependencies = Pick<ClassificationDependencies,'clock'|'credentialCipher'|'readAuthorizedFolders'|'providers'|'allowRemote'|'deploymentLimitMicros'|'requestTimeoutMs'> & {store:ObjectStore;summaryProviders:readonly SummaryProvider[];monotonicNow?:()=>number};
@@ -132,7 +133,7 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
    await client.query("UPDATE hestia_inbox_analysis_job SET status='running',updated_at=$2 WHERE attachment_id=$1",[id,await deps.clock(client)]);
    return {a,c,actor,folders,generation:job.generation};
   });if(!work)return false;
-  let bytes:Uint8Array|undefined,reservation:Awaited<ReturnType<typeof reserve>>=null,actual:number|null=null,suggestions:InboxSuggestionDto[]=[];
+  let bytes:Uint8Array|undefined,reservation:Awaited<ReturnType<typeof reserve>>=null,actual:number|null=null,suggestions:InboxSuggestionDto[]=[],contradiction:string|undefined;
   let status='unavailable';
   async function assertCurrent(client:PoolClient){
    const job=(await client.query('SELECT generation,status FROM hestia_inbox_analysis_job WHERE attachment_id=$1 FOR UPDATE',[id])).rows[0];if(job?.generation!==work!.generation||job.status!=='running')throw unavailable();
@@ -142,19 +143,19 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
   try{bytes=await readBytes(work.c,deadline-deps.requestTimeoutMs);
    // This private context is limited to placement suggestions. It never enters
    // the summary provider, durable financial identity or published document.
-   const context=JSON.stringify({mail:{subject:work.a.mail_subject??'',body:work.a.mail_context??'',partial:work.a.mail_context_partial===true},comment:work.a.comment});
+   const context=inboxAnalysisContext({subject:work.a.mail_subject,body:work.a.mail_context,partial:work.a.mail_context_partial,comment:work.a.comment});
    const payload:ProviderPayload={bytes,mediaType:work.c.media_type,folders:work.folders,canCreateRoot:true,comment:context};
    reservation=await access.transaction(async client=>{await assertCurrent(client);requireTime(deadline,deps.requestTimeoutMs);const saved=await reserve(client,work.c,'inbox_analysis',payload);if(saved)await client.query('UPDATE hestia_inbox_analysis_job SET request_id=$2 WHERE attachment_id=$1',[id,saved.id]);return saved;});
    if(reservation){const provider=deps.providers.find(p=>p===reservation!.provider)!;const outcome=await bounded(signal=>provider.analyze(configured(reservation!.config),payload,reservation!.credential,signal));
     actual=typeof outcome.actualMicros==='number'&&Number.isSafeInteger(outcome.actualMicros)&&outcome.actualMicros>=0?outcome.actualMicros:null;
-    const result=parseClassificationResult(outcome.value,work.folders,16384,8,true,work.a.comment);
-    suggestions=[...result.existing.map(s=>({destination:{kind:'existing' as const,folderId:s.folderId},label:work.folders.find(f=>f.id===s.folderId)!.path.map(p=>p.name).join(' / '),reason:s.reason})),...result.created.map(s=>({destination:{kind:'create' as const,parentId:s.parentId,levels:s.levels},label:s.levels.join(' / '),reason:s.reason}))];
+    const result=projectInboxAnalysis(outcome.value,work.folders,context);
+    suggestions=result.suggestions;contradiction=result.contradiction;
     status=actual===null?'unknown':actual>reservation.maximum?'unavailable':'ready';
    }
   }catch(error){status=!reservation&&error instanceof WorkDeferred?'pending':reservation&&actual===null?'unknown':'unavailable';}finally{bytes?.fill(0);}
   await access.transaction(async client=>{if(reservation)await settle(client,reservation.id,actual,status==='ready'?'complete':'failed');try{await assertCurrent(client);const cfg=(await client.query('SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];if(reservation&&(cfg.version!==reservation.config.version||!cfg.enabled))status='stale';}catch{status='stale';}
    const updated=await client.query("UPDATE hestia_inbox_analysis_job SET status=$2,generation=generation+CASE WHEN $2='pending' THEN 1 ELSE 0 END,not_before=CASE WHEN $2='pending' THEN $3::timestamptz+interval '60 seconds' ELSE not_before END,updated_at=$3 WHERE attachment_id=$1 AND generation=$4",[id,status,await deps.clock(client),work.generation]);
-   if(updated.rowCount)await client.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[id,JSON.stringify({status,suggestions:status==='ready'?suggestions:[]})]);
+   if(updated.rowCount)await client.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[id,JSON.stringify({status,suggestions:status==='ready'?suggestions:[],...(status==='ready'&&contradiction?{contradiction}:{})})]);
   });return true;
  }
  async function runSummaryBatch(limit=2,budgetMs=35000){

@@ -342,6 +342,38 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   expect(await next.runSummaryBatch(4)).toEqual({processed:4});expect(calls).toHaveLength(5);expect(await ledger()).toHaveLength(5);
   for(const content of denied)expect(await row(content.id)).toMatchObject({status:'ready'});
  });
+ it('persists mail-only divergence through private GET and seven-day discard/restore, then clears it at placement',async()=>{
+  const content=await original(),attachmentId=await pendingArrival(content.id),contradiction='Le document concerne l’eau; le mail demande une assurance. Choisissez la piste adaptée.',reason='Le document est une facture d’eau.';
+  await pool.query("UPDATE hestia_inbox_event SET subject='Assurance logement',context='Contexte privé du mail',context_partial=true WHERE id=(SELECT event_id FROM hestia_inbox_attachment WHERE id=$1)",[attachmentId]);
+  await pool.query("UPDATE hestia_inbox_attachment SET comment='' WHERE id=$1",[attachmentId]);
+  await pool.query("UPDATE hestia_inbox_analysis_job SET updated_at='2000-01-01T00:00:00Z' WHERE attachment_id=$1",[attachmentId]);let analyses=0;
+  const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),async analyze(_config,payload){if(!ownedHashes.has(digest(payload.bytes)))return{value:{existing:[],created:[]},actualMicros:1};analyses++;expect(JSON.parse(payload.comment!)).toEqual({mail:{subject:'Assurance logement',body:'Contexte privé du mail',partial:true},comment:''});return{value:{existing:[{folderId,reason}],created:[],contradiction},actualMicros:30};}};
+  const contextual=createSummaryService(access,{...deps,providers:[classifier],readAuthorizedFolders:async()=>[{id:folderId,name:'Dossier',path:[{id:folderId,name:'Dossier'}],canCreate:true}]});
+  for(let batch=0;batch<20&&analyses===0;batch++)await contextual.runSummaryBatch(10);expect(analyses).toBe(1);
+  const load=async()=>((await data(await app.handleInboxAttachment(req(),attachmentId))).attachment);
+  const ready=await load();expect(ready.analysis).toMatchObject({status:'ready',contradiction,suggestions:[{reason:reason+' '+contradiction}]});
+  await data(await app.handleInboxDiscard(req({version:ready.version,idempotencyKey:randomUUID()}),attachmentId));const discarded=await load();expect(discarded.state).toBe('discarded');expect(discarded.analysis).toEqual(ready.analysis);
+  await data(await app.handleInboxRestore(req({version:discarded.version,idempotencyKey:randomUUID()}),attachmentId));const restored=await load();expect(restored.state).toBe('pending');expect(restored.analysis).toEqual(ready.analysis);expect(analyses).toBe(1);
+  const body={version:restored.version,title:'Facture synthétique classée',mode:'add',destination:{kind:'existing',folderId}},preview=await data(await app.handleInboxPreview(req(body),attachmentId));
+  const placed=await data(await app.handleInboxPlace(req({...body,previewToken:preview.previewToken,idempotencyKey:randomUUID()}),attachmentId));
+  expect((await pool.query('SELECT comment,analysis FROM hestia_inbox_attachment WHERE id=$1',[attachmentId])).rows[0]).toEqual({comment:'',analysis:{status:'unavailable',suggestions:[]}});
+  expect((await app.handleInboxAttachment(req(),attachmentId)).status).toBe(404);expect(JSON.stringify(await data(await app.handleDocument(req(),placed.documentId)))).not.toMatch(/Contexte privé|Assurance logement|Choisissez la piste|contradiction/);
+ });
+ it('clears divergence on comment edit and never exposes a nonready private contradiction through GET',async()=>{
+  const content=await original(),attachmentId=await pendingArrival(content.id),analysis={status:'ready',contradiction:'Ancienne divergence privée.',suggestions:[{label:'Eau',reason:'Raison. Ancienne divergence privée.',destination:{kind:'existing',folderId}}]};
+  await pool.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[attachmentId,JSON.stringify(analysis)]);
+  await data(await app.handleInboxComment(req({version:1,commentVersion:1,comment:'Correction humaine.'},'PUT'),attachmentId));
+  expect((await pool.query('SELECT analysis FROM hestia_inbox_attachment WHERE id=$1',[attachmentId])).rows[0].analysis).toEqual({status:'stale',suggestions:[]});
+  for(const status of ['pending','running','stale','unavailable','unknown']){await pool.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[attachmentId,JSON.stringify({...analysis,status})]);expect((await data(await app.handleInboxAttachment(req(),attachmentId))).attachment.analysis).toEqual({status,suggestions:[]});}
+ });
+ it('retains recoverable divergence until actual purge, then removes private analysis and denies departed epochs',async()=>{
+  const content=await original(),attachmentId=await pendingArrival(content.id),analysis={status:'ready',contradiction:'Divergence privée synthétique.',suggestions:[{label:'Eau',reason:'Facture. Divergence privée synthétique.',destination:{kind:'existing',folderId}}]};
+  await pool.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[attachmentId,JSON.stringify(analysis)]);
+  await pool.query('UPDATE hestia_member SET departure_epoch=departure_epoch+1 WHERE user_id=$1',[actorId]);try{expect((await app.handleInboxAttachment(req(),attachmentId)).status).toBe(404);}finally{await pool.query('UPDATE hestia_member SET departure_epoch=departure_epoch-1 WHERE user_id=$1',[actorId]);}
+  await data(await app.handleInboxDiscard(req({version:1,idempotencyKey:randomUUID()}),attachmentId));expect((await data(await app.handleInboxAttachment(req(),attachmentId))).attachment.analysis).toEqual(analysis);
+  await pool.query("UPDATE hestia_inbox_attachment SET discarded_until=clock_timestamp()-interval '1 second' WHERE id=$1",[attachmentId]);await app.cleanup();
+  expect((await pool.query('SELECT state,comment,analysis FROM hestia_inbox_attachment WHERE id=$1',[attachmentId])).rows[0]).toEqual({state:'purged',comment:'',analysis:{status:'unavailable',suggestions:[]}});expect((await app.handleInboxAttachment(req(),attachmentId)).status).toBe(404);
+ });
  it('applies migration metadata backfill without retrospectively enqueueing historical AI jobs',async()=>{
   const documentId=await manual();const document=(await pool.query('SELECT * FROM hestia_document WHERE id=$1',[documentId])).rows[0];
   const upload=(await pool.query('SELECT u.* FROM hestia_upload u JOIN hestia_upload_object o ON o.upload_id=u.id WHERE o.object_key=$1',[document.object_key])).rows[0];
