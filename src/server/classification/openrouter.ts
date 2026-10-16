@@ -32,7 +32,7 @@ function decimal(value: unknown): bigint | null {
 function positiveInteger(value: unknown, maximum: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= maximum;
 }
-function maximumPrices(profile: QualifiedOpenRouterProfile) {
+export function maximumPrices(profile: QualifiedOpenRouterProfile) {
   let prompt = 0n, completion = 0n;
   for (const tier of profile.pricingTiers) {
     const input = decimal(tier.promptUsdPerMillion)!, output = decimal(tier.completionUsdPerMillion)!;
@@ -44,7 +44,7 @@ function maximumPrices(profile: QualifiedOpenRouterProfile) {
 function ceil(numerator: bigint, denominator: bigint): bigint {
   return (numerator + denominator - 1n) / denominator;
 }
-function maximumMicros(profile: QualifiedOpenRouterProfile): number {
+export function maximumMicros(profile: QualifiedOpenRouterProfile): number {
   const prices = maximumPrices(profile);
   // Full context (including the folder catalogue and native multimodal tokens),
   // plus the whole output budget. Never infer a PDF token count from its bytes.
@@ -53,11 +53,11 @@ function maximumMicros(profile: QualifiedOpenRouterProfile): number {
 }
 /** Strict structural validation does not authenticate the referenced evidence.
  * The deployment owner must qualify native media, all price tiers and FX first. */
-export function parseQualifiedOpenRouterProfile(value: unknown, now = new Date()): QualifiedOpenRouterProfile | null {
+export function parseQualifiedOpenRouterProfile(value: unknown, now = new Date(), contractSha256 = OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, minimumContextBytes = openRouterClassificationContextBytes({ folders: [] })): QualifiedOpenRouterProfile | null {
   if (!record(value)) return null;
   const keys = ["model", "providerSlug", "classificationContractSha256", "qualificationRef", "pricingSourceRef", "exchangeRateSourceRef", "qualifiedAt", "expiresAt", "currency", "maxContextTokens", "maxOutputTokens", "maxInputBytes", "maxFolderBytes", "mediaTypes", "pricingTiers", "usdToEurUpperBound"];
   if (Object.keys(value).length !== keys.length || Object.keys(value).some(key => !keys.includes(key))) return null;
-  if (value.classificationContractSha256 !== OPENROUTER_CLASSIFICATION_CONTRACT_SHA256
+  if (value.classificationContractSha256 !== contractSha256
     || value.model !== OPENROUTER_CLASSIFICATION_MODEL || value.currency !== "EUR"
     || typeof value.providerSlug !== "string" || !/^[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?$/u.test(value.providerSlug) || value.providerSlug.length > 128) return null;
   if (![value.qualificationRef, value.pricingSourceRef, value.exchangeRateSourceRef].every(item => typeof item === "string" && item.trim() === item && item.length > 0 && item.length <= 512 && !/[\u0000-\u001f]/u.test(item))) return null;
@@ -69,7 +69,7 @@ export function parseQualifiedOpenRouterProfile(value: unknown, now = new Date()
   if (!positiveInteger(value.maxContextTokens, 2_000_000) || !positiveInteger(value.maxOutputTokens, 32_768)
     || value.maxOutputTokens >= value.maxContextTokens || !positiveInteger(value.maxInputBytes, 20 * 1024 * 1024)
     || !positiveInteger(value.maxFolderBytes, 1_048_576)
-    || value.maxFolderBytes < openRouterClassificationContextBytes({ folders: [] }) || decimal(value.usdToEurUpperBound) === null) return null;
+    || value.maxFolderBytes < minimumContextBytes || decimal(value.usdToEurUpperBound) === null) return null;
   if (!Array.isArray(value.mediaTypes) || value.mediaTypes.length === 0 || value.mediaTypes.length > mediaTypes.length
     || value.mediaTypes.some(item => !mediaTypes.includes(item)) || new Set(value.mediaTypes).size !== value.mediaTypes.length) return null;
   if (!Array.isArray(value.pricingTiers) || value.pricingTiers.length === 0 || value.pricingTiers.length > 16) return null;
@@ -88,7 +88,7 @@ export function parseQualifiedOpenRouterProfile(value: unknown, now = new Date()
   return Object.freeze({ ...profile, mediaTypes: Object.freeze([...profile.mediaTypes]), pricingTiers: Object.freeze(profile.pricingTiers.map(tier => Object.freeze({ ...tier }))) });
 }
 
-function actualMicros(usage: unknown, profile: QualifiedOpenRouterProfile): number | null {
+export function actualMicros(usage: unknown, profile: QualifiedOpenRouterProfile): number | null {
   if (!record(usage) || typeof usage.cost !== "number" || !Number.isFinite(usage.cost) || usage.cost < 0) return null;
   // Parse the numeric value's decimal/exponent representation without monetary
   // multiplication in IEEE floats. usage.cost includes the total account charge.
@@ -178,7 +178,7 @@ export const OPENROUTER_CLASSIFICATION_CONTRACT_SHA256 = createHash("sha256")
 export function openRouterClassificationContextBytes(payload: Pick<ProviderPayload, "folders" | "canCreateRoot" | "comment">): number {
   return Buffer.byteLength(classificationContext(payload)) + Buffer.byteLength(instructions) + Buffer.byteLength(JSON.stringify(schema));
 }
-async function boundedResponse(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
+export async function boundedResponse(response: Response, signal: AbortSignal): Promise<Record<string, unknown>> {
   const reader = response.body?.getReader(); if (!reader) throw unavailable();
   const buffers: Uint8Array[] = []; let size = 0;
   const abort = () => { void reader.cancel().catch(() => {}); };
@@ -198,7 +198,7 @@ async function boundedResponse(response: Response, signal: AbortSignal): Promise
     return value;
   } finally { signal.removeEventListener("abort", abort); reader.releaseLock(); }
 }
-function completion(body: Record<string, unknown>): string | null {
+export function completion(body: Record<string, unknown>): string | null {
   if (body.error || body.model !== OPENROUTER_CLASSIFICATION_MODEL || !Array.isArray(body.choices) || body.choices.length !== 1) return null;
   const choice: unknown = body.choices[0];
   if (!record(choice) || choice.finish_reason !== "stop" || !record(choice.message)) return null;

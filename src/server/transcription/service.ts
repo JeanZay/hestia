@@ -83,8 +83,15 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
     });
   }
   async function assertSame(client: PoolClient, actor: Actor, identity: TranscriptionIdentity) {
-    const current = await deps.capture.assertAvailable(client, actor, identity.captureId);
-    if (current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch || current.expiresAt !== identity.expiresAt) throw stale();
+    if (typeof identity.inboxAttachmentId === 'string') {
+      if (!deps.inbox) throw stale();
+      const current=await deps.inbox.assertAvailable(client,actor,identity.inboxAttachmentId);
+      if (current.inboxAttachmentId!==identity.inboxAttachmentId || current.actorId!==identity.actorId || current.actorEpoch!==identity.actorEpoch
+        || current.departureEpoch!==identity.departureEpoch || current.attachmentVersion!==identity.attachmentVersion || current.commentVersion!==identity.commentVersion) throw stale();
+    } else {
+      const current = await deps.capture.assertAvailable(client, actor, identity.captureId);
+      if (current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch || current.expiresAt !== identity.expiresAt) throw stale();
+    }
   }
   async function availability(client: PoolClient, row: ConfigRow): Promise<TranscriptionAvailabilityDto> {
     const base = { enabled: row.enabled, available: false, maxDurationMs: TRANSCRIPTION_MAX_DURATION_MS,
@@ -114,18 +121,26 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
   }
   async function handleTranscriptions(request: Request) {
     return guarded(async () => {
-      const params = new URL(request.url).searchParams, captureId = params.get("captureId"), key = params.get("idempotencyKey");
-      if (!isUuid(captureId) || !["GET", "POST"].includes(request.method)
-        || [...params.keys()].some(name => !["captureId", "idempotencyKey"].includes(name))
-        || params.getAll("captureId").length !== 1 || params.getAll("idempotencyKey").length > 1) throw invalid();
+      const params = new URL(request.url).searchParams, captureId = params.get("captureId"), inboxAttachmentId=params.get('inboxAttachmentId'), key = params.get("idempotencyKey");
+      if ((captureId===null)===(inboxAttachmentId===null) || !isUuid(captureId??inboxAttachmentId) || !["GET", "POST"].includes(request.method)
+        || [...params.keys()].some(name => !["captureId", "inboxAttachmentId", "idempotencyKey"].includes(name))
+        || params.getAll("captureId").length>1 || params.getAll('inboxAttachmentId').length>1 || params.getAll("idempotencyKey").length > 1) throw invalid();
+      const assertSource=async(client:PoolClient,actor:Actor):Promise<TranscriptionIdentity>=>{
+        if(inboxAttachmentId!==null){if(!deps.inbox)throw stale();return deps.inbox.assertAvailable(client,actor,inboxAttachmentId);}
+        return deps.capture.assertAvailable(client,actor,captureId!);
+      };
       if (request.method === "GET") return access.withActor(request, async (client, actor) => {
-        await deps.capture.assertAvailable(client, actor, captureId); return response(await availability(client, await config(client)));
+        await assertSource(client,actor); return response(await availability(client, await config(client)));
       }, false);
       access.origin(request);
       if (!isUuid(key) || request.headers.get("content-type")?.split(";")[0] !== "audio/wav") throw invalid();
       // Reject unauthenticated/disabled/idempotent calls before buffering audio.
       const initial = await access.withActor(request, async (client, actor) => {
-        const identity = await deps.capture.assertAvailable(client, actor, captureId), identityHash = hash({ captureId, epoch: identity.actorEpoch });
+        const identity=await assertSource(client,actor);
+        const identityHash=typeof identity.inboxAttachmentId==='string'
+          ? hash({source:'inbox',inboxAttachmentId:identity.inboxAttachmentId,epoch:identity.actorEpoch,departureEpoch:identity.departureEpoch,
+            attachmentVersion:identity.attachmentVersion,commentVersion:identity.commentVersion})
+          : hash({captureId:identity.captureId,epoch:identity.actorEpoch});
         const old = (await client.query<Receipt>("SELECT * FROM hestia_transcription_request WHERE actor_id=$1 AND idempotency_key=$2", [actor.id, key])).rows[0];
         if (old) {
           if (old.identity_hash !== identityHash || Number(old.actor_epoch) !== identity.actorEpoch) throw stale();

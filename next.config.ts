@@ -9,6 +9,7 @@ const config: NextConfig = {
   outputFileTracingIncludes: {
     "/pdf.worker.min.mjs": ["./node_modules/pdfjs-dist/build/pdf.worker.min.mjs"],
     "/api/hestia/uploads/*/complete": ["./src/server/formats/validate-worker.mjs", "./node_modules/libheif-js/**/*", "./node_modules/pdfjs-dist/package.json", "./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/@napi-rs/**/*", "./node_modules/sharp/**/*", "./node_modules/detect-libc/**/*", "./node_modules/@img/**/*"],
+    "/api/hestia/inbox/relay": ["./src/server/formats/validate-worker.mjs", "./node_modules/libheif-js/**/*", "./node_modules/pdfjs-dist/package.json", "./node_modules/pdfjs-dist/legacy/build/**/*", "./node_modules/@napi-rs/**/*", "./node_modules/sharp/**/*", "./node_modules/detect-libc/**/*", "./node_modules/@img/**/*"],
     "/api/hestia/capture/**": [
       "./src/server/capture/*.mjs", "./src/server/formats/validate-worker.mjs",
       "./node_modules/pdf-lib/**/*", "./node_modules/@pdf-lib/**/*", "./node_modules/pako/**/*", "./node_modules/tslib/**/*",

@@ -1,0 +1,15 @@
+# Originaux immuables et versions documentaires
+
+Décision technique du 15 octobre 2026 pour le brief mail v5. La conception reste celle du hand-off Claude Design v2 ; ce socle ne crée aucune interface.
+
+`hestia_content` représente une copie physique originale, son propriétaire de quota et son identité SHA-256. Deux arrivées réelles identiques ont des identités et des charges distinctes. L’objet privé d’une PJ est promu sans copie réseau. Son propriétaire de quota devient celui du nouveau document ou celui, inchangé, du document remplacé. Le budget sérialisé vérifie le transfert sans ajouter fictivement des octets au foyer.
+
+`hestia_document_revision` associe un contenu immuable à un document. `current_revision_id` est distinct du compteur de concurrence `version`. La base crée cette association sur les publications manuelles, Capture et mail, sans modifier les anciens originaux ni leurs quinze migrations. Le backfill recense uniquement les métadonnées existantes ; il ne crée aucun travail IA. La migration 018 indépendante installe les résumés document-only par contenu, dont l’absence est présentée comme indisponible.
+
+Le remplacement conserve l’identité, les droits, le dossier, le propriétaire et le titre de la cible. La révision déplacée reçoit une échéance de 168 heures serveur. Rétablir sélectionne son ID exact et préserve son identité ; la révision déplacée devient à son tour récupérable. Une échéance égale à l’instant de commit est refusée. Les reçus de restauration sont liés à l’acteur, la clé d’opération, la demande et son résultat ; leur relecture vérifie encore les droits courants. Renommer ne crée aucune révision.
+
+L’ordre commun reste admission/politique, budget puis ressources. Aucun put/get/delete réseau ne se déroule sous transaction SQL. Avant effacement, un claim durable `purge_pending_at` interdit promotion et restauration ; l’échéance et toutes les références encore actives sont revérifiées sous verrou. Une erreur ou perte de réponse conserve la charge et permet une suppression idempotente ultérieure. La charge est libérée uniquement lorsque `deleted_at` confirme l’effacement. Une révision courante d’un document vivant, y compris en corbeille récupérable, interdit la purge. Les nettoyeurs legacy protègent les objets encore inscrits au ledger et conservés pour les versions.
+
+Le quota réunit les contenus (PJ privées, documents et versions), réservations upload, objets Capture non promus et fragments inbox, chaque copie physique une fois. Le stockage de transit sans propriétaire attribué compte au plafond foyer. Les originaux et corps de mail ne sont jamais dédupliqués entre membres.
+
+La liste des versions exige Consulter ; leur téléchargement exige également Exporter et revérifie l’admission, les droits et l’échéance après lecture réseau bornée à 2 Mio. La réponse est privée, sans URL de stockage, avec disposition attachment et politique sandbox. La restauration exige Consulter et Modifier. Aucune ancienne permission n’est restaurée avec les octets.

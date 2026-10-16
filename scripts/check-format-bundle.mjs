@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = realpathSync(fileURLToPath(new URL('..', import.meta.url)));
 const tracePaths = [
   'uploads/[id]/complete', 'capture/[id]/prepare',
-  'capture/[id]/content', 'capture/[id]/pages/[pageId]/complete',
+  'capture/[id]/content', 'capture/[id]/pages/[pageId]/complete', 'inbox/relay',
 ].map(route => join(root, '.next/server/app/api/hestia', route, 'route.js.nft.json'));
 const formats = [
   ['png', 'image/png', true], ['jpg', 'image/jpeg', true],
@@ -115,7 +115,7 @@ registerHooks({ resolve(specifier, context, nextResolve) {
       && result?.previewSupported === previewSupported;
     results.push({ mediaType, status: passed ? 'PASS' : 'FAIL', exitCode: child.status, errorCode: child.error?.code ?? null });
   }
-  if (tracePath !== tracePaths[0]) results.push({ mediaType: 'capture/multipage-pdf', ...await renderProbe(sandbox, hook) });
+  if (relative(root,tracePath).split(sep).join('/').includes('/capture/')) results.push({ mediaType: 'capture/multipage-pdf', ...await renderProbe(sandbox, hook) });
   console.log(JSON.stringify({ trace: relative(root, tracePath), files: trace.files.length, isolated: true, results }));
   if (results.some(result => result.status !== 'PASS')) process.exitCode = 1;
  } catch (error) {

@@ -31,7 +31,10 @@
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",
     "better-auth": "1.7.6",
+    "entities": "4.5.0",
     "libheif-js": "1.23.2",
+    "mailauth": "7.3.0",
+    "mailparser": "3.9.39",
     "next": "16.3.8",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.4.299",

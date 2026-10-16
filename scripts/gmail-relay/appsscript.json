@@ -1,0 +1,7 @@
+{
+  "timeZone": "Europe/Paris",
+  "dependencies": { "enabledAdvancedServices": [{ "userSymbol": "Gmail", "version": "v1", "serviceId": "gmail" }] },
+  "exceptionLogging": "NONE",
+  "runtimeVersion": "V8",
+  "oauthScopes": ["https://mail.google.com/", "https://www.googleapis.com/auth/script.external_request"]
+}

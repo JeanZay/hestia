@@ -27,3 +27,16 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   return { environment, origin: origin.origin, secret: env.AUTH_SECRET, databaseUrl: env.DATABASE_URL };
 }
 
+/** Dedicated mailbox and relay identity are deliberately different in Dev and Production. */
+export function readInboxDeployment(environment:ServerConfig['environment'],env:Readonly<Record<string,string|undefined>>=process.env){
+  if(environment==='local')return {};
+  const expectedAddress=environment==='dev'?'hestia.macaire.dev@gmail.com':'hestia.macaire.prod@gmail.com';
+  const expectedActor=environment==='dev'?'hestia-gmail-dev':'hestia-gmail-production';
+  if(env.HESTIA_INBOX_ENABLED!=='true')return {};
+  if(env.HESTIA_INBOX_ADDRESS!==expectedAddress||env.HESTIA_INBOX_RELAY_ACTOR!==expectedActor
+    ||!env.HESTIA_INBOX_RELAY_SECRET||!/^\d+$/.test(env.HESTIA_INBOX_RELAY_EPOCH??'')
+    ||!Number.isSafeInteger(Number(env.HESTIA_INBOX_RELAY_EPOCH))||Number(env.HESTIA_INBOX_RELAY_EPOCH)<1
+    ||Buffer.byteLength(env.HESTIA_INBOX_RELAY_SECRET)<32)throw new Error('INBOX_CONFIGURATION_INVALID');
+  return{address:expectedAddress,relayActor:expectedActor,relayEpoch:Number(env.HESTIA_INBOX_RELAY_EPOCH),relaySecret:env.HESTIA_INBOX_RELAY_SECRET};
+}
+

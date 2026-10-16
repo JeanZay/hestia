@@ -259,15 +259,23 @@ describe("private immutable originals over SQL and real S3", () => {
   it("restores synthetic SQL metadata and object bytes with a checked SHA manifest",async()=>{
     const {id,document}=await add();
     const snapshot=(await pool.query("SELECT row_to_json(d) AS data FROM hestia_document d WHERE id=$1",[document.id])).rows[0].data;
+    const revision=(await pool.query('SELECT row_to_json(r) AS data FROM hestia_document_revision r WHERE document_id=$1',[document.id])).rows[0].data;
     const bytes=await realStore.getRange(snapshot.object_key,0,snapshot.size-1);
     const manifest={key:snapshot.object_key,size:bytes.length,sha256:digest(bytes)};
     expect(manifest.sha256).toBe(snapshot.sha256);
     await pool.query("UPDATE hestia_upload SET document_id=NULL WHERE id=$1",[id]);
-    await pool.query("DELETE FROM hestia_document WHERE id=$1",[document.id]);
+    const removal=await pool.connect();try{await removal.query('BEGIN');await removal.query('DELETE FROM hestia_document_revision WHERE document_id=$1',[document.id]);await removal.query('DELETE FROM hestia_document WHERE id=$1',[document.id]);await removal.query('COMMIT');}catch(error){await removal.query('ROLLBACK');throw error;}finally{removal.release();}
     await realStore.delete(manifest.key);
     expect((await content(document.id,image.length)).status).toBe(404);
     await realStore.put(manifest.key,bytes,snapshot.media_type);
-    await pool.query("INSERT INTO hestia_document SELECT * FROM json_populate_record(NULL::hestia_document,$1::json)",[JSON.stringify(snapshot)]);
+    const restore=await pool.connect();try{await restore.query('BEGIN');
+      // The deferred cycle is rebuilt using the archived immutable revision ID.
+      // A temporary recovery deadline is consumed by the publication trigger.
+      await restore.query('INSERT INTO hestia_document_revision SELECT * FROM json_populate_record(NULL::hestia_document_revision,$1::json)',[JSON.stringify({...revision,recoverable_until:new Date(Date.now()+3600000).toISOString()})]);
+      await restore.query("INSERT INTO hestia_document SELECT * FROM json_populate_record(NULL::hestia_document,$1::json)",[JSON.stringify(snapshot)]);
+      await restore.query('COMMIT');
+    }catch(error){await restore.query('ROLLBACK');throw error;}finally{restore.release();}
+    expect((await pool.query('SELECT current_revision_id FROM hestia_document WHERE id=$1',[document.id])).rows[0].current_revision_id).toBe(snapshot.current_revision_id);
     await pool.query("UPDATE hestia_upload SET document_id=$2 WHERE id=$1",[id,document.id]);
     const restarted=createApplication(pool,config,{store});
     const restored=await content(document.id,manifest.size,"download",0,restarted);

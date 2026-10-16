@@ -8,6 +8,7 @@ import type { WorkspaceDocument } from "../../lib/workspace";
 import {evaluateTreeAccess} from '../permissions/tree';
 import {trashPolicyGraph} from './folder-trash';
 import { createStorageBudget, type StorageBudget } from '../storage/quota';
+import { contentSummary } from './revisions';
 
 export const CHUNK_SIZE = 2 * 1024 * 1024;
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -27,11 +28,12 @@ type Upload = {
 };
 type StoredDocument = {
   id: string; folder_id: string; title: string; file_name: string; media_type: string;
-  size: number; sha256: string; source: "import" | "camera"; version: number; created_at: Date;
+  size: number; sha256: string; source: "import" | "camera" | "mail"; version: number; created_at: Date;
   uploaded_by_name: string; preview_supported: boolean; object_key: string;
   trashed_at: Date | null; purged_at: Date | null; trashed_by_name: string | null;
   trash_group_id: string | null;
   last_lifecycle_action: string | null; last_lifecycle_version: number | null;
+  current_revision_id?: string; summary_status?: string; summary_text?: string;
 };
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const conflict = (code: string, message: string) => new HttpError(409, code, message);
@@ -42,13 +44,21 @@ function dto(row: StoredDocument, capabilities: string[]):WorkspaceDocument {
   return { id: row.id, folderId: row.folder_id, title: row.title, fileName: row.file_name,
     mediaType: row.media_type, size: row.size, sha256: row.sha256, source: row.source,
     version: row.version, createdAt: row.created_at.toISOString(), uploadedByName: row.uploaded_by_name,
-    previewSupported: row.preview_supported, capabilities };
+    previewSupported: row.preview_supported, capabilities, revisionId: row.current_revision_id,
+    summary: contentSummary(row.summary_status,row.summary_text) };
+}
+async function withSummary(client:PoolClient,row:StoredDocument) {
+  if (!row.current_revision_id) return row;
+  const summary=(await client.query(`SELECT s.status,s.text FROM hestia_document_revision r
+    LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id WHERE r.id=$1`,[row.current_revision_id])).rows[0];
+  return {...row,summary_status:summary?.status,summary_text:summary?.text};
 }
 
 /** The caller owns admission, the transaction and its current rights evaluator. */
 export async function readWorkspaceDocuments(client:PoolClient,evaluate:FolderAccessEvaluator,folderId:string|null,q:string):Promise<WorkspaceDocument[]> {
   const rows=(await client.query<StoredDocument>(`SELECT d.id,d.folder_id,d.title,d.file_name,d.media_type,d.size,d.sha256,d.source,
-    d.version,d.created_at,d.uploaded_by_name,d.preview_supported FROM hestia_document d
+    d.version,d.created_at,d.uploaded_by_name,d.preview_supported,d.current_revision_id,s.status AS summary_status,s.text AS summary_text FROM hestia_document d
+    LEFT JOIN hestia_document_revision r ON r.id=d.current_revision_id LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id
     WHERE d.purged_at IS NULL AND d.trashed_at IS NULL AND ($1::uuid IS NULL OR d.folder_id=$1)
     ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`,[folderId])).rows;
   if(rows.length>10000)throw new HttpError(503,"RESOURCE_LIMIT","Cette recherche est trop importante. Précisez le dossier recherché.");
@@ -105,7 +115,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     const document = (await client.query<StoredDocument>("SELECT * FROM hestia_document WHERE id=$1 AND trashed_at IS NULL AND purged_at IS NULL", [row.document_id])).rows[0];
     // A persisted receipt is not permission to resurrect a removed document.
     if (!document) throw closed();
-    return { success: true, document: capabilities.includes("consulter") ? dto(document, capabilities) : null };
+    return { success: true, document: capabilities.includes("consulter") ? dto(await withSummary(client,document), capabilities) : null };
   }
   // Session advisory lock survives the short SQL transactions around I/O. The
   // cleaner uses the same lock, so neither lease expiry nor a slow put can cause
@@ -246,9 +256,13 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
           }
           const key = `originals/${randomUUID()}`;
           await withActor(request,async (client,actor) => {
+            await budget(client);
             const current = await upload(client,actor,id); active(current.row);
             await client.query("INSERT INTO hestia_upload_object(object_key,upload_id,kind,size,sha256) VALUES($1,$2,'original',$3,$4)", [key,id,row.size,row.sha256]);
             await client.query("UPDATE hestia_upload SET final_key=$2 WHERE id=$1", [id,key]);
+            // The reservation covers incoming chunks; the simultaneous original
+            // is another physical copy until chunk deletion is confirmed.
+            await quota(client,row.owner_id,0);
           });
           await store().put(key,original,checked.mediaType);
           const result = await withActor(request,async (client,actor) => {
@@ -265,7 +279,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`, [documentId,row.folder_id,row.owner_id,actor.id,actor.name,row.title,row.file_name,checked.mediaType,row.size,row.sha256,row.source,key,checked.previewSupported])).rows[0];
             await client.query("UPDATE hestia_upload_object SET ready=true WHERE object_key=$1", [key]);
             await client.query("UPDATE hestia_upload SET status='completed',document_id=$2,keep_duplicate=$3,lease_until=NULL WHERE id=$1", [id,documentId,input.keepDuplicate]);
-            return { success: true, document: current.capabilities.includes("consulter") ? dto(document,current.capabilities) : null };
+            return { success: true, document: current.capabilities.includes("consulter") ? dto(await withSummary(client,document),current.capabilities) : null };
           });
           return response(result);
         } catch (error) {
@@ -301,7 +315,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
           else await permissions(client,actor,folderId,required);
         }
         const now = await clock(client);
-        const rows = (await client.query<StoredDocument>(`SELECT d.* FROM hestia_document d WHERE d.purged_at IS NULL
+        const rows = (await client.query<StoredDocument>(`SELECT d.*,s.status AS summary_status,s.text AS summary_text FROM hestia_document d
+          LEFT JOIN hestia_document_revision r ON r.id=d.current_revision_id LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id WHERE d.purged_at IS NULL
           AND (CASE WHEN $2::boolean THEN d.trash_group_id IS NULL AND d.trashed_at IS NOT NULL AND d.trashed_at > $3::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
           AND ($1::uuid IS NULL OR d.folder_id=$1) ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`, [folderId,Boolean(trash),now])).rows;
         if (rows.length>10000) throw new HttpError(503,"RESOURCE_LIMIT","Cette recherche est trop importante. Précisez le dossier recherché.");
@@ -340,7 +355,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
         const current = repeated ? row : (await client.query<StoredDocument>(`UPDATE hestia_document SET
           trashed_at=$2,trashed_by_name=$3,version=version+1,last_lifecycle_action=$4,last_lifecycle_version=$5 WHERE id=$1 RETURNING *`,
           [id,action==="trash" ? now : null,action==="trash" ? actor.name : null,action,input.version])).rows[0];
-        return action==="restore" ? {document:dto(current,rights.capabilities)} : {success:true,documentId:id,version:current.version,
+        return action==="restore" ? {document:dto(await withSummary(client,current),rights.capabilities)} : {success:true,documentId:id,version:current.version,
           restorableUntil:new Date(current.trashed_at!.getTime()+7*86400000).toISOString()};
       });
       return response(result);
@@ -350,7 +365,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     return guarded(async () => {
       if (!isUuid(id)) throw unavailable();
       if (request.method === "GET") return response({ document: await withActor(request,async (client,actor) => {
-        const current = await currentDocument(client,actor,id); return dto(current.row,current.capabilities);
+        const current = await currentDocument(client,actor,id); return dto(await withSummary(client,current.row),current.capabilities);
       },readActivity(request)) });
       origin(request);
       const input = await json(request,["title","version"]), title = textField(input.title,200);
@@ -359,7 +374,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
         const current = await currentDocument(client,actor,id,["consulter","modifier"]);
         const result = await client.query<StoredDocument>("UPDATE hestia_document SET title=$2,version=version+1 WHERE id=$1 AND version=$3 RETURNING *", [id,title,input.version]);
         if (!result.rowCount) throw conflict("VERSION_CONFLICT", "Ce document a changé. Actualisez-le avant de réessayer.");
-        return dto(result.rows[0],current.capabilities);
+        return dto(await withSummary(client,result.rows[0]),current.capabilities);
       });
       return response({ document });
     });
@@ -391,7 +406,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
   }
   async function removeUnreferenced(id: string, originalsOnly = false) {
     const keys = (await db().query(`SELECT object_key FROM hestia_upload_object o WHERE upload_id=$1 AND deleted_at IS NULL
-      AND (NOT $2::boolean OR kind='original') AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)`, [id, originalsOnly])).rows;
+      AND (NOT $2::boolean OR kind='original') AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)
+      AND NOT EXISTS(SELECT 1 FROM hestia_content c WHERE c.object_key=o.object_key AND c.deleted_at IS NULL)`, [id, originalsOnly])).rows;
     for (const row of keys) {
       await store().delete(row.object_key);
       await db().query("UPDATE hestia_upload_object SET deleted_at=clock_timestamp() WHERE object_key=$1", [row.object_key]);
@@ -410,7 +426,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     const candidates = await db().query(`SELECT u.id FROM hestia_upload u WHERE
       (u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp()) OR
       (u.status='cancelled' AND NOT u.reservation_released) OR (u.status IN ('completed','cancelled') AND EXISTS(SELECT 1 FROM hestia_upload_object o WHERE o.upload_id=u.id
-        AND ((o.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key))
+        AND ((o.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)
+          AND NOT EXISTS(SELECT 1 FROM hestia_content c WHERE c.object_key=o.object_key AND c.deleted_at IS NULL))
           OR (o.deleted_at IS NOT NULL AND EXISTS(SELECT 1 FROM hestia_document d WHERE d.id=u.document_id AND d.purged_at IS NOT NULL AND d.object_key IS NULL)))))
       ORDER BY CASE WHEN u.actor_id=$2 AND u.status IN ('uploading','finalizing') AND u.expires_at<=clock_timestamp() THEN 0
         WHEN u.actor_id=$2 THEN 1 ELSE 2 END, u.created_at LIMIT $1`, [limit,priorityActorId ?? null]);
@@ -427,7 +444,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
             await client.query("UPDATE hestia_upload SET status='cancelled',lease_until=NULL WHERE id=$1", [row.id]);
           }
           return (await client.query(`SELECT object_key FROM hestia_upload_object o WHERE upload_id=$1 AND deleted_at IS NULL
-            AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)`, [row.id])).rows.map(entry => String(entry.object_key));
+            AND NOT EXISTS(SELECT 1 FROM hestia_document d WHERE d.object_key=o.object_key)
+            AND NOT EXISTS(SELECT 1 FROM hestia_content c WHERE c.object_key=o.object_key AND c.deleted_at IS NULL)`, [row.id])).rows.map(entry => String(entry.object_key));
         });
         for (const key of keys) {
           if (cleaned>=maxObjects) break;
@@ -450,7 +468,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
     if (!Number.isInteger(limit) || limit<1 || limit>100) throw new Error("Invalid trash batch");
     const candidates = await transaction(async client => {
       const now = await clock(client);
-      return (await client.query(`SELECT d.id,u.id AS upload_id FROM hestia_document d JOIN hestia_upload u ON u.document_id=d.id
+      return (await client.query(`SELECT d.id,u.id AS upload_id FROM hestia_document d
+        JOIN hestia_upload_object o ON o.object_key=d.object_key JOIN hestia_upload u ON u.id=o.upload_id
         WHERE d.object_key IS NOT NULL AND (d.purged_at IS NOT NULL OR d.trashed_at <= $1::timestamptz-interval '168 hours')
         ORDER BY d.trashed_at,d.id LIMIT $2`,[now,limit])).rows;
     });
@@ -471,6 +490,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
             await client.query(`UPDATE hestia_document SET purged_at=COALESCE(purged_at,$2),title=NULL,file_name=NULL,
               uploaded_by_name=NULL,trashed_by_name=NULL WHERE id=$1`,[row.id,now]);
             await client.query("UPDATE hestia_upload SET title=NULL,file_name=NULL WHERE id=$1",[candidate.upload_id]);
+            await client.query('UPDATE hestia_content SET purge_pending_at=COALESCE(purge_pending_at,$2) WHERE object_key=$1 AND deleted_at IS NULL',[row.object_key,now]);
             return row;
           });
           if (!claimed) return;
@@ -478,6 +498,8 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
           await transaction(async client => {
             await budget(client);
             await client.query("UPDATE hestia_upload_object SET deleted_at=clock_timestamp() WHERE object_key=$1",[claimed.object_key]);
+            await client.query('UPDATE hestia_content SET deleted_at=clock_timestamp(),file_name=NULL WHERE object_key=$1 AND deleted_at IS NULL',[claimed.object_key]);
+            await client.query('DELETE FROM hestia_content_summary WHERE content_id IN(SELECT id FROM hestia_content WHERE object_key=$1)',[claimed.object_key]);
             await client.query(`UPDATE hestia_document SET object_key=NULL,size=NULL,sha256=NULL,media_type=NULL,source=NULL,
               uploaded_by=NULL,preview_supported=NULL,last_lifecycle_action=NULL,last_lifecycle_version=NULL WHERE id=$1 AND purged_at IS NOT NULL`,[claimed.id]);
             await client.query("UPDATE hestia_upload SET final_key=NULL,size=NULL,sha256=NULL,media_type=NULL,source=NULL WHERE id=$1 AND status='completed'",[candidate.upload_id]);
