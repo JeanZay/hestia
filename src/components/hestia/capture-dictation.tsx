@@ -7,10 +7,11 @@ import type { DictationRecorder } from "./dictation-recorder";
 
 export type CommentSnapshot = { text: string; revision: number; active: boolean };
 type State = "idle" | "permission" | "listening" | "transcribing";
-export function CaptureDictation({ captureId, expiresAt, active, pending, getSnapshot, onResult, onAccessLost }: {
-  captureId: string; expiresAt: string; active: boolean; pending: boolean; getSnapshot: () => CommentSnapshot;
+export function CaptureDictation({ captureId, inboxAttachmentId, expiresAt, active, pending, getSnapshot, onResult, onAccessLost }: {
+  captureId?: string; inboxAttachmentId?: string; expiresAt?: string; active: boolean; pending: boolean; getSnapshot: () => CommentSnapshot;
   onResult: (text: string, base: CommentSnapshot) => void; onAccessLost: () => void;
 }) {
+  const sourceQuery = inboxAttachmentId ? `inboxAttachmentId=${encodeURIComponent(inboxAttachmentId)}` : `captureId=${encodeURIComponent(captureId || "")}`;
   const [availability, setAvailability] = useState<TranscriptionAvailabilityDto | null>(null);
   const [state, setState] = useState<State>("idle"), [elapsed, setElapsed] = useState(0), [compatible, setCompatible] = useState(true);
   const [message, setMessage] = useState<{ title: string; text: string; tone?: "info" | "warning" } | null>(null);
@@ -31,18 +32,18 @@ export function CaptureDictation({ captureId, expiresAt, active, pending, getSna
     ac.signal.addEventListener("abort", stop);
     const hidden = () => { if (document.hidden) cancel(); };
     const pagehide = () => cancel(false);
-    const expiry = setTimeout(() => { cancel(false); setAvailability(null); }, Math.max(0, Date.parse(expiresAt) - Date.now()));
+    const expiry = expiresAt ? setTimeout(() => { cancel(false); setAvailability(null); }, Math.max(0, Date.parse(expiresAt) - Date.now())) : undefined;
     document.addEventListener("visibilitychange", hidden); window.addEventListener("pagehide", pagehide);
     return () => { clearTimeout(expiry); ac.abort(); unregister(); document.removeEventListener("visibilitychange", hidden); window.removeEventListener("pagehide", pagehide); };
     // One lifetime per preparation, independent from editable text and callbacks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captureId, expiresAt]);
+  }, [captureId, inboxAttachmentId, expiresAt]);
   useEffect(() => {
     if (!active || loaded.current || !lifetime.current) return;
     loaded.current = true; const signal = lifetime.current.signal;
     void import("./dictation-recorder").then(module => { if (!signal.aborted) setCompatible(module.supportsDictation()); });
-    void captureRequest<TranscriptionAvailabilityDto>(`/transcriptions?captureId=${encodeURIComponent(captureId)}`, signal).then(value => { if (!signal.aborted) setAvailability(value); }).catch(error => { if (!signal.aborted && error instanceof CaptureError && [401, 403].includes(error.status)) onAccessLost(); });
-  }, [active, captureId, onAccessLost]);
+    void captureRequest<TranscriptionAvailabilityDto>(`/transcriptions?${sourceQuery}`, signal).then(value => { if (!signal.aborted) setAvailability(value); }).catch(error => { if (!signal.aborted && error instanceof CaptureError && [401, 403].includes(error.status)) onAccessLost(); });
+  }, [active, captureId, inboxAttachmentId, sourceQuery, onAccessLost]);
   useEffect(() => { if (!active && (phase.current === "listening" || phase.current === "permission")) cancel(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (state === "listening") stopBox.current?.querySelector<HTMLButtonElement>("button")?.focus();
@@ -55,7 +56,7 @@ export function CaptureDictation({ captureId, expiresAt, active, pending, getSna
     return () => clearInterval(timer);
   }, [state]); // eslint-disable-line react-hooks/exhaustive-deps
   async function start() {
-    if (phase.current !== "idle" || pending || !active || !availability?.available || !compatible || lifetime.current?.signal.aborted || Date.now() >= Date.parse(expiresAt)) return;
+    if (phase.current !== "idle" || pending || !active || !availability?.available || !compatible || lifetime.current?.signal.aborted || (expiresAt !== undefined && Date.now() >= Date.parse(expiresAt))) return;
     const ac = new AbortController(); operation.current = ac;
     const signal = AbortSignal.any([ac.signal, lifetime.current!.signal]);
     base.current = getSnapshot(); setMessage(null); setElapsed(0); transition("permission");
@@ -79,7 +80,7 @@ export function CaptureDictation({ captureId, expiresAt, active, pending, getSna
     try {
       let audio: Blob | null = await recording.stop(); if (recorder.current === recording) recorder.current = null; signal.throwIfAborted();
       // No capture queue and no retry: a paid remote call never holds document navigation.
-      const response = await fetch(`/api/hestia/transcriptions?captureId=${encodeURIComponent(captureId)}&idempotencyKey=${crypto.randomUUID()}`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "audio/wav" }, signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]), body: audio }); audio = null;
+      const response = await fetch(`/api/hestia/transcriptions?${sourceQuery}&idempotencyKey=${crypto.randomUUID()}`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "Content-Type": "audio/wav" }, signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]), body: audio }); audio = null;
       const result = await response.json() as TranscriptionResultDto & { error?: { code?: string } }; signal.throwIfAborted();
       if (response.status === 401 || response.status === 403) { onAccessLost(); return; }
       if (!response.ok || result.status !== "complete") throw new CaptureError(response.status, result.error?.code || "TRANSCRIPTION_FAILED", "Transcription impossible.");

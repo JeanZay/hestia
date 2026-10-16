@@ -1,11 +1,13 @@
 import { createObjectStore } from "./storage";
 import { Pool } from "pg";
 import { createApplication } from "./application";
-import { readServerConfig } from "./config";
+import { readServerConfig, readInboxDeployment } from "./config";
 import { createResendTransport } from "./identity/transport";
 import { runMailBatch } from "./identity/worker";
 import { readClassificationDeployment } from "./classification/deployment";
 import { readTranscriptionDeployment } from "./transcription/deployment";
+import { readSummaryDeployment } from './summary/deployment';
+import { createInboxAcknowledgementTransport } from './inbox/acknowledgement';
 
 let application: ReturnType<typeof createApplication> | undefined;
 export function getApplication() {
@@ -13,7 +15,9 @@ export function getApplication() {
     const config = readServerConfig();
     application = createApplication(new Pool({ connectionString: config.databaseUrl, max: 5,
       connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 }), config, { store: createObjectStore(),
-      classification: readClassificationDeployment(config.environment), transcription: readTranscriptionDeployment(config.environment) });
+      classification: readClassificationDeployment(config.environment), transcription: readTranscriptionDeployment(config.environment),
+      summary:readSummaryDeployment(config.environment),
+      inbox:{...readInboxDeployment(config.environment),acknowledge:createInboxAcknowledgementTransport(config)} });
   }
   return application;
 }

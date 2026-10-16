@@ -59,6 +59,21 @@ describe("workspace snapshots with real admission, transactions and rights", () 
       [upload, folderId, users[0].id, count, title])).rows;
     return rows.map(row => row.id);
   }
+  async function removeFixtureDocuments(ids?:string[]) {
+    await tx(async client=>{
+      // No bytes exist for these explicitly owned metadata fixtures. Preserve
+      // the production FK cycle and remove both sides in one deferred commit.
+      const selected=(await client.query<{id:string;content_id:string}>(`SELECT d.id,r.content_id FROM hestia_document d
+        JOIN hestia_document_revision r ON r.document_id=d.id
+        WHERE d.object_key IN(SELECT object_key FROM hestia_upload_object WHERE upload_id=ANY($1::uuid[]))
+        AND ($2::uuid[] IS NULL OR d.id=ANY($2::uuid[]))`,[fixtureUploads,ids??null])).rows;
+      const documentIds=[...new Set(selected.map(r=>r.id))],contentIds=selected.map(r=>r.content_id);
+      await client.query('DELETE FROM hestia_content_summary WHERE content_id=ANY($1::uuid[])',[contentIds]);
+      await client.query('DELETE FROM hestia_document_revision WHERE document_id=ANY($1::uuid[])',[documentIds]);
+      await client.query('DELETE FROM hestia_document WHERE id=ANY($1::uuid[])',[documentIds]);
+      await client.query('DELETE FROM hestia_content WHERE id=ANY($1::uuid[])',[contentIds]);
+    });
+  }
   async function snapshot(query = "", user = 0, activity?: string) {
     const result = await app.handleWorkspace(req("/api/hestia/workspace" + query, { user, activity }));
     expect(result.status).toBe(200); return await result.json() as WorkspaceSnapshot;
@@ -86,7 +101,7 @@ describe("workspace snapshots with real admission, transactions and rights", () 
   afterEach(async () => {
     // These records have no stored original. Remove only this case's metadata,
     // so the resource-limit corpus cannot consume another suite's cleanup budget.
-    await pool.query("DELETE FROM hestia_document WHERE object_key IN (SELECT object_key FROM hestia_upload_object WHERE upload_id=ANY($1::uuid[]))", [fixtureUploads]);
+    await removeFixtureDocuments();
     await pool.query("DELETE FROM hestia_upload_object WHERE upload_id=ANY($1::uuid[])", [fixtureUploads]);
     await pool.query("DELETE FROM hestia_upload WHERE id=ANY($1::uuid[])", [fixtureUploads]);
     fixtureUploads.length = 0;
@@ -187,13 +202,15 @@ describe("workspace snapshots with real admission, transactions and rights", () 
     expect(state.selectedFolder).toMatchObject({ childCount: 1, documentCount: 1, docCount: 1 });
     expect(state.documents.map(document => document.id)).toEqual([documentId]);
   });
+  // This volume-boundary check includes fixture triggers and cleanup, not a latency benchmark.
   it("preserves the bounded document listing failure without returning a truncated snapshot", async () => {
     const ids = await documents(right, 10001, "Batch synthétique borné");
     try {
+      expect(ids).toHaveLength(10001);
       const result = await app.handleWorkspace(req(`/api/hestia/workspace?folderId=${right}`));
       expect(result.status).toBe(503); expect(await result.json()).toMatchObject({ error: { code: "RESOURCE_LIMIT" } });
-    } finally { await pool.query("DELETE FROM hestia_document WHERE id=ANY($1::uuid[])", [ids]); }
-  });
+    } finally { await removeFixtureDocuments(ids); }
+  }, 60_000);
   it("supports protected minimal household counts and passive reads while preserving legacy defaults", async () => {
     for (const status of ["active", "removed"]) {
       const expected = Number((await pool.query("SELECT count(*) AS n FROM hestia_member WHERE active=$1", [status === "active"])).rows[0].n);

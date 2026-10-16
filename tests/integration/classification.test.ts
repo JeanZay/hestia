@@ -12,8 +12,15 @@ import { createClassificationCredentialCipher } from "../../src/server/classific
 import { DEFAULT_CLASSIFICATION_LIMITS, type AnalysisIdentity, type AuthorizedFolder, type ClassificationDependencies, type ProviderOutcome, type ProviderPayload } from "../../src/server/classification/types";
 
 describe("classification SQL budget, admission and write-only configuration", () => {
-  const config = readServerConfig();
+  const parentConfig = readServerConfig();
+  const isolatedUrl = new URL(parentConfig.databaseUrl);
+  const parentDatabase = isolatedUrl.pathname.slice(1);
+  const isolatedDatabase = parentDatabase + '_classification';
+  isolatedUrl.pathname = '/' + isolatedDatabase;
+  const config = { ...parentConfig, databaseUrl: isolatedUrl.toString() };
   if (config.environment !== "local" || !/^\/hestia_test_[a-z0-9_]+$/.test(new URL(config.databaseUrl).pathname) || !/^hestia-app-[a-f0-9]{16}$/.test(process.env.HESTIA_TEST_RUN_ID ?? "")) throw new Error("Owned synthetic integration bench required");
+  if (!['127.0.0.1', 'localhost'].includes(isolatedUrl.hostname) || !/^hestia_test_[a-f0-9]{16}_classification$/.test(isolatedDatabase)) throw new Error('Owned local classification database required');
+  const parentPool = new Pool({ connectionString: parentConfig.databaseUrl, max: 1 });
   const pool = new Pool({ connectionString: config.databaseUrl, max: 8 });
   const app = createApplication(pool, config);
   const access = createAccess(pool, config, createAuth(pool, config));
@@ -60,10 +67,23 @@ describe("classification SQL budget, admission and write-only configuration", ()
   const analyze = (key = randomUUID(), instance = service, selectedCookie = cookie, extra = {}) => instance.handleCaptureAnalyze(request({ version: captureVersion, artifactId, idempotencyKey: key, ...extra }, "POST", selectedCookie), captureId);
   async function ledger() { return (await pool.query("SELECT *,to_char(month_start,'YYYY-MM-DD') AS month_utc FROM hestia_classification_request ORDER BY created_at,id")).rows; }
   beforeAll(async () => {
-    const marker = await pool.query("SELECT to_regclass('hestia_bench_marker') AS marker"); if (!marker.rows[0].marker) throw new Error("Missing bench marker");
+    const marker = await parentPool.query("SELECT to_regclass('hestia_bench_marker') AS marker"); if (!marker.rows[0].marker) throw new Error("Missing bench marker");
+    // This suite deliberately resets the complete financial ledger to exercise
+    // household-wide caps. Keep it in a fresh database owned by this same
+    // ephemeral Docker bench, so no other suite's linked debt is deleted.
+    await parentPool.query(`CREATE DATABASE "${isolatedDatabase}"`);
     await migrateDatabase(pool, config);
-    actorId = await provisionSyntheticMember(pool, { email, name: "Admin Synthétique", password, role: "admin" });
-    memberId = await provisionSyntheticMember(pool, { email: memberEmail, name: "Membre Synthétique", password });
+    const priorDatabaseUrl = process.env.DATABASE_URL;
+    try {
+      // The provisioning guard compares the actual local database with the
+      // configured target; retain that check for the newly owned database.
+      process.env.DATABASE_URL = config.databaseUrl;
+      actorId = await provisionSyntheticMember(pool, { email, name: "Admin Synthétique", password, role: "admin" });
+      memberId = await provisionSyntheticMember(pool, { email: memberEmail, name: "Membre Synthétique", password });
+    } finally {
+      if (priorDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = priorDatabaseUrl;
+    }
     cookie = await login(email); memberCookie = await login(memberEmail);
   });
   beforeEach(async () => {
@@ -77,7 +97,7 @@ describe("classification SQL budget, admission and write-only configuration", ()
     folders = [{ id: randomUUID(), name: "Factures autorisées", path: [], canCreate: true }]; calls = 0; checks = 0; afterRead = undefined; selectedPayload = undefined;
     outcome = async () => ({ value: { existing: [{ folderId: folders[0].id, reason: "Facture synthétique" }], created: [] }, actualMicros: 20 });
   });
-  afterAll(async () => { await pool.end(); });
+  afterAll(async () => { await pool.end(); await parentPool.end(); });
   it("starts disabled and allows only active owner/admin; strict write-only key rotation/deletion", async () => {
     expect((await (await settings()).json()).settings).toMatchObject({ enabled: false, monthlyLimitMicros: 0, keyPresent: false });
     expect((await service.handleClassificationSettings(request(undefined, "GET", memberCookie))).status).toBe(403);

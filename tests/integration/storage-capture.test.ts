@@ -105,6 +105,8 @@ describe("Capture interoperates with the existing document ledger", () => {
       ["hestia_member","user_id=$1",actorId], ["hestia_folder","id=$1",folderId],
       ["hestia_grant","folder_id=$1",folderId], ["hestia_upload","document_id=$1",document.id],
       ["hestia_upload_object","object_key=(SELECT object_key FROM hestia_document WHERE id=$1)",document.id],
+      ["hestia_content","id IN (SELECT content_id FROM hestia_document_revision WHERE document_id=$1)",document.id],
+      ["hestia_document_revision","document_id=$1",document.id],
       ["hestia_document","id=$1",document.id],
     ];
     const archive:Record<string,Record<string,unknown>[]>={};
@@ -120,14 +122,14 @@ describe("Capture interoperates with the existing document ledger", () => {
     try{
       await client.query("BEGIN");await client.query(`CREATE SCHEMA ${schema}`);await client.query(`SET LOCAL search_path TO ${schema}`);
       await client.query('CREATE TABLE "user"(id text PRIMARY KEY,name text NOT NULL); CREATE TABLE session(id text PRIMARY KEY)');
-      for(const id of ["001-folders","002-documents","003-access","004-trash","005-family-members","006-family-identity","007-mail-delivery","008-folder-tree","009-folder-move","010-folder-trash","011-capture","012-classification"]){
+      for(const id of ["001-folders","002-documents","003-access","004-trash","005-family-members","006-family-identity","007-mail-delivery","008-folder-tree","009-folder-move","010-folder-trash","011-capture","012-classification","013-capture-derivatives","014-comment","015-transcription","016-content-revisions","017-inbox","018-content-summary"]){
         await client.query(await readFile(new URL(`../../src/server/db/migrations/${id}.sql`,import.meta.url),"utf8"));
         if(id==="008-folder-tree")await client.query("ALTER TABLE hestia_folder ALTER COLUMN name_key SET NOT NULL");
       }
       await client.query('INSERT INTO "user" VALUES($1,$2)',[actorId,"Auteur synthétique restauré"]);
       // Break the upload/document insertion cycle without changing archived bytes.
       for(const [table] of specs)for(const row of archive[table]){
-        const data=table==="hestia_upload"?{...row,document_id:null}:row;
+        const data=table==="hestia_upload"?{...row,document_id:null}:table==='hestia_document_revision'?{...row,recoverable_until:new Date(Date.now()+3600000).toISOString()}:row;
         await client.query(`INSERT INTO ${table} OVERRIDING SYSTEM VALUE SELECT * FROM json_populate_record(NULL::${table},$1::json)`,[JSON.stringify(data)]);
       }
       await client.query("UPDATE hestia_upload SET document_id=$1 WHERE id=$2",[document.id,archive.hestia_upload[0].id]);

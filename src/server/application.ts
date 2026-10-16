@@ -21,6 +21,9 @@ import { createClassificationCredentialCipher } from "./classification/cipher";
 import { DEFAULT_CLASSIFICATION_LIMITS, type ClassificationDependencies } from "./classification/types";
 import { createTranscriptionService } from "./transcription/service";
 import { DEFAULT_TRANSCRIPTION_LIMITS, type TranscriptionDependencies } from "./transcription/types";
+import { createInboxService, type InboxDependencies } from './inbox';
+import { createRevisionsService } from './documents/revisions';
+import { createSummaryService, type SummaryDependencies } from './summary/service';
 const folderName = (value: unknown) => textField(value, 120);
 type Folder = WorkspaceFolder;
 type FolderRow = { id:string; name:string; version:number; parent_folder_id:string|null; document_count:string; created_at:Date; creator_name:string };
@@ -41,6 +44,8 @@ export type ApplicationDependencies = DocumentDependencies & {
   capture?: Omit<CaptureDependencies, "store" | "budget">;
   classification?: Partial<Omit<ClassificationDependencies, "capture">>;
   transcription?: Partial<Omit<TranscriptionDependencies, "capture">>;
+  inbox?: Partial<Omit<InboxDependencies, 'store'|'budget'>>;
+  summary?: Partial<SummaryDependencies>;
 };
 export function createApplication(pool: Pool, config: ServerConfig, dependencies?: ApplicationDependencies) {
   const auth = createAuth(pool, config);
@@ -261,6 +266,18 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
     credentialCipher:createClassificationCredentialCipher(config.secret),
     providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
   });
+  const store=dependencies?.store??{put:missingStorage,getRange:missingStorage,delete:missingStorage};
+  const summaries=createSummaryService(access,{
+    clock,store,credentialCipher:createClassificationCredentialCipher(config.secret),
+    readAuthorizedFolders:async(client,actor)=>(await foldersFor(client,actor))
+      .filter(folder=>folder.capabilities.includes('déposer'))
+      .map(folder=>({id:folder.id,name:folder.name,path:folder.breadcrumbs,canCreate:folder.capabilities.includes('modifier')})),
+    providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
+    summaryProviders:[],...dependencies?.summary,
+  });
+  const inbox=createInboxService(pool,access,{store,budget,clock,environment:config.environment,
+    ...dependencies?.inbox,enqueueAnalysis:summaries.enqueueAnalysis,requestAnalysis:summaries.requestAnalysis,readSummary:summaries.readSummary,settingsChanged:summaries.settingsChanged});
+  const revisions=createRevisionsService(pool,access,{store,budget,now:dependencies?.now});
   const folderTrash=createFolderTrash(access, { now: dependencies?.now });
   const transcription=createTranscriptionService(pool,access,{
     clock, credentialCipher:createClassificationCredentialCipher(config.secret),
@@ -268,6 +285,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       .filter(folder=>folder.capabilities.includes("déposer"))
       .map(folder=>({id:folder.id,name:folder.name,path:[],canCreate:folder.capabilities.includes("modifier")})),
     providers:[],allowRemote:false,...DEFAULT_TRANSCRIPTION_LIMITS,...dependencies?.transcription,
+    inbox:{assertAvailable:inbox.assertInboxTranscription},
     capture:{async assertAvailable(client,actor,captureId){
       if(!isUuid(captureId))throw unavailable();
       const now=await clock(client);
@@ -281,7 +299,8 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
   });
   return { handleAuth, handleSession, handleWorkspace, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
-    ...documents, ...folderTrash, ...captureHandlers, ...classification, ...transcription,
+    ...documents, ...folderTrash, ...captureHandlers, ...classification, ...transcription, ...revisions,
+    ...inbox,...summaries,
     async cleanupTrash(limit:number) {
       const result=await documents.cleanupTrash(limit);
       await folderTrash.cleanupFolderTrash(limit);

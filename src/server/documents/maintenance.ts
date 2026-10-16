@@ -6,9 +6,15 @@ type Maintenance = {
   cleanupUploads: (limit: number, maxObjects: number) => Promise<{cleaned:number}>;
   cleanupCaptures: (limit: number, maxObjects: number) => Promise<{cleaned:number;failed:number}>;
   cleanupClassification: (limit: number) => Promise<{cleaned:number}>;
+  cleanupVersions?: (limit:number,maxObjects:number)=>Promise<{cleaned:number;failed:number}>;
+  cleanup?:()=>Promise<unknown>;
+  cleanupSummary?:(limit:number)=>Promise<unknown>;
+  runSummaryBatch?:(limit:number,budgetMs:number)=>Promise<unknown>;
+  runAcknowledgements?:()=>Promise<unknown>;
 };
 /** Internal scheduler authentication is separate from family sessions. */
 export function handleMaintenance(request: Request, secret: string | undefined, application: () => Maintenance) {
+  const began=performance.now(),remaining=()=>50000-(performance.now()-began);
   return guarded(async () => {
     if (request.method!=="GET") throw new HttpError(405,"METHOD_NOT_ALLOWED","Action indisponible.");
     if (!secret || secret.length<32) throw new HttpError(404,"NOT_FOUND","Action indisponible.");
@@ -21,6 +27,11 @@ export function handleMaintenance(request: Request, secret: string | undefined, 
     const uploads=await app.cleanupUploads(20,100);
     const captures=await app.cleanupCaptures(20,100);
     const classification=await app.cleanupClassification(100);
-    return response({trash,uploads,captures,classification},trash.failed || captures.failed ? 503 : 200);
+    const versions=await app.cleanupVersions?.(20,100);
+    const inbox=await app.cleanup?.();
+    const summaryCleanup=await app.cleanupSummary?.(100);
+    const acknowledgements=remaining()>6000?await app.runAcknowledgements?.():undefined;
+    const summaries=remaining()>15000?await app.runSummaryBatch?.(4,Math.min(35000,remaining())):undefined;
+    return response({trash,uploads,captures,classification,versions,inbox,summaryCleanup,summaries,acknowledgements},trash.failed || captures.failed || versions?.failed ? 503 : 200);
   });
 }

@@ -2,7 +2,10 @@ import type { PoolClient } from "pg";
 import type { Actor } from "../access";
 import type { ClassificationCredentialCipher, ReadAuthorizedFolders, ServerClock } from "../classification/types";
 
-export type TranscriptionIdentity = Readonly<{ captureId: string; actorId: string; actorEpoch: number; expiresAt: string }>;
+export type CaptureTranscriptionIdentity = Readonly<{ captureId: string; inboxAttachmentId?: never; actorId: string; actorEpoch: number; expiresAt: string }>;
+export type InboxTranscriptionIdentity = Readonly<{ inboxAttachmentId: string; captureId?: never; actorId: string; actorEpoch: number;
+  departureEpoch: number; attachmentVersion: number; commentVersion: number }>;
+export type TranscriptionIdentity = CaptureTranscriptionIdentity | InboxTranscriptionIdentity;
 export type TranscriptionConfiguration = Readonly<{
   version: number; provider: string; model: string; enabled: boolean; monthlyLimitMicros: number; currency: "EUR";
 }>;
@@ -15,7 +18,8 @@ export interface TranscriptionProvider {
 }
 export interface TranscriptionDependencies {
   clock: ServerClock;
-  capture: { assertAvailable(client: PoolClient, actor: Actor, captureId: string): Promise<TranscriptionIdentity> };
+  capture: { assertAvailable(client: PoolClient, actor: Actor, captureId: string): Promise<CaptureTranscriptionIdentity> };
+  inbox?: { assertAvailable(client: PoolClient, actor: Actor, inboxAttachmentId: string): Promise<InboxTranscriptionIdentity> };
   readAuthorizedFolders: ReadAuthorizedFolders; credentialCipher: ClassificationCredentialCipher;
   providers: readonly TranscriptionProvider[]; allowRemote: boolean; requestTimeoutMs: number;
   deploymentLimitMicros?: number;

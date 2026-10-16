@@ -38,7 +38,9 @@ async function run(entry, args, overrides = {}) {
   if (await current.completion !== 0) throw new Error('Application qualification step failed.');
 }
 try {
-  await run('node_modules/vitest/vitest.mjs', ['run', '--config', 'tests/integration/vitest.config.ts']);
+  const integrationFiles=process.argv.slice(2).filter(value=>value.startsWith('--integration-file=')).map(value=>value.slice('--integration-file='.length));
+  if(integrationFiles.some(value=>!/^tests\/(?:integration|identity|membership)\/[a-z0-9.-]+\.test\.ts$/.test(value)))throw new Error('Invalid integration test selection.');
+  await run('node_modules/vitest/vitest.mjs', ['run', '--config', 'tests/integration/vitest.config.ts', ...integrationFiles]);
   if (!process.argv.includes('--integration-only')) {
     const entry = '.next/standalone/server.js';
     if (!existsSync(entry)) throw new Error('Run npm run build before browser qualification.');
@@ -69,7 +71,7 @@ try {
       } catch { /* Only wait on this run's freshly spawned server. */ }
     }
     if (!ready || ended) throw new Error('Owned application server unavailable.');
-    current = start('node_modules/@playwright/test/cli.js', ['test', ...process.argv.slice(2)], browserEnv);
+    current = start('node_modules/@playwright/test/cli.js', ['test', ...process.argv.slice(2).filter(value=>!value.startsWith('--integration-file='))], browserEnv);
     process.exitCode = await completeWithOwnedServer(current, server);
   }
 } catch (error) {
