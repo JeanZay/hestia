@@ -1,3 +1,4 @@
+import { DEFAULT_CLASSIFICATION_LIMITS } from '../classification/types';
 import { after } from 'next/server';
 import { getApplication } from '../runtime';
 /** Vercel extends the request lifetime; no unawaited promises or browser polling mutations. */
@@ -8,6 +9,6 @@ export function scheduleInboxWork(requestStartedAt=performance.now()){
   await app.cleanupSummary(20);
   if(remaining()<6000)return;
   await app.runAcknowledgements();
-  if(remaining()>15000)await app.runSummaryBatch(4,Math.min(35000,remaining()));
+  if(remaining()>DEFAULT_CLASSIFICATION_LIMITS.requestTimeoutMs)await app.runSummaryBatch(4,Math.min(35000,remaining()));
  });
 }

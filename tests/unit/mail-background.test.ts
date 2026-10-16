@@ -19,8 +19,9 @@ describe('request lifetime admission for durable mailbox work',()=>{
   scheduleInboxWork(0);time=34000;state.app.cleanupSummary.mockImplementation(async()=>{time+=8000;});state.app.runAcknowledgements.mockImplementation(async()=>{time+=5000;});
   await state.scheduled!();expect(state.app.runAcknowledgements).toHaveBeenCalledOnce();expect(state.app.runSummaryBatch).not.toHaveBeenCalled();
  });
+ it.each([25000,25001,28000])('does not launch analysis with only %ims already spent',async elapsed=>{scheduleInboxWork(0);time=elapsed;await state.scheduled!();expect(state.app.runSummaryBatch).not.toHaveBeenCalled();});
  it('passes only the actual remaining budget to the worker',async()=>{
-  scheduleInboxWork(0);time=25000;state.app.cleanupSummary.mockImplementation(async()=>{time+=1000;});state.app.runAcknowledgements.mockImplementation(async()=>{time+=2000;});
-  await state.scheduled!();expect(state.app.runSummaryBatch).toHaveBeenCalledWith(4,22000);
+  scheduleInboxWork(0);time=20000;state.app.cleanupSummary.mockImplementation(async()=>{time+=1000;});state.app.runAcknowledgements.mockImplementation(async()=>{time+=2000;});
+  await state.scheduled!();expect(state.app.runSummaryBatch).toHaveBeenCalledWith(4,27000);
  });
 });

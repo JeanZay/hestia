@@ -51,4 +51,4 @@ export interface ClassificationDependencies {
   /** Optional server ceiling; household administrators cannot raise it. */
   deploymentLimitMicros?: number;
 }
-export const DEFAULT_CLASSIFICATION_LIMITS = Object.freeze({ requestTimeoutMs: 15_000, maxResultBytes: 16_384, maxSuggestions: 8 });
+export const DEFAULT_CLASSIFICATION_LIMITS = Object.freeze({ requestTimeoutMs: 25_000, maxResultBytes: 16_384, maxSuggestions: 8 });
