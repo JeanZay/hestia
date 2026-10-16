@@ -202,13 +202,15 @@ describe("workspace snapshots with real admission, transactions and rights", () 
     expect(state.selectedFolder).toMatchObject({ childCount: 1, documentCount: 1, docCount: 1 });
     expect(state.documents.map(document => document.id)).toEqual([documentId]);
   });
+  // This volume-boundary check includes fixture triggers and cleanup, not a latency benchmark.
   it("preserves the bounded document listing failure without returning a truncated snapshot", async () => {
     const ids = await documents(right, 10001, "Batch synthétique borné");
     try {
+      expect(ids).toHaveLength(10001);
       const result = await app.handleWorkspace(req(`/api/hestia/workspace?folderId=${right}`));
       expect(result.status).toBe(503); expect(await result.json()).toMatchObject({ error: { code: "RESOURCE_LIMIT" } });
     } finally { await removeFixtureDocuments(ids); }
-  });
+  }, 60_000);
   it("supports protected minimal household counts and passive reads while preserving legacy defaults", async () => {
     for (const status of ["active", "removed"]) {
       const expected = Number((await pool.query("SELECT count(*) AS n FROM hestia_member WHERE active=$1", [status === "active"])).rows[0].n);

@@ -55,6 +55,8 @@ La conservation acceptée pour le futur raccordement est la suivante : Google ga
 
 Les mots de passe restent exclusivement dans le coffre Cryptomator, hors Git ; seuls leurs chemins sont indiqués ici. Ne consigner dans ce dépôt aucun secret, code de vérification ou de récupération, téléphone ni date de naissance utilisés pour créer les comptes.
 
+Une copie utile des clés du relais **Dev** est également conservée dans le coffre Cryptomator vérifié, à `D:/Hestia/Dev/mail-inbox-relay.json`. Cette sauvegarde Dev seule ne signifie ni transfert vers Google, ni configuration activée.
+
 ## Repères
 
 Le [workflow produit](docs/product-workflow.md) décrit les besoins larges, le refinement approfondi et les US juste-à-temps ; [la reprise inter-tâches](docs/continuity.md) indique comment retrouver sources, décisions et preuves depuis un nouveau chat. Les agents prennent en charge code et revues ; Amaury décide l'usage. `verify` découvre `artifacts/active-work.json` s'il existe ; `--checkpoint <chemin>` permet une sélection explicite. Sans checkpoint présent ou désigné, le rapport ne certifie aucun dossier local ignoré.
