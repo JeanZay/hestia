@@ -112,10 +112,9 @@ const schema = {
     "contradiction"
   ],
   "properties": {
-    "contradiction": { "type": ["string", "null"], "description": "Divergence entre le document et le contexte de préparation, explicitée sans trancher ; null en l’absence de contradiction." },
     "existingFolderSuggestions": {
       "type": "array",
-      "description": "Alternatives de classement dans des dossiers existants du catalogue. Liste vide si aucune destination existante ne convient.",
+      "description": "Alternatives de classement dans des dossiers existants autorisés, étayées par le document OU preparationComment, y compris l’usage demandé ; chaque source peut suffire sans prouver leur lien. reason attribue cet appui à sa source. Liste vide si aucune destination existante n’est positivement étayée.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -137,7 +136,7 @@ const schema = {
     },
     "newFolderPathSuggestions": {
       "type": "array",
-      "description": "Propositions de sous-chemins utiles absents du catalogue, indépendantes des destinations existantes. Ce sont des alternatives futures, jamais des créations effectuées. Liste vide si aucune sous-catégorie utile n’est étayée.",
+      "description": "Alternatives de chemins utiles absents du catalogue, indépendantes des destinations existantes, étayées par le document OU preparationComment, y compris l’usage demandé ; chaque source peut suffire sans prouver leur lien. reason attribue cet appui à sa source. Propositions futures, jamais créations effectuées. Liste vide si aucun chemin utile n’est positivement étayé.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -166,7 +165,8 @@ const schema = {
           }
         }
       }
-    }
+    },
+    "contradiction": { "type": ["string", "null"], "description": "Après les alternatives, explique la divergence entre faits du document, affirmations du contexte ou usage demandé, sans convertir une consigne en nature du document ni arbitrer les sources ou leur lien. Une intention peut étayer un usage sans prouver ce lien ; null en l’absence de divergence." }
   }
 };
 const instructions = classificationInstructions("existingFolderSuggestions", "newFolderPathSuggestions");
