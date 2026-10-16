@@ -1,7 +1,10 @@
 import { CLASSIFICATION_REFERENCE, classificationContext } from "../../src/server/classification/reference-tree";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
 import { parseClassificationResult } from "../../src/server/classification/validation";
+import { inboxAnalysisContext, projectInboxAnalysis } from "../../src/server/inbox/analysis";
+import { SUMMARY_CONTRACT_SHA256 } from "../../src/server/summary/provider";
 
 const date = new Date("2026-10-10T12:00:00.000Z");
 const profile: QualifiedOpenRouterProfile = {
@@ -31,7 +34,7 @@ function setup(value: unknown = body(), selected = profile) {
 }
 
 describe("OpenRouter qualified profile gate", () => {
-  it.each([undefined, "0".repeat(64)])("rejects a missing or obsolete classification contract before any transport", async classificationContractSha256 => {
+  it.each([undefined, "0".repeat(64), "5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013"])("rejects a missing or obsolete classification contract before any transport", async classificationContractSha256 => {
     const value = { ...profile, classificationContractSha256 };
     expect(parseQualifiedOpenRouterProfile(value, date)).toBeNull();
     const transport = vi.fn<typeof fetch>();
@@ -117,6 +120,40 @@ describe("OpenRouter qualified profile gate", () => {
       await expect(provider.analyze(config, changed, "synthetic", signal())).rejects.toThrow("Unqualified");
     }
     expect(transport).not.toHaveBeenCalled();
+  });
+});
+
+describe("partial private context through the actual provider request, with no semantic-output rewriting", () => {
+  it.each([
+    { origin: "Capture comment", context: "Le contexte partiel concerne une assurance synthétique." },
+    { origin: "Inbox mail only", context: inboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }) },
+    { origin: "Inbox mail and human correction", context: inboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }) },
+  ])("sends $origin as data, binds the strengthened contract and preserves even a bad mocked reply", async ({ context }) => {
+    // This deliberately bad completion demonstrates transport/projection only.
+    // A real model making this categorical assertion must still fail semantic review.
+    const contradiction = "Le contexte partiel ne s'applique pas à ce document.";
+    const reason = "Le document synthétique est une facture d'eau.";
+    const content = JSON.stringify({ existingFolderSuggestions: [{ folderId: folder.id, reason, relevance: "relevant" }], newFolderPathSuggestions: [], contradiction });
+    const { provider, transport } = setup(body(content));
+    const folders = [{ ...folder, path: [{ id: folder.id, name: folder.name }] }];
+    const outcome = await provider.analyze(config, { ...payload, mediaType: "image/jpeg", folders, canCreateRoot: true, comment: context }, "synthetic", signal());
+    const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    expect(request.messages[0].role).toBe("system");
+    expect(request.messages[0].content).toContain("sans trancher, même explicitement");
+    expect(request.messages[0].content).toContain("ne prouve ni sa pertinence ni son inapplicabilité");
+    expect(request.messages[0].content).not.toContain(context);
+    expect(JSON.parse(request.messages[1].content[0].text)).toMatchObject({ preparationComment: context, canCreateRoot: true });
+    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schema: request.response_format.json_schema.schema })).digest("hex");
+    expect(requestContract).toBe(OPENROUTER_CLASSIFICATION_CONTRACT_SHA256);
+    expect(requestContract).not.toBe("5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013");
+    expect(SUMMARY_CONTRACT_SHA256).toBe("912acd656c07fc4cfd46c77a148492f31f01bc6c6b9f52d372a66052e3ecfb2c");
+    const parsed = parseClassificationResult(outcome.value, folders, 16_384, 8, true, context);
+    expect(parsed.contradiction).toBe(contradiction);
+    const projected = projectInboxAnalysis(outcome.value, folders, context);
+    expect(projected.contradiction).toBe(contradiction);
+    expect(projected.suggestions[0].reason).toBe(reason + " " + contradiction);
+    expect(outcome.actualMicros).toBe(2);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,5 +1,5 @@
-import { classificationContext } from "../../src/server/classification/reference-tree";
-import { randomUUID } from "node:crypto";
+import { CLASSIFICATION_REFERENCE, classificationContext } from "../../src/server/classification/reference-tree";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { createClassificationCredentialCipher } from "../../src/server/classification/cipher";
 import { micros, parseClassificationResult, utcMonth } from "../../src/server/classification/validation";
@@ -79,11 +79,20 @@ describe("dormant OpenAI adapter, transport replaced entirely", () => {
   it("requires a new contract qualification and includes root capability without deriving rights from the guide", async () => {
     const root = { existing: [], created: [{ parentId: null, levels: ["Études", "Diplômes"], reason: "Diplôme synthétique" }] };
     const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ status: "completed", usage: {}, output: [{ type: "message", content: [{ type: "output_text", text: external(root) }] }] }));
-    expect(createOpenAIClassificationProvider([{ ...profile, classificationContractSha256: "old" }], transport).quote(config, payload)).toBeNull();
+    for (const classificationContractSha256 of ["old", "c7347853d2f635d74b0780201736388e4539e23f2ec582566bfcbe75c104d727"]) {
+      const obsolete = createOpenAIClassificationProvider([{ ...profile, classificationContractSha256 }], transport);
+      expect(obsolete.quote(config, payload)).toBeNull();
+      await expect(obsolete.analyze(config, payload, "synthetic", new AbortController().signal)).rejects.toThrow("Unqualified");
+    }
+    expect(transport).not.toHaveBeenCalled();
     const provider = createOpenAIClassificationProvider([profile], transport);
     const outcome = await provider.analyze(config, { ...payload, folders: [], canCreateRoot: true }, "synthetic", new AbortController().signal);
     expect(parseClassificationResult(outcome.value, [], 16_384, 8, true)).toEqual(root);
     const body = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    expect(body.instructions).toContain("sans trancher, même explicitement");
+    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: body.instructions, schema: body.text.format.schema })).digest("hex");
+    expect(requestContract).toBe(OPENAI_CLASSIFICATION_CONTRACT_SHA256);
+    expect(requestContract).not.toBe("c7347853d2f635d74b0780201736388e4539e23f2ec582566bfcbe75c104d727");
     expect(JSON.parse(body.input[0].content[0].text)).toMatchObject({ folders: [], canCreateRoot: true });
     expect(body.text.format.schema.properties.created.items.properties.parentId.type).toEqual(["string", "null"]);
     expect(body.text.format.schema.properties.created.items.properties.levels.maxItems).toBe(20);

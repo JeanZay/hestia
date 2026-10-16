@@ -71,7 +71,7 @@ describe("classification deployment gate", () => {
     expect(readClassificationDeployment(environment, env, () => new Date("2026-10-09T23:59:59Z"))).toEqual(disabled);
   });
   it.each(environments)("refuses former contract qualifications in %s", environment => {
-    for (const classificationContractSha256 of [undefined, "old-contract"]) {
+    for (const classificationContractSha256 of [undefined, "old-contract", "5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013"]) {
       expect(readClassificationDeployment(environment, {
         ...qualifiedEnv(environment), HESTIA_OPENROUTER_PROFILE: JSON.stringify({ ...profile, classificationContractSha256 }),
       }, instant)).toEqual(disabled);
