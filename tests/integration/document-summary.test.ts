@@ -43,7 +43,7 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
  const provider:SummaryProvider={id:'synthetic-summary',mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),
   async summarize(_config,payload){const own=ownedHashes.has(digest(payload.bytes));if(own){calls.push({bytes:new Uint8Array(payload.bytes),mediaType:payload.mediaType});return effect(payload);}return{value:{summary:'Document synthétique.'},actualMicros:20};}};
  const deps:SummaryDependencies={clock:async()=>new Date(),store,credentialCipher:cipher,readAuthorizedFolders:async()=>[],providers:[],summaryProviders:[provider],allowRemote:false,requestTimeoutMs:2000,deploymentLimitMicros:1e9};
- const summaries=createSummaryService(access,deps);
+ const summaries=createSummaryService(access,deps,pool);
  function req(body?:unknown,method=body===undefined?'GET':'POST',query='/api/hestia/documents'){
   return new Request(config.origin+query,{method,headers:{origin:config.origin,cookie,...(body===undefined?{}:{'content-type':body instanceof Uint8Array?'application/octet-stream':'application/json'})},...(body===undefined?{}:{body:body instanceof Uint8Array?new Uint8Array(body):JSON.stringify(body)})});
  }
@@ -95,6 +95,35 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   image=await sharp({create:{width:8,height:8,channels:3,background:'#'+randomUUID().replaceAll('-','').slice(0,6)}}).png().toBuffer();ownedHashes=new Set([digest(image)]);calls=[];getHook=undefined;effect=async()=>({value:{summary:'Facture synthétique de démonstration.'},actualMicros:20});
  });
  afterAll(()=>pool.end());
+ it('keeps summary cost and ready state after an observation-only failure',async()=>{
+  const content=await original();await mail(content.id);
+  const brokenPool={connect:async()=>{throw Error('Synthetic observation unavailable');}} as unknown as Pool;
+  const isolated=createSummaryService(access,deps,brokenPool);
+  await isolated.runSummaryBatch(1);
+  const state=await row(content.id);expect(state.status).toBe('ready');
+  expect((await ledger())[0]).toMatchObject({actual_micros:'20',status:'complete'});
+  expect((await pool.query('SELECT * FROM hestia_provider_invocation_observation WHERE request_id=$1',[state.request_id])).rows).toEqual([]);
+ });
+ it('records summary duration before business settlement and emits no observation on cache reuse',async()=>{
+  const content=await original();await mail(content.id);
+  let tick=0n;
+  const measured=createSummaryService(access,{...deps,monotonicNowNs:()=>{tick+=1000001n;return tick;}},pool);
+  await measured.runSummaryBatch(1);await measured.runSummaryBatch(1);
+  const state=await row(content.id);
+  expect((await pool.query('SELECT operation,outcome,elapsed_us FROM hestia_provider_invocation_observation WHERE request_id=$1',[state.request_id])).rows).toEqual([{operation:'summary',outcome:'resolved',elapsed_us:'1001'}]);
+  expect(calls).toHaveLength(1);
+ });
+ it('keeps Inbox analysis ready and its charge durable when only the observation writer fails',async()=>{
+  const content=await original(),attachmentId=await pendingArrival(content.id);
+  await pool.query("UPDATE hestia_content_summary SET permitted=false,status='unavailable' WHERE content_id=$1",[content.id]);
+  const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),analyze:async()=>({value:{existing:[],created:[]},actualMicros:30})};
+  const brokenPool={connect:async()=>{throw Error('Synthetic observation unavailable');}} as unknown as Pool;
+  const isolated=createSummaryService(access,{...deps,providers:[classifier]},brokenPool);
+  for(let batch=0;batch<20&&(await analysisRow(attachmentId)).status==='pending';batch++)await isolated.runSummaryBatch(10);
+  const job=await analysisRow(attachmentId);expect(job.status).toBe('ready');
+  expect((await pool.query('SELECT actual_micros,status FROM hestia_classification_request WHERE id=$1',[job.request_id])).rows).toEqual([{actual_micros:'30',status:'complete'}]);
+  expect((await pool.query('SELECT * FROM hestia_provider_invocation_observation WHERE request_id=$1',[job.request_id])).rows).toEqual([]);
+ });
  it('sends only original bytes and media type, then publishes the exact content summary under current document rights',async()=>{
   const content=await original(),eventId=randomUUID(),attachmentId=randomUUID();
   const member=(await pool.query('SELECT epoch,departure_epoch FROM hestia_member WHERE user_id=$1',[actorId])).rows[0];
@@ -308,7 +337,7 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   const captured:ProviderPayload[]=[];let summaryKeys:string[]=[];
   const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',models:[{id:'fixture',label:'Fixture'}],quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),
     async analyze(_configuration,payload){if(ownedHashes.has(digest(payload.bytes)))captured.push({...payload,bytes:new Uint8Array(payload.bytes)});return{value:{existing:payload.folders.some(f=>f.id===folderId)?[{folderId,reason:'Suggestion synthétique.'}]:[],created:[]},actualMicros:30};}};
-  const contextual=createSummaryService(access,{...deps,providers:[classifier],readAuthorizedFolders:async(_client,actor)=>actor.id===actorId?[{id:folderId,name:'Dossier autorisé',path:[{id:folderId,name:'Dossier autorisé'}],canCreate:true}]:[]});
+  const contextual=createSummaryService(access,{...deps,providers:[classifier],readAuthorizedFolders:async(_client,actor)=>actor.id===actorId?[{id:folderId,name:'Dossier autorisé',path:[{id:folderId,name:'Dossier autorisé'}],canCreate:true}]:[]},pool);
   effect=async payload=>{summaryKeys=Object.keys(payload).sort();return{value:{summary:'Résumé issu des seuls octets.'},actualMicros:20};};
   // Other suites may also have queued synthetic originals in this shared bench.
   // Drain a bounded number while identifying only this arrival's own provider call.
@@ -316,6 +345,8 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   expect(captured).toHaveLength(1);expect(captured[0].comment).toBeUndefined();expect(captured[0].inboxContext).toEqual({mail:{subject:'Sujet privé synthétique',body:'Corps privé synthétique',partial:true},comment:'Commentaire privé synthétique'});
   expect(summaryKeys).toEqual(['bytes','mediaType']);expect(calls).toHaveLength(1);expect(await row(content.id)).toMatchObject({status:'ready',text:'Résumé issu des seuls octets.'});
   const receipts=(await pool.query('SELECT * FROM hestia_classification_request WHERE actor_id=$1',[actorId])).rows;expect(receipts).toHaveLength(2);expect(JSON.stringify(receipts)).not.toMatch(/Sujet privé|Corps privé|Commentaire privé|NOM_PRIVE/);
+  const observations=(await pool.query('SELECT operation,outcome FROM hestia_provider_invocation_observation WHERE request_id=ANY($1::uuid[]) ORDER BY operation',[receipts.map(r=>r.id)])).rows;
+  expect(observations).toEqual([{operation:'inbox_analysis',outcome:'resolved'},{operation:'summary',outcome:'resolved'}]);
   const document=await mail(content.id);await pool.query("UPDATE hestia_inbox_attachment SET state='placed',document_id=$2 WHERE id=$1",[attachmentId,document.documentId]);
   const publicDocument=await data(await app.handleDocument(req(),document.documentId));expect(JSON.stringify(publicDocument)).not.toMatch(/Sujet privé|Corps privé|Commentaire privé|Suggestion synthétique/);
  });

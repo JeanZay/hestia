@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { guarded, HttpError, invalid, isUuid, json, response, unavailable, type Access, type Actor } from '../access';
 import type { ObjectStore } from '../storage';
 import { getFolderAccess } from '../permissions/service';
@@ -9,14 +9,15 @@ import type { CaptureMediaType } from '../../shared/capture-contract';
 import { utcMonth } from '../classification/validation';
 import { typedInboxAnalysisContext, projectInboxAnalysis } from '../inbox/analysis';
 import { parseSummary, type SummaryProvider } from './provider';
+import { observeProviderInvocation, persistProviderObservation } from '../classification/provider-observation';
 
-export type SummaryDependencies = Pick<ClassificationDependencies,'clock'|'credentialCipher'|'readAuthorizedFolders'|'providers'|'allowRemote'|'deploymentLimitMicros'|'requestTimeoutMs'> & {store:ObjectStore;summaryProviders:readonly SummaryProvider[];monotonicNow?:()=>number};
+export type SummaryDependencies = Pick<ClassificationDependencies,'clock'|'credentialCipher'|'readAuthorizedFolders'|'providers'|'allowRemote'|'deploymentLimitMicros'|'requestTimeoutMs'|'monotonicNowNs'> & {store:ObjectStore;summaryProviders:readonly SummaryProvider[];monotonicNow?:()=>number};
 type Config={version:string;provider:string;model:string;enabled:boolean;monthly_limit_micros:string;currency:string;credential_sealed:string|null};
 type Content={id:string;object_key:string;owner_id:string;sha256:string;size:number;media_type:CaptureMediaType;epoch:number;name:string;email:string};
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const configured=(r:Config):ClassificationConfiguration=>({version:Number(r.version),provider:r.provider,model:r.model,enabled:r.enabled,monthlyLimitMicros:Number(r.monthly_limit_micros),currency:r.currency});
 class WorkDeferred extends Error {}
-export function createSummaryService(access:Access,deps:SummaryDependencies){
+export function createSummaryService(access:Access,deps:SummaryDependencies,pool?:Pool){
  const monotonic=deps.monotonicNow??(()=>performance.now());
  const remaining=(deadline:number)=>deadline-monotonic();
  function requireTime(deadline:number,milliseconds:number){if(remaining(deadline)<milliseconds)throw new WorkDeferred();}
@@ -85,10 +86,6 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
  async function settle(client:PoolClient,id:string,actual:number|null,status:'complete'|'failed'){
   await client.query(`UPDATE hestia_classification_request SET actual_micros=$2,status=$3,settled_at=$4 WHERE id=$1 AND settled_at IS NULL`,[id,actual,status,await deps.clock(client)]);
  }
- async function bounded(action:(signal:AbortSignal)=>Promise<ProviderOutcome>){
-  const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
-  try{return await Promise.race([action(controller.signal),new Promise<never>((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new Error('Analysis timeout'));},deps.requestTimeoutMs);})]);}finally{clearTimeout(timer);}
- }
  async function processSummary(id:string,deadline:number){
   const content=await access.transaction(async client=>{
    const row=(await client.query('SELECT * FROM hestia_content_summary WHERE content_id=$1 FOR UPDATE',[id])).rows[0];
@@ -105,6 +102,7 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
   if(!content)return false;
   let bytes:Uint8Array|undefined,reservation:Awaited<ReturnType<typeof reserve>>=null,actual:number|null=null,text:string|null=null;
   let status:DocumentSummaryDto['status']='unavailable';
+  let invocation:ReturnType<typeof observeProviderInvocation<ProviderOutcome>>|undefined;
   try{
    bytes=await readBytes(content,deadline-deps.requestTimeoutMs);
    reservation=await access.transaction(async client=>{const current=await source(client,id);if(current.owner_id!==content.owner_id||current.epoch!==content.epoch)throw unavailable();
@@ -112,7 +110,8 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
     requireTime(deadline,deps.requestTimeoutMs);
     const saved=await reserve(client,content,'summary',{bytes:bytes!,mediaType:content.media_type,folders:[]});if(saved)await client.query('UPDATE hestia_content_summary SET request_id=$2 WHERE content_id=$1',[id,saved.id]);return saved;});
    if(reservation){const selected=reservation.provider as SummaryProvider;
-    const outcome=await bounded(signal=>selected.summarize(configured(reservation!.config),{bytes:bytes!,mediaType:content.media_type},reservation!.credential,signal));
+    invocation=observeProviderInvocation(signal=>selected.summarize(configured(reservation!.config),{bytes:bytes!,mediaType:content.media_type},reservation!.credential,signal),deps.requestTimeoutMs,deps.monotonicNowNs,'Analysis timeout');
+    const outcome=await invocation.result;
     actual=typeof outcome.actualMicros==='number'&&Number.isSafeInteger(outcome.actualMicros)&&outcome.actualMicros>=0?outcome.actualMicros:null;
     text=parseSummary(outcome.value);status=actual===null?'unknown':actual>reservation.maximum||!text?'unavailable':'ready';
    }
@@ -121,7 +120,9 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
    if(reservation)await settle(client,reservation.id,actual,status==='ready'?'complete':'failed');
    try{const current=await source(client,id);const cfg=(await client.query('SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];if(current.owner_id!==content.owner_id||current.epoch!==content.epoch||reservation&&(cfg.version!==reservation.config.version||!cfg.enabled))status='unavailable';}catch{status='unavailable';}
    await client.query(`UPDATE hestia_content_summary SET status=CASE WHEN permitted THEN $2 ELSE 'unavailable' END,text=CASE WHEN permitted AND $2='ready' THEN $3 ELSE NULL END,generation=generation+CASE WHEN $2='pending' THEN 1 ELSE 0 END,not_before=CASE WHEN $2='pending' THEN $4::timestamptz+interval '60 seconds' ELSE not_before END,updated_at=$4 WHERE content_id=$1 AND status='running' AND generation=$5`,[id,status,status==='ready'?text:null,await deps.clock(client),content.generation]);
-  });return true;
+  });
+  if(pool&&reservation)await persistProviderObservation(pool,reservation.id,'summary',invocation?.observation());
+  return true;
  }
  async function processInbox(id:string,deadline:number){
   const work=await access.transaction(async client=>{
@@ -135,6 +136,7 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
   });if(!work)return false;
   let bytes:Uint8Array|undefined,reservation:Awaited<ReturnType<typeof reserve>>=null,actual:number|null=null,suggestions:InboxSuggestionDto[]=[],contradiction:string|undefined;
   let status='unavailable';
+  let invocation:ReturnType<typeof observeProviderInvocation<ProviderOutcome>>|undefined;
   async function assertCurrent(client:PoolClient){
    const job=(await client.query('SELECT generation,status FROM hestia_inbox_analysis_job WHERE attachment_id=$1 FOR UPDATE',[id])).rows[0];if(job?.generation!==work!.generation||job.status!=='running')throw unavailable();
    const a=(await client.query(`SELECT a.*,m.epoch FROM hestia_inbox_attachment a JOIN hestia_member m ON m.user_id=a.actor_id WHERE a.id=$1 AND a.state='pending' AND a.departure_epoch=m.departure_epoch AND m.active AND NOT m.recovering FOR UPDATE OF a`,[id])).rows[0];
@@ -147,7 +149,7 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
    const context=inboxContext?JSON.stringify(inboxContext):'';
    const payload:ProviderPayload={bytes,mediaType:work.c.media_type,folders:work.folders,canCreateRoot:true,...(inboxContext?{inboxContext}:{})};
    reservation=await access.transaction(async client=>{await assertCurrent(client);requireTime(deadline,deps.requestTimeoutMs);const saved=await reserve(client,work.c,'inbox_analysis',payload);if(saved)await client.query('UPDATE hestia_inbox_analysis_job SET request_id=$2 WHERE attachment_id=$1',[id,saved.id]);return saved;});
-   if(reservation){const provider=deps.providers.find(p=>p===reservation!.provider)!;const outcome=await bounded(signal=>provider.analyze(configured(reservation!.config),payload,reservation!.credential,signal));
+   if(reservation){const provider=deps.providers.find(p=>p===reservation!.provider)!;invocation=observeProviderInvocation(signal=>provider.analyze(configured(reservation!.config),payload,reservation!.credential,signal),deps.requestTimeoutMs,deps.monotonicNowNs,'Analysis timeout');const outcome=await invocation.result;
     actual=typeof outcome.actualMicros==='number'&&Number.isSafeInteger(outcome.actualMicros)&&outcome.actualMicros>=0?outcome.actualMicros:null;
     const result=projectInboxAnalysis(outcome.value,work.folders,context);
     suggestions=result.suggestions;contradiction=result.contradiction;
@@ -157,7 +159,9 @@ export function createSummaryService(access:Access,deps:SummaryDependencies){
   await access.transaction(async client=>{if(reservation)await settle(client,reservation.id,actual,status==='ready'?'complete':'failed');try{await assertCurrent(client);const cfg=(await client.query('SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];if(reservation&&(cfg.version!==reservation.config.version||!cfg.enabled))status='stale';}catch{status='stale';}
    const updated=await client.query("UPDATE hestia_inbox_analysis_job SET status=$2,generation=generation+CASE WHEN $2='pending' THEN 1 ELSE 0 END,not_before=CASE WHEN $2='pending' THEN $3::timestamptz+interval '60 seconds' ELSE not_before END,updated_at=$3 WHERE attachment_id=$1 AND generation=$4",[id,status,await deps.clock(client),work.generation]);
    if(updated.rowCount)await client.query('UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1',[id,JSON.stringify({status,suggestions:status==='ready'?suggestions:[],...(status==='ready'&&contradiction?{contradiction}:{})})]);
-  });return true;
+  });
+  if(pool&&reservation)await persistProviderObservation(pool,reservation.id,'inbox_analysis',invocation?.observation());
+  return true;
  }
  async function runSummaryBatch(limit=2,budgetMs=35000){
   if(!Number.isInteger(limit)||limit<1||limit>10)throw invalid();
