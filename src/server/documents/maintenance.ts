@@ -1,3 +1,4 @@
+import { DEFAULT_CLASSIFICATION_LIMITS } from '../classification/types';
 import { timingSafeEqual } from "node:crypto";
 import { guarded, HttpError, response } from "../access";
 
@@ -31,7 +32,7 @@ export function handleMaintenance(request: Request, secret: string | undefined, 
     const inbox=await app.cleanup?.();
     const summaryCleanup=await app.cleanupSummary?.(100);
     const acknowledgements=remaining()>6000?await app.runAcknowledgements?.():undefined;
-    const summaries=remaining()>15000?await app.runSummaryBatch?.(4,Math.min(35000,remaining())):undefined;
+    const summaries=remaining()>DEFAULT_CLASSIFICATION_LIMITS.requestTimeoutMs?await app.runSummaryBatch?.(4,Math.min(35000,remaining())):undefined;
     return response({trash,uploads,captures,classification,versions,inbox,summaryCleanup,summaries,acknowledgements},trash.failed || captures.failed || versions?.failed ? 503 : 200);
   });
 }

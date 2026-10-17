@@ -48,7 +48,8 @@ export function createInboxService(pool: Pool, access: Access, deps: InboxDepend
   if (!row || content && (row.state === 'staging' || row.state === 'purged' || row.state === 'placed' || row.deleted_at || row.purge_pending_at || row.state === 'discarded' && row.discarded_until! <= await clock(client))) throw unavailable(); return row;
  }
  async function attachmentDto(client: PoolClient, row: Attachment): Promise<InboxAttachmentDto> {
-  return { id: row.id, messageId: row.event_id, version: row.version, fileName: row.file_name, mediaType: row.media_type, size: row.size, sha256: row.sha256, state: row.state as InboxAttachmentDto['state'], receivedAt: row.received_at.toISOString(), discardedUntil: row.discarded_until?.toISOString() ?? null, previewSupported: row.preview_supported, comment: row.comment, commentVersion: row.comment_version, summary: await deps.readSummary?.(client, row.content_id) ?? { status: 'unavailable' }, analysis: row.analysis };
+  const analysis:InboxAttachmentDto['analysis']=row.analysis.status==='ready'?row.analysis:{status:row.analysis.status,suggestions:[]};
+  return { id: row.id, messageId: row.event_id, version: row.version, fileName: row.file_name, mediaType: row.media_type, size: row.size, sha256: row.sha256, state: row.state as InboxAttachmentDto['state'], receivedAt: row.received_at.toISOString(), discardedUntil: row.discarded_until?.toISOString() ?? null, previewSupported: row.preview_supported, comment: row.comment, commentVersion: row.comment_version, summary: await deps.readSummary?.(client, row.content_id) ?? { status: 'unavailable' }, analysis };
  }
  async function operation<T>(id: string, action: () => Promise<T>, skip = false) {
   const client = await pool.connect(); let locked = false;

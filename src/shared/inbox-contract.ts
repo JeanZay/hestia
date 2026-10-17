@@ -2,8 +2,9 @@ import type { CaptureDestination, CaptureAccessProjection } from './capture-cont
 
 export type DocumentSummaryDto = { status: 'pending' | 'running' | 'ready' | 'unavailable' | 'unknown'; text?: string };
 export type InboxSettingsDto = { version: number; enabled: boolean; automaticAnalysis: boolean; address: string | null; configured: boolean };
+/** Private presentation reason: provider reason500 + one space + divergence1000 Unicode points, at most1501. */
 export type InboxSuggestionDto = { destination: CaptureDestination; reason: string; label: string };
-export type InboxAnalysisDto = { status: 'pending' | 'running' | 'ready' | 'unavailable' | 'unknown' | 'stale'; summary?: string; suggestions: InboxSuggestionDto[] };
+export type InboxAnalysisDto = { status: 'pending' | 'running' | 'ready' | 'unavailable' | 'unknown' | 'stale'; summary?: string; suggestions: InboxSuggestionDto[]; contradiction?: string };
 export type InboxAttachmentDto = {
   id: string; messageId: string; version: number; fileName: string; mediaType: string; size: number; sha256: string;
   state: 'pending' | 'discarded' | 'placed' | 'purged'; receivedAt: string; discardedUntil: string | null;

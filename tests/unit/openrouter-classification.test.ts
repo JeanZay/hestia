@@ -1,7 +1,11 @@
 import { CLASSIFICATION_REFERENCE, classificationContext } from "../../src/server/classification/reference-tree";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
+import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_REASONING_POLICY, OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, openRouterClassificationSchema, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
+import type { ClassificationSource } from "../../src/server/classification/reference-tree";
 import { parseClassificationResult } from "../../src/server/classification/validation";
+import { inboxAnalysisContext, typedInboxAnalysisContext, projectInboxAnalysis } from "../../src/server/inbox/analysis";
+import { SUMMARY_CONTRACT_SHA256 } from "../../src/server/summary/provider";
 
 const date = new Date("2026-10-10T12:00:00.000Z");
 const profile: QualifiedOpenRouterProfile = {
@@ -18,9 +22,13 @@ const folder = { id: "10000000-0000-4000-8000-000000000001", name: "Factures syn
 const payload = { bytes: Buffer.from("synthetic selected document"), mediaType: "application/pdf" as const, folders: [folder] };
 const suggestions = { existing: [{ folderId: folder.id, reason: "Facture synthétique" }], created: [] };
 const signal = () => new AbortController().signal;
-function external(value: { existing: unknown[]; created: unknown[] }) {
+function external(value: { existing: unknown[]; created: unknown[] }, sources = ["document"]) {
   const assessments = (rows: unknown[]) => rows.map(row => ({ relevance: "relevant", ...(row as Record<string, unknown>) }));
-  return JSON.stringify({ existingFolderSuggestions: assessments(value.existing), newFolderPathSuggestions: assessments(value.created) });
+  const existing = assessments(value.existing), created = assessments(value.created);
+  const indices = (rows: { relevance: unknown }[]) => rows.flatMap((row, index) => row.relevance === "relevant" ? [index] : []);
+  const existingIndices = indices(existing), createdIndices = indices(created);
+  const sourceTrace = sources.map(source => ({ source, decision: existingIndices.length + createdIndices.length ? "supported" : "no-positive-support", existingIndices, createdIndices, reason: "Décision synthétique de format, sans preuve sémantique du modèle." }));
+  return JSON.stringify({ sourceTrace, existingFolderSuggestions: existing, newFolderPathSuggestions: created, contradiction: null });
 }
 function body(content = external(suggestions), usage: unknown = { cost: 0.000001, cost_details: { upstream_inference_cost: 90 } }) {
   return { model: OPENROUTER_CLASSIFICATION_MODEL, choices: [{ finish_reason: "stop", message: { role: "assistant", content } }], usage };
@@ -31,7 +39,7 @@ function setup(value: unknown = body(), selected = profile) {
 }
 
 describe("OpenRouter qualified profile gate", () => {
-  it.each([undefined, "0".repeat(64)])("rejects a missing or obsolete classification contract before any transport", async classificationContractSha256 => {
+  it.each([undefined, "72afc45059e76db80a886aeab605698314eac38f6f49e4f128d4bf62857e30a2", "90ec54548b1cba5c65e1a5bcfb43d2f80ba77b48380530fd1cd4238b97221ebc", "0".repeat(64), "5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013"])("rejects a missing or obsolete classification contract before any transport", async classificationContractSha256 => {
     const value = { ...profile, classificationContractSha256 };
     expect(parseQualifiedOpenRouterProfile(value, date)).toBeNull();
     const transport = vi.fn<typeof fetch>();
@@ -117,6 +125,41 @@ describe("OpenRouter qualified profile gate", () => {
       await expect(provider.analyze(config, changed, "synthetic", signal())).rejects.toThrow("Unqualified");
     }
     expect(transport).not.toHaveBeenCalled();
+  });
+});
+
+describe("partial private context through the actual provider request, with no semantic-output rewriting", () => {
+  it.each([
+    { origin: "Capture comment", context: "Le contexte partiel concerne une assurance synthétique.", inboxContext: undefined },
+    { origin: "Inbox mail only", context: inboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }), inboxContext: typedInboxAnalysisContext({ subject: "Assurance synthétique", body: "Proposition partielle.", partial: true }) },
+    { origin: "Inbox mail and human correction", context: inboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }), inboxContext: typedInboxAnalysisContext({ body: "Proposition assurance.", partial: true, comment: "Correction humaine : eau du logement." }) },
+  ])("sends $origin as data, binds the strengthened contract and preserves even a bad mocked reply", async ({ context, inboxContext }) => {
+    // This deliberately bad completion demonstrates transport/projection only.
+    // A real model making this categorical assertion must still fail semantic review.
+    const contradiction = "Le contexte partiel ne s'applique pas à ce document.";
+    const reason = "Le document synthétique est une facture d'eau.";
+    const sources = inboxContext ? ["document", "mail", ...(inboxContext.comment.trim() ? ["comment"] : [])] : ["document", "comment"];
+    const content = JSON.stringify({ ...JSON.parse(external({ existing: [{ folderId: folder.id, reason }], created: [] }, sources)), contradiction });
+    const { provider, transport } = setup(body(content));
+    const folders = [{ ...folder, path: [{ id: folder.id, name: folder.name }] }];
+    const outcome = await provider.analyze(config, { ...payload, mediaType: "image/jpeg", folders, canCreateRoot: true, ...(inboxContext ? { inboxContext } : { comment: context }) }, "synthetic", signal());
+    const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    expect(request.messages[0].role).toBe("system");
+    expect(request.response_format.json_schema.schema.required).toEqual(["sourceTrace", "existingFolderSuggestions", "newFolderPathSuggestions", "contradiction"]);
+    expect(request.messages[0].content).not.toContain(context);
+    expect(JSON.parse(request.messages[1].content[0].text)).toMatchObject({ preparationComment: inboxContext ?? context, canCreateRoot: true });
+    const schemas = [[], ["document"], ["document", "mail"], ["document", "comment"], ["document", "mail", "comment"]].map(sources => openRouterClassificationSchema(sources as ClassificationSource[]));
+    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schemas, inputContract: OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, reasoningPolicy: OPENROUTER_CLASSIFICATION_REASONING_POLICY })).digest("hex");
+    expect(requestContract).toBe(OPENROUTER_CLASSIFICATION_CONTRACT_SHA256);
+    expect(requestContract).not.toBe("5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013");
+    expect(SUMMARY_CONTRACT_SHA256).toBe("912acd656c07fc4cfd46c77a148492f31f01bc6c6b9f52d372a66052e3ecfb2c");
+    const parsed = parseClassificationResult(outcome.value, folders, 16_384, 8, true, context);
+    expect(parsed.contradiction).toBe(contradiction);
+    const projected = projectInboxAnalysis(outcome.value, folders, context);
+    expect(projected.contradiction).toBe(contradiction);
+    expect(projected.suggestions[0].reason).toBe(reason + " " + contradiction);
+    expect(outcome.actualMicros).toBe(2);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -251,7 +294,7 @@ describe("OpenRouter fixed one-call multimodal transport, entirely synthetic", (
     const request = JSON.parse(String(options?.body));
     expect(request.model).toBe(OPENROUTER_CLASSIFICATION_MODEL); expect(request.models).toBeUndefined();
     expect(request.provider).toEqual({ only: ["anthropic"], order: ["anthropic"], allow_fallbacks: false, require_parameters: true, data_collection: "deny", max_price: { prompt: 0.5, completion: 2.5 } });
-    expect(request.tools).toEqual([]); expect(request.tool_choice).toBe("none"); expect(request.reasoning).toEqual({ enabled: false });
+    expect(request.tools).toEqual([]); expect(request.tool_choice).toBe("none"); expect(request.reasoning).toEqual({ enabled: true, effort: "medium", exclude: true });
     expect(request.max_tokens).toBe(2048); expect(request.stream).toBe(false); expect(request.response_format.json_schema.strict).toBe(true);
     expect(request.messages).toHaveLength(2); expect(request.messages[1].content).toHaveLength(2);
     expect(request.messages[1].content[0]).toEqual({ type: "text", text: classificationContext({ folders: [folder] }) });
@@ -344,12 +387,32 @@ describe("OpenRouter cost settlement and unusable suggestions", () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
   it("checks with a bounded strict JSON call and no document, and rejects overruns", async () => {
-    const { provider, transport } = setup(body(external({ existing: [], created: [] })));
+    const { provider, transport } = setup(body(external({ existing: [], created: [] }, [])));
     expect(await provider.check(config, "synthetic", signal())).toEqual({ status: "accepted", actualMicros: 2 });
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
-    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existingFolderSuggestions":[],"newFolderPathSuggestions":[]}.' }]);
+    expect(request.messages).toEqual([{ role: "user", content: 'Sans document ni contexte, retourne uniquement {"sourceTrace":[],"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"contradiction":null}.' }]);
     expect(request.plugins).toEqual([]); expect(request.max_tokens).toBe(profile.maxOutputTokens);
-    expect(await setup(body(external({ existing: [], created: [] }), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
+    expect(await setup(body(external({ existing: [], created: [] }, []), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
     expect((await setup(body("OK")).provider.check(config, "synthetic", signal())).status).toBe("unreachable");
+  });
+});
+
+
+describe("source precision protocol, not a model-semantic qualification", () => {
+  it("accepts family-only format without repairing output", async () => {
+    // The stub establishes admissible format and unchanged projection, not whether a model would choose it.
+    const familyOnly = { existing: [], created: [{ parentId: null, levels: ["Famille synthétique"], reason: "Le contexte demande cet usage général." }] };
+    const { provider, transport } = setup(body(external(familyOnly, ["document", "comment"])));
+    const selected = { ...payload, folders: [], canCreateRoot: true, comment: "Je souhaite cet usage général." };
+    const outcome = await provider.analyze(config, selected, "synthetic", signal());
+    expect(parseClassificationResult(outcome.value, [], 16_384, 8, true, selected.comment)).toEqual(familyOnly);
+    const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
+    expect(request.reasoning).toEqual({ enabled: true, effort: "medium", exclude: true });
+    expect(request.max_tokens).toBe(2048);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the real full-context reservation at606144 with the existing upper FX bound", () => {
+    const selected = { ...profile, usdToEurUpperBound: "1.2" };
+    expect(setup(body(), selected).provider.quote(config, payload)).toEqual({ maximumMicros: 606144, currency: "EUR" });
   });
 });

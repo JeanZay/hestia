@@ -20,12 +20,14 @@ export type ReadAuthorizedFolders = (client: PoolClient, actor: Actor) => Promis
 export type ClassificationConfiguration = Readonly<{
   version: number; provider: string; model: string; enabled: boolean; monthlyLimitMicros: number; currency: string;
 }>;
+export type InboxClassificationContext = Readonly<{
+  mail: Readonly<{ subject: string; body: string; partial: boolean }>; comment: string;
+}>;
 export type ProviderPayload = Readonly<{
   bytes: Uint8Array; mediaType: CaptureMediaType; folders: readonly AuthorizedFolder[];
   /** Server admission only; an omitted capability never permits a root proposal. */
   canCreateRoot?: boolean;
-  comment?: string;
-}>;
+} & ({ comment?: string; inboxContext?: never } | { comment?: never; inboxContext: InboxClassificationContext })>;
 export type ProviderCost = Readonly<{ maximumMicros: number; currency: string }>;
 export type ProviderOutcome = Readonly<{ value: unknown; actualMicros: number | null }>;
 export interface ClassificationProvider {
@@ -49,4 +51,4 @@ export interface ClassificationDependencies {
   /** Optional server ceiling; household administrators cannot raise it. */
   deploymentLimitMicros?: number;
 }
-export const DEFAULT_CLASSIFICATION_LIMITS = Object.freeze({ requestTimeoutMs: 15_000, maxResultBytes: 16_384, maxSuggestions: 8 });
+export const DEFAULT_CLASSIFICATION_LIMITS = Object.freeze({ requestTimeoutMs: 25_000, maxResultBytes: 16_384, maxSuggestions: 8 });
