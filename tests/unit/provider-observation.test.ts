@@ -28,6 +28,20 @@ describe("provider invocation observation", () => {
     await call.result;
     expect(call.observation()).toMatchObject({ outcome: "resolved", elapsedUs: 26726000 });
   });
+  it("preserves action-before-timer ordering while measuring synchronous preparation too", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const value = { value: "synthetic result", actualMicros: 20 };
+    const call = observeProviderInvocation(() => {
+      // Deterministic equivalent of 80ms synchronous preparation before the
+      // adapter returns its promise, followed by a 60ms asynchronous response.
+      vi.advanceTimersByTime(80);
+      return new Promise(resolve => setTimeout(() => resolve(value), 60));
+    }, 100, () => BigInt(Date.now()) * 1000000n);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await call.result).toBe(value);
+    expect(call.observation()).toEqual({ ...observed, timeoutMs: 100, elapsedUs: 140000 });
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("records the delayed timeout once, aborts once, and ignores a late paid outcome", async () => {
     vi.useFakeTimers(); let complete!: (value: { actualMicros: number }) => void, aborts = 0;
     const call = observeProviderInvocation(signal => { signal.addEventListener("abort", () => aborts++); return new Promise(resolve => { complete = resolve; }); }, 25000, clock(0n, 28000000000n));

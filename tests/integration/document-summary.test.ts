@@ -113,6 +113,45 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   expect((await pool.query('SELECT operation,outcome,elapsed_us FROM hestia_provider_invocation_observation WHERE request_id=$1',[state.request_id])).rows).toEqual([{operation:'summary',outcome:'resolved',elapsed_us:'1001'}]);
   expect(calls).toHaveLength(1);
  });
+ it('excludes gated reservation and settlement waits from the adapter observation on real PostgreSQL',async()=>{
+  const content=await original();await mail(content.id);
+  let wallMs=Date.now(),monotonicNs=0n,transactions=0;
+  let reservationEntered!:()=>void,releaseReservation!:()=>void,settlementEntered!:()=>void,releaseSettlement!:()=>void;
+  const atReservation=new Promise<void>(resolve=>{reservationEntered=resolve;});
+  const reservationGate=new Promise<void>(resolve=>{releaseReservation=resolve;});
+  const atSettlement=new Promise<void>(resolve=>{settlementEntered=resolve;});
+  const settlementGate=new Promise<void>(resolve=>{releaseSettlement=resolve;});
+  // These gates execute inside genuine Access transactions, not replacement SQL.
+  // Logical clocks simulate 15s at each gate; this is not 30s of real wall latency.
+  const gatedAccess:typeof access={...access,transaction:action=>{
+   const position=++transactions;
+   return access.transaction(async client=>{
+    if(position===4){settlementEntered();await settlementGate;}
+    const result=await action(client);
+    if(position===3){reservationEntered();await reservationGate;}
+    return result;
+   });
+  }};
+  effect=async()=>{wallMs+=1;monotonicNs+=1000000n;return{value:{summary:'Résumé synthétique mesuré.'},actualMicros:20};};
+  const measured=createSummaryService(gatedAccess,{...deps,requestTimeoutMs:25000,clock:async()=>new Date(wallMs),monotonicNowNs:()=>monotonicNs},pool);
+  const running=measured.runSummaryBatch(1);
+  try{
+   await atReservation;expect(calls).toHaveLength(0);
+   expect((await row(content.id)).request_id).toBeNull(); // Reservation not committed yet.
+   wallMs+=15000;monotonicNs+=15000000000n;releaseReservation();
+   await atSettlement;expect(calls).toHaveLength(1);
+   const pending=await row(content.id);
+   expect((await pool.query('SELECT actual_micros,settled_at FROM hestia_classification_request WHERE id=$1',[pending.request_id])).rows).toEqual([{actual_micros:null,settled_at:null}]);
+   expect((await pool.query('SELECT * FROM hestia_provider_invocation_observation WHERE request_id=$1',[pending.request_id])).rows).toEqual([]);
+   wallMs+=15000;monotonicNs+=15000000000n;releaseSettlement();
+   expect(await running).toEqual({processed:1});
+  }finally{releaseReservation();releaseSettlement();await running;}
+  expect(transactions).toBe(4);
+  const state=await row(content.id);expect(state).toMatchObject({status:'ready',text:'Résumé synthétique mesuré.'});
+  const request=(await pool.query('SELECT actual_micros,status,EXTRACT(EPOCH FROM (settled_at-sent_at))*1000 AS db_ms FROM hestia_classification_request WHERE id=$1',[state.request_id])).rows[0];
+  expect(request).toMatchObject({actual_micros:'20',status:'complete'});expect(Number(request.db_ms)).toBe(30001);
+  expect((await pool.query('SELECT elapsed_us,timeout_ms,measurement_status,outcome FROM hestia_provider_invocation_observation WHERE request_id=$1',[state.request_id])).rows).toEqual([{elapsed_us:'1000',timeout_ms:25000,measurement_status:'OBSERVED',outcome:'resolved'}]);
+ });
  it('keeps Inbox analysis ready and its charge durable when only the observation writer fails',async()=>{
   const content=await original(),attachmentId=await pendingArrival(content.id);
   await pool.query("UPDATE hestia_content_summary SET permitted=false,status='unavailable' WHERE content_id=$1",[content.id]);

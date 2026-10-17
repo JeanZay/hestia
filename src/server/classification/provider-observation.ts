@@ -18,6 +18,7 @@ export function observeProviderInvocation<T>(action: (signal: AbortSignal) => Pr
   }
   const result = new Promise<T>((resolve, reject) => {
     let start: bigint | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (outcome: ProviderObservation["outcome"], value: T | unknown) => {
       if (finished) return;
       finished = true;
@@ -29,9 +30,14 @@ export function observeProviderInvocation<T>(action: (signal: AbortSignal) => Pr
       if (outcome === "timeout") controller.abort();
       if (outcome === "resolved") resolve(value as T); else reject(value);
     };
-    const timer = setTimeout(() => finish("timeout", new Error(timeoutMessage)), timeoutMs);
     start = sample();
-    try { Promise.resolve(action(controller.signal)).then(value => finish("resolved", value), error => finish("rejected", error)); }
+    try {
+      const pending = action(controller.signal);
+      // Preserve the existing bounded race: synchronous adapter preparation
+      // precedes timer installation, but remains included in the observation.
+      timer = setTimeout(() => finish("timeout", new Error(timeoutMessage)), timeoutMs);
+      Promise.resolve(pending).then(value => finish("resolved", value), error => finish("rejected", error));
+    }
     catch (error) { finish("rejected", error); }
   });
   return { result, observation: () => observation };
