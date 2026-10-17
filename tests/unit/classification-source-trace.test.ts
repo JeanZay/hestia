@@ -40,6 +40,19 @@ describe("typed expected sources, not text-origin inference", () => {
 });
 
 describe("bounded source trace through the existing normalizer", () => {
+  it("indexes each raw list independently and rejects concatenated-list offsets without repair", () => {
+    const value = raw();
+    value.existingFolderSuggestions[0].relevance = "relevant";
+    value.sourceTrace[0].existingIndices = [0, 1];
+    const normalized = JSON.parse(normalize(value)!);
+    expect(normalized.existing.map((row: { folderId: string }) => row.folderId)).toEqual(value.existingFolderSuggestions.map(row => row.folderId));
+    expect(normalized.created).toEqual([{ parentId: null, levels: ["Assurances"], reason: value.newFolderPathSuggestions[0].reason }]);
+    for (const concatenatedIndex of [2, 5]) {
+      const invalid = structuredClone(value);
+      invalid.sourceTrace[1].createdIndices = [concatenatedIndex];
+      expect(normalize(invalid)).toBeNull();
+    }
+  });
   it("references both raw lists before filtering, preserving reasons and the current DTO", () => {
     const normalized = normalize(raw());
     expect(JSON.parse(normalized!)).toEqual({ existing: [{ folderId: "10000000-0000-4000-8000-000000000001", reason: "Le document concerne l’eau." }],
@@ -150,8 +163,8 @@ describe("actual provider entry points with simulated transport only", () => {
     const trace = JSON.parse(requests[0]).response_format.json_schema.schema.properties.sourceTrace;
     expect(trace.minItems).toBe(expected.length); expect(trace.maxItems).toBe(expected.length); expect(trace.items.properties.source.enum).toEqual(expected);
   });
-  it("rejects the old real profile contract before any simulated transport", async () => {
-    let calls = 0; const old = createOpenRouterClassificationProvider([{ ...profile, classificationContractSha256: "74eede3e433686bebaca688c31e83eda0de8ae6a3daaf76432da0a69b525c6a3" }], async () => { calls++; throw Error("FORBIDDEN"); }, () => date);
+  it.each(["74eede3e433686bebaca688c31e83eda0de8ae6a3daaf76432da0a69b525c6a3", "ba7b843d4e4063440a339bea4b781375c4e44b234154b8e2bc8f49b2265adc4c"])("rejects the old real profile contract %s before any simulated transport", async classificationContractSha256 => {
+    let calls = 0; const old = createOpenRouterClassificationProvider([{ ...profile, classificationContractSha256 }], async () => { calls++; throw Error("FORBIDDEN"); }, () => date);
     expect(old.quote(config, payload)).toBeNull(); await expect(old.analyze(config, payload, "SYNTHETIC", new AbortController().signal)).rejects.toThrow("Unqualified"); expect(calls).toBe(0);
   });
 });
