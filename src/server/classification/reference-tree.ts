@@ -397,7 +397,20 @@ export const CLASSIFICATION_RELEVANCE_SCHEMA = Object.freeze({
 /** Provider-only contract. Validate the entire bounded response before removing
  * negative/uncertain assessments; never infer relevance from free-form prose.
  * null lets the caller settle known costs before common DTO validation fails. */
-export function normalizeClassificationSuggestions(text: string | null, existingKey: string, createdKey: string): string | null {
+export type ClassificationSource = "document" | "mail" | "comment";
+/** Source presence comes from typed server fields, never from parsing Capture text. */
+export function classificationExpectedSources(payload: ContextPayload): readonly ClassificationSource[] {
+  const context = preparationContext(payload);
+  const sources: ClassificationSource[] = ["document"];
+  if (typeof context === "string") {
+    if (context.trim()) sources.push("comment");
+  } else if (context) {
+    if (context.mail.subject.trim() || context.mail.body.trim()) sources.push("mail");
+    if (context.comment.trim()) sources.push("comment");
+  }
+  return sources;
+}
+export function normalizeClassificationSuggestions(text: string | null, existingKey: string, createdKey: string, expectedSources?: readonly ClassificationSource[]): string | null {
   const shape = (value: unknown, keys: readonly string[]): value is Record<string, unknown> =>
     value !== null && typeof value === "object" && !Array.isArray(value)
       && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -405,7 +418,8 @@ export function normalizeClassificationSuggestions(text: string | null, existing
   try {
     if (typeof text !== "string" || Buffer.byteLength(text) > 16_384) return null;
     const value: unknown = JSON.parse(text);
-    if (!shape(value, [existingKey, createdKey]) && !shape(value, [existingKey, createdKey, "contradiction"])) return null;
+    const keys = expectedSources === undefined ? [existingKey, createdKey] : ["sourceTrace", existingKey, createdKey, "contradiction"];
+    if (!shape(value, keys) && !(expectedSources === undefined && shape(value, [existingKey, createdKey, "contradiction"]))) return null;
     if (value.contradiction !== undefined && value.contradiction !== null
       && (typeof value.contradiction !== "string" || Array.from(value.contradiction).length > 1000)) return null;
     const existing = value[existingKey], created = value[createdKey];
@@ -415,6 +429,36 @@ export function normalizeClassificationSuggestions(text: string | null, existing
       || created.some(row => !shape(row, ["parentId", "levels", "reason", "relevance"])
         || (row.parentId !== null && typeof row.parentId !== "string") || !Array.isArray(row.levels)
         || row.levels.some(name => typeof name !== "string") || typeof row.reason !== "string" || !decision(row.relevance))) return null;
+    if (expectedSources !== undefined) {
+      if (expectedSources.length > 3 || new Set(expectedSources).size !== expectedSources.length
+        || expectedSources.some(source => !["document", "mail", "comment"].includes(source))
+        || !Array.isArray(value.sourceTrace) || value.sourceTrace.length !== expectedSources.length) return null;
+      const boundedReason = (reason: string) => reason.trim().length > 0 && Array.from(reason).length <= 500;
+      if (existing.some(row => !boundedReason(row.reason))
+        || created.some(row => !boundedReason(row.reason) || row.levels.length < 1 || row.levels.length > CAPTURE_PATH_MAX_LEVELS
+          || row.levels.some((level: string) => !level.trim() || Array.from(level).length > 120))) return null;
+      const seen = new Set<string>(), coveredExisting = new Set<number>(), coveredCreated = new Set<number>();
+      for (const trace of value.sourceTrace) {
+        if (!shape(trace, ["source", "decision", "existingIndices", "createdIndices", "reason"])
+          || typeof trace.source !== "string" || !expectedSources.some(source => source === trace.source) || seen.has(trace.source)
+          || typeof trace.decision !== "string" || !["supported", "no-positive-support", "no-authorized-destination"].includes(trace.decision)
+          || !Array.isArray(trace.existingIndices) || !Array.isArray(trace.createdIndices)
+          || typeof trace.reason !== "string" || !boundedReason(trace.reason)) return null;
+        seen.add(trace.source);
+        for (const [indices, candidates, covered] of [
+          [trace.existingIndices, existing, coveredExisting], [trace.createdIndices, created, coveredCreated],
+        ] as const) {
+          if (!Array.isArray(indices) || indices.length > 8 || new Set(indices).size !== indices.length
+            || indices.some(index => typeof index !== "number" || !Number.isSafeInteger(index) || index < 0
+              || index >= candidates.length || candidates[index].relevance !== "relevant")) return null;
+          for (const index of indices) covered.add(index);
+        }
+        const count = trace.existingIndices.length + trace.createdIndices.length;
+        if (trace.decision === "supported" ? count === 0 : count !== 0) return null;
+      }
+      if (existing.some((row, index) => row.relevance === "relevant" && !coveredExisting.has(index))
+        || created.some((row, index) => row.relevance === "relevant" && !coveredCreated.has(index))) return null;
+    }
     return JSON.stringify({
       existing: existing.filter(row => row.relevance === "relevant").map(({ folderId, reason }) => ({ folderId, reason })),
       created: created.filter(row => row.relevance === "relevant").map(({ parentId, levels, reason }) => ({ parentId, levels, reason })),

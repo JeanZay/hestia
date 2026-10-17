@@ -1,7 +1,8 @@
 import { CLASSIFICATION_REFERENCE, classificationContext } from "../../src/server/classification/reference-tree";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_REASONING_POLICY, OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
+import { createOpenRouterClassificationProvider, OPENROUTER_CLASSIFICATION_REASONING_POLICY, OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, OPENROUTER_CLASSIFICATION_MODEL, OPENROUTER_CLASSIFICATION_CONTRACT_SHA256, openRouterClassificationContextBytes, openRouterClassificationSchema, parseQualifiedOpenRouterProfile, type QualifiedOpenRouterProfile } from "../../src/server/classification/openrouter";
+import type { ClassificationSource } from "../../src/server/classification/reference-tree";
 import { parseClassificationResult } from "../../src/server/classification/validation";
 import { inboxAnalysisContext, typedInboxAnalysisContext, projectInboxAnalysis } from "../../src/server/inbox/analysis";
 import { SUMMARY_CONTRACT_SHA256 } from "../../src/server/summary/provider";
@@ -21,9 +22,13 @@ const folder = { id: "10000000-0000-4000-8000-000000000001", name: "Factures syn
 const payload = { bytes: Buffer.from("synthetic selected document"), mediaType: "application/pdf" as const, folders: [folder] };
 const suggestions = { existing: [{ folderId: folder.id, reason: "Facture synthétique" }], created: [] };
 const signal = () => new AbortController().signal;
-function external(value: { existing: unknown[]; created: unknown[] }) {
+function external(value: { existing: unknown[]; created: unknown[] }, sources = ["document"]) {
   const assessments = (rows: unknown[]) => rows.map(row => ({ relevance: "relevant", ...(row as Record<string, unknown>) }));
-  return JSON.stringify({ existingFolderSuggestions: assessments(value.existing), newFolderPathSuggestions: assessments(value.created) });
+  const existing = assessments(value.existing), created = assessments(value.created);
+  const indices = (rows: { relevance: unknown }[]) => rows.flatMap((row, index) => row.relevance === "relevant" ? [index] : []);
+  const existingIndices = indices(existing), createdIndices = indices(created);
+  const sourceTrace = sources.map(source => ({ source, decision: existingIndices.length + createdIndices.length ? "supported" : "no-positive-support", existingIndices, createdIndices, reason: "Décision synthétique de format, sans preuve sémantique du modèle." }));
+  return JSON.stringify({ sourceTrace, existingFolderSuggestions: existing, newFolderPathSuggestions: created, contradiction: null });
 }
 function body(content = external(suggestions), usage: unknown = { cost: 0.000001, cost_details: { upstream_inference_cost: 90 } }) {
   return { model: OPENROUTER_CLASSIFICATION_MODEL, choices: [{ finish_reason: "stop", message: { role: "assistant", content } }], usage };
@@ -133,16 +138,18 @@ describe("partial private context through the actual provider request, with no s
     // A real model making this categorical assertion must still fail semantic review.
     const contradiction = "Le contexte partiel ne s'applique pas à ce document.";
     const reason = "Le document synthétique est une facture d'eau.";
-    const content = JSON.stringify({ existingFolderSuggestions: [{ folderId: folder.id, reason, relevance: "relevant" }], newFolderPathSuggestions: [], contradiction });
+    const sources = inboxContext ? ["document", "mail", ...(inboxContext.comment.trim() ? ["comment"] : [])] : ["document", "comment"];
+    const content = JSON.stringify({ ...JSON.parse(external({ existing: [{ folderId: folder.id, reason }], created: [] }, sources)), contradiction });
     const { provider, transport } = setup(body(content));
     const folders = [{ ...folder, path: [{ id: folder.id, name: folder.name }] }];
     const outcome = await provider.analyze(config, { ...payload, mediaType: "image/jpeg", folders, canCreateRoot: true, ...(inboxContext ? { inboxContext } : { comment: context }) }, "synthetic", signal());
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
     expect(request.messages[0].role).toBe("system");
-    expect(request.response_format.json_schema.schema.required).toEqual(["existingFolderSuggestions", "newFolderPathSuggestions", "contradiction"]);
+    expect(request.response_format.json_schema.schema.required).toEqual(["sourceTrace", "existingFolderSuggestions", "newFolderPathSuggestions", "contradiction"]);
     expect(request.messages[0].content).not.toContain(context);
     expect(JSON.parse(request.messages[1].content[0].text)).toMatchObject({ preparationComment: inboxContext ?? context, canCreateRoot: true });
-    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schema: request.response_format.json_schema.schema, inputContract: OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, reasoningPolicy: OPENROUTER_CLASSIFICATION_REASONING_POLICY })).digest("hex");
+    const schemas = [[], ["document"], ["document", "mail"], ["document", "comment"], ["document", "mail", "comment"]].map(sources => openRouterClassificationSchema(sources as ClassificationSource[]));
+    const requestContract = createHash("sha256").update(JSON.stringify({ reference: CLASSIFICATION_REFERENCE, instructions: request.messages[0].content, schemas, inputContract: OPENROUTER_CLASSIFICATION_INPUT_CONTRACT, reasoningPolicy: OPENROUTER_CLASSIFICATION_REASONING_POLICY })).digest("hex");
     expect(requestContract).toBe(OPENROUTER_CLASSIFICATION_CONTRACT_SHA256);
     expect(requestContract).not.toBe("5c21bfa469a581f671af65b462a2596d4e137143789a394ddb3ebcddd1ce3013");
     expect(SUMMARY_CONTRACT_SHA256).toBe("912acd656c07fc4cfd46c77a148492f31f01bc6c6b9f52d372a66052e3ecfb2c");
@@ -380,12 +387,12 @@ describe("OpenRouter cost settlement and unusable suggestions", () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
   it("checks with a bounded strict JSON call and no document, and rejects overruns", async () => {
-    const { provider, transport } = setup(body(external({ existing: [], created: [] })));
+    const { provider, transport } = setup(body(external({ existing: [], created: [] }, [])));
     expect(await provider.check(config, "synthetic", signal())).toEqual({ status: "accepted", actualMicros: 2 });
     const request = JSON.parse(String(transport.mock.calls[0][1]?.body));
-    expect(request.messages).toEqual([{ role: "user", content: 'Retourne uniquement {"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"contradiction":null}.' }]);
+    expect(request.messages).toEqual([{ role: "user", content: 'Sans document ni contexte, retourne uniquement {"sourceTrace":[],"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"contradiction":null}.' }]);
     expect(request.plugins).toEqual([]); expect(request.max_tokens).toBe(profile.maxOutputTokens);
-    expect(await setup(body(external({ existing: [], created: [] }), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
+    expect(await setup(body(external({ existing: [], created: [] }, []), { cost: 1 })).provider.check(config, "synthetic", signal())).toEqual({ status: "unreachable", actualMicros: 1_100_000 });
     expect((await setup(body("OK")).provider.check(config, "synthetic", signal())).status).toBe("unreachable");
   });
 });
@@ -395,7 +402,7 @@ describe("source precision protocol, not a model-semantic qualification", () => 
   it("accepts family-only format without repairing output", async () => {
     // The stub establishes admissible format and unchanged projection, not whether a model would choose it.
     const familyOnly = { existing: [], created: [{ parentId: null, levels: ["Famille synthétique"], reason: "Le contexte demande cet usage général." }] };
-    const { provider, transport } = setup(body(external(familyOnly)));
+    const { provider, transport } = setup(body(external(familyOnly, ["document", "comment"])));
     const selected = { ...payload, folders: [], canCreateRoot: true, comment: "Je souhaite cet usage général." };
     const outcome = await provider.analyze(config, selected, "synthetic", signal());
     expect(parseClassificationResult(outcome.value, [], 16_384, 8, true, selected.comment)).toEqual(familyOnly);

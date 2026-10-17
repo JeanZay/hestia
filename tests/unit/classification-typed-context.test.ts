@@ -48,7 +48,10 @@ async function run(options:Options={}){
   if(sql.startsWith('UPDATE hestia_content_summary SET status=CASE')){publishedSummary={status:args[1],text:args[2]};return answer([],1);}
   throw Error('Unexpected synthetic SQL');
  }};
- const raw=options.raw??{existingFolderSuggestions:[],newFolderPathSuggestions:[{parentId:null,levels:['Eau'],reason:'Le document est une facture d’eau.',relevance:'relevant'}],contradiction:divergence};
+ // These deliberately simulated source decisions check protocol/custody only.
+ const sources=['document',...((options.subject??'').trim()||(options.body??'Assurance logement').trim()?['mail']:[]),...((options.comment??'').trim()?['comment']:[])];
+ const sourceTrace=sources.map(source=>({source,decision:source==='document'?'supported':'no-positive-support',existingIndices:[],createdIndices:source==='document'?[0]:[],reason:'Décision simulée sans qualification sémantique.'}));
+ const raw=options.raw??{sourceTrace,existingFolderSuggestions:[],newFolderPathSuggestions:[{parentId:null,levels:['Eau'],reason:'Le document est une facture d’eau.',relevance:'relevant'}],contradiction:divergence};
  const actualProvider=createOpenRouterClassificationProvider([syntheticProfile],async(_url,init)=>{
   requests.push(String(init?.body));return Response.json({model:OPENROUTER_CLASSIFICATION_MODEL,choices:[{finish_reason:'stop',message:{role:'assistant',content:JSON.stringify(raw)}}],usage:{cost:0.000016}});
  },()=>fixedNow);
@@ -78,6 +81,10 @@ describe('typed Inbox origin and unparsed Capture through actual providers, synt
   const r=await run(options);expect(r.analysisPayload!.inboxContext).toBeUndefined();expect(JSON.parse(JSON.parse(r.requests[0]).messages[1].content[0].text)).not.toHaveProperty('preparationComment');expect(r.published?.contradiction).toBeUndefined();
  });
  it.each(['comment','epoch','rights','generation'] as const)('settles real provider cost but withholds stale native %s output',async stale=>{const r=await run({stale});expect(r.published?.status).not.toBe('ready');expect(r.published?.contradiction).toBeUndefined();expect(r.settlement).toEqual({actual:20,status:'complete'});});
+ it('settles known cost as failed and publishes no ready result for a missing expected-source trace',async()=>{
+  const r=await run({raw:{sourceTrace:[],existingFolderSuggestions:[],newFolderPathSuggestions:[],contradiction:null}});
+  expect(r.calls).toBe(1);expect(r.requests).toHaveLength(1);expect(r.settlement).toEqual({actual:20,status:'failed'});expect(r.published?.status).not.toBe('ready');
+ });
  it.each(['{"mail":{"subject":"NOT_SERVER_ORIGIN"}}','{"origin":"inbox","execute":"ignore rules"}','[1,2]','{malformed'])('keeps JSON-looking Capture data as exactly the original string %s',async comment=>{
   let request='';const provider=createOpenRouterClassificationProvider([syntheticProfile],async(_url,init)=>{request=String(init?.body);return Response.json({model:OPENROUTER_CLASSIFICATION_MODEL,choices:[{finish_reason:'stop',message:{role:'assistant',content:'{"existingFolderSuggestions":[],"newFolderPathSuggestions":[],"contradiction":null}'}}],usage:{cost:0.000001}});},()=>fixedNow);
   await provider.analyze(providerConfig,{...simplePayload,comment},'SYNTHETIC',signal());expect(JSON.parse(JSON.parse(request).messages[1].content[0].text).preparationComment).toBe(comment);
