@@ -123,6 +123,31 @@ describe("classification SQL budget, admission and write-only configuration", ()
     expect((await analyze(key, service, cookie, { artifactId: randomUUID() })).status).toBe(409);
     expect((await service.handleCaptureAnalysis(request(undefined, "GET", memberCookie), captureId, dto.analysisId)).status).toBe(404);
     expect((await (await settings()).json()).settings).toMatchObject({ spentMicros: 20, reservedMicros: 0 });
+    const observations = (await pool.query('SELECT * FROM hestia_provider_invocation_observation WHERE request_id=$1', [dto.analysisId])).rows;
+    expect(observations).toHaveLength(1);
+    expect(observations[0]).toMatchObject({ operation: 'analysis', outcome: 'resolved', measurement_status: 'OBSERVED', timeout_ms: 2000 });
+    expect(Number(observations[0].elapsed_us)).toBeGreaterThanOrEqual(0);
+  });
+  it("keeps Capture and check costs/results committed when observation acquisition fails", async () => {
+    await save();
+    const brokenPool = { connect: async () => { throw Error('Synthetic observation unavailable'); } } as unknown as Pool;
+    const isolated = createClassificationService(brokenPool, access, deps);
+    const dto = await (await analyze(randomUUID(), isolated)).json();
+    expect(dto.status).toBe('complete');
+    const current = (await (await settings()).json()).settings;
+    const check = await isolated.handleClassificationCheck(request({ version: current.version, idempotencyKey: randomUUID() }));
+    expect(await check.json()).toEqual({ status: 'accepted' });
+    expect((await ledger()).map(r => [r.kind, r.actual_micros, r.status]).sort()).toEqual([['analysis', '20', 'complete'], ['check', '5', 'complete']]);
+    expect((await pool.query('SELECT * FROM hestia_provider_invocation_observation WHERE request_id=ANY($1::uuid[])', [(await ledger()).map(r => r.id)])).rows).toEqual([]);
+  });
+  it("measures checks separately and leaves idempotent retries without a second observation", async () => {
+    await save(); const current = (await (await settings()).json()).settings, key = randomUUID();
+    const send = () => service.handleClassificationCheck(request({ version: current.version, idempotencyKey: key }));
+    expect(await (await send()).json()).toEqual({ status: 'accepted' });
+    expect(await (await send()).json()).toEqual({ status: 'accepted' });
+    expect(checks).toBe(1);
+    const row = (await ledger())[0];
+    expect((await pool.query('SELECT operation,outcome FROM hestia_provider_invocation_observation WHERE request_id=$1', [row.id])).rows).toEqual([{ operation: 'check', outcome: 'resolved' }]);
   });
   it("admits root suggestions for an active member with no existing folders without creating anything", async () => {
     await save(); folders = [];

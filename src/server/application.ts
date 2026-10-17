@@ -274,7 +274,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
       .map(folder=>({id:folder.id,name:folder.name,path:folder.breadcrumbs,canCreate:folder.capabilities.includes('modifier')})),
     providers:[],allowRemote:false,...DEFAULT_CLASSIFICATION_LIMITS,...dependencies?.classification,
     summaryProviders:[],...dependencies?.summary,
-  });
+  },pool);
   const inbox=createInboxService(pool,access,{store,budget,clock,environment:config.environment,
     ...dependencies?.inbox,enqueueAnalysis:summaries.enqueueAnalysis,requestAnalysis:summaries.requestAnalysis,readSummary:summaries.readSummary,settingsChanged:summaries.settingsChanged});
   const revisions=createRevisionsService(pool,access,{store,budget,now:dependencies?.now});

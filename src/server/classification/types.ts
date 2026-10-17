@@ -48,6 +48,8 @@ export interface ClassificationDependencies {
   clock: ServerClock; capture: CaptureAnalysisBridge; readAuthorizedFolders: ReadAuthorizedFolders;
   credentialCipher: ClassificationCredentialCipher; providers: readonly ClassificationProvider[]; allowRemote: boolean;
   requestTimeoutMs: number; maxResultBytes: number; maxSuggestions: number;
+  /** Test injection only; production uses process.hrtime.bigint(). */
+  monotonicNowNs?: () => bigint;
   /** Optional server ceiling; household administrators cannot raise it. */
   deploymentLimitMicros?: number;
 }

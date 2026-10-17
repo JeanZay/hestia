@@ -4,6 +4,7 @@ import { HttpError, guarded, invalid, isUuid, json, response, textField, unavail
 import type { ClassificationAnalysisDto, ClassificationSettingsDto } from "../../shared/capture-contract";
 import type { AnalysisIdentity, AuthorizedFolder, ClassificationConfiguration, ClassificationDependencies, ProviderCost, ProviderPayload } from "./types";
 import { micros, parseClassificationResult, utcMonth, version } from "./validation";
+import { observeProviderInvocation, persistProviderObservation } from "./provider-observation";
 
 type ConfigRow = { version: string; provider: string; model: string; enabled: boolean; monthly_limit_micros: string; currency: string; credential_sealed: string | null; key_set_at: Date | null };
 type RequestRow = { id: string; actor_id: string; actor_epoch: string; identity_hash: string; identity: AnalysisIdentity | null; folders: AuthorizedFolder[] | null; config_version: string; status: ClassificationAnalysisDto["status"]; result: unknown; reserved_micros: string; sent_at: Date | null; settled_at: Date | null; kind: "analysis" | "check" };
@@ -18,7 +19,7 @@ const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(cano
 const associatedData = (provider: string) => `hestia-classification:1:${provider}`;
 const configured = (row: ConfigRow): ClassificationConfiguration => ({ version: Number(row.version), provider: row.provider, model: row.model, enabled: row.enabled, monthlyLimitMicros: Number(row.monthly_limit_micros), currency: row.currency });
 
-export function createClassificationService(_pool: Pool, access: Access, deps: ClassificationDependencies) {
+export function createClassificationService(pool: Pool, access: Access, deps: ClassificationDependencies) {
   if (![deps.requestTimeoutMs, deps.maxResultBytes, deps.maxSuggestions].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("Invalid classification limits");
   const deploymentLimit = deps.deploymentLimitMicros === undefined ? 1_000_000_000_000 : micros(deps.deploymentLimitMicros, true);
   const effectiveLimit = (row: ConfigRow) => Math.min(micros(Number(row.monthly_limit_micros)), deploymentLimit);
@@ -81,14 +82,6 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
         status=CASE WHEN kind='analysis' AND identity IS NULL THEN 'stale' WHEN $2::bigint>reserved_micros THEN 'failed' ELSE $4 END,settled_at=$5
         WHERE id=$1 AND settled_at IS NULL`, [id, cost, JSON.stringify(result), status, await deps.clock(client)]);
     });
-  }
-  async function bounded<T>(action: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([action(controller.signal), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error("Classification timeout")); }, deps.requestTimeoutMs);
-      })]);
-    } finally { clearTimeout(timer); }
   }
   async function visible(client: PoolClient, actor: Actor, row: RequestRow): Promise<ClassificationAnalysisDto> {
     if (row.actor_id !== actor.id || row.kind !== "analysis" || !row.identity) throw unavailable();
@@ -200,12 +193,14 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
         });
       } catch (error) { await settle(reservation.row.id, 0, null, "failed"); throw error; }
       let actual: unknown = null;
+      const invocation = observeProviderInvocation(signal => reservation.selected.analyze(configured(reservation.config), reservation.payload, credential, signal), deps.requestTimeoutMs, deps.monotonicNowNs);
       try {
-        const outcome = await bounded(signal => reservation.selected.analyze(configured(reservation.config), reservation.payload, credential, signal));
+        const outcome = await invocation.result;
         actual = outcome.actualMicros;
         const result = parseClassificationResult(outcome.value, reservation.payload.folders, deps.maxResultBytes, deps.maxSuggestions, reservation.payload.canCreateRoot, reservation.payload.comment);
         await settle(reservation.row.id, actual, result, "complete");
       } catch { await settle(reservation.row.id, actual, null, "failed"); }
+      await persistProviderObservation(pool, reservation.row.id, "analysis", invocation.observation());
       return handleCaptureAnalysis(new Request(request.url, { headers: request.headers }), captureId, reservation.row.id);
     });
   }
@@ -235,12 +230,14 @@ export function createClassificationService(_pool: Pool, access: Access, deps: C
         });
       } catch (error) { await settle(reservation.row.id, 0, null, "failed"); throw error; }
       let status: "accepted" | "invalid" | "unreachable" = "unreachable", actual: unknown = null;
+      const invocation = observeProviderInvocation(signal => reservation.selected.check(configured(reservation.config), credential, signal), deps.requestTimeoutMs, deps.monotonicNowNs);
       try {
-        const outcome = await bounded(signal => reservation.selected.check(configured(reservation.config), credential, signal));
+        const outcome = await invocation.result;
         if (["accepted", "invalid", "unreachable"].includes(outcome.status)) status = outcome.status;
         actual = outcome.actualMicros;
       } catch { /* Ambiguous network failure retains its complete reservation. */ }
       await settle(reservation.row.id, actual, status, status === "accepted" ? "complete" : "failed");
+      await persistProviderObservation(pool, reservation.row.id, "check", invocation.observation());
       return access.withActor(request, async (client, actor) => {
         await manager(client, actor); const row = await config(client);
         if (Number(row.version) !== expected) throw conflict();
