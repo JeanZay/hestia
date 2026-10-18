@@ -66,18 +66,25 @@ describe('closed Google MIME inventory', () => {
  ])('rejects a structural ambiguity before selecting any attachment', build => { expect(() => scanMime(build())).toThrow(); });
  it('never extracts an archive or nested attached message', () => { const nested = part('', Buffer.from('From: other@example.invalid\r\n\r\nbody').toString('base64'), 'message/rfc822'); const selected = selectAttachments(scanMime(mail([nested]))); expect(selected.attachments[0].mediaType).toBe('message/rfc822'); expect(selected.attachments).toHaveLength(1); });
  it('bounds count, depth and cumulative attachment bytes', () => { const selected = selectAttachments(scanMime(mail(Array.from({ length: 21 }, () => part())))); expect(selected.attachments).toHaveLength(20); expect(selected.rejected[0].reason).toBe('attachment_count'); expect(() => scanMime(mail(Array.from({ length: 201 }, () => part())))).toThrow(); });
- it('authenticates real cryptography over the synthetic MIME and rejects spoofed identity and body changes', async () => {
+ it.each(['Buffer', 'Uint8Array', 'offset Uint8Array'])('authenticates real cryptography over synthetic MIME from %s and rejects spoofed identity and body changes', async kind => {
   const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const privateKey = createPrivateKey(pair.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   const key = createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64');
   const now = new Date('2026-10-15T10:00:00Z');
   const signed = await dkimSign(mail(), { headerList: 'From:To:Subject:Message-ID:Date:MIME-Version:Content-Type', signTime: now, canonicalization: 'relaxed/relaxed', signatureData: [{ signingDomain: 'gmail.com', selector: 'synthetic', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }) }] });
-  const bytes = Buffer.concat([Buffer.from(signed.signatures), mail()]);
+  const input = (value: Buffer) => {
+   if (kind === 'Buffer') return value;
+   if (kind === 'Uint8Array') return new Uint8Array(value);
+   const backing = new Uint8Array(value.length + 16).fill(255); backing.set(value, 7);
+   return new Uint8Array(backing.buffer, 7, value.length);
+  };
+  const signedBytes = Buffer.concat([Buffer.from(signed.signatures), mail()]), bytes = input(signedBytes);
   const resolver = async () => [[`v=DKIM1; k=rsa; p=${key}`]];
   await expect(authenticateGoogle(bytes, scanMime(bytes), 'technical@gmail.com', now, resolver)).resolves.toEqual({ sender: 'sender@gmail.com', recipient: 'technical@gmail.com' });
-  const changed = Buffer.from(bytes.toString().replace('YWJj', 'eHl6'));
+  expect(Buffer.from(bytes).equals(signedBytes)).toBe(true);
+  const changed = input(Buffer.from(signedBytes.toString().replace('YWJj', 'eHl6')));
   await expect(authenticateGoogle(changed, scanMime(changed), 'technical@gmail.com', now, resolver)).rejects.toThrow();
-  const from = Buffer.from(bytes.toString().replace('sender@gmail.com', 'forged@gmail.com'));
+  const from = input(Buffer.from(signedBytes.toString().replace('sender@gmail.com', 'forged@gmail.com')));
   await expect(authenticateGoogle(from, scanMime(from), 'technical@gmail.com', now, resolver)).rejects.toThrow();
  });
 });
