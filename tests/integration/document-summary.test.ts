@@ -31,8 +31,13 @@ function paddedPng(image:Buffer,size=20*1024*1024){
 }
 
 describe('document-only summaries over real PostgreSQL, objects and durable budget',()=>{
- const config=readServerConfig();
- if(config.environment!=='local'||!/^\/hestia_test_[a-z0-9_]+$/.test(new URL(config.databaseUrl).pathname)||!/^hestia-app-[a-f0-9]{16}$/.test(process.env.HESTIA_TEST_RUN_ID??''))throw new Error('Owned synthetic integration bench required');
+ const parent=readServerConfig(),url=new URL(parent.databaseUrl),runId=process.env.HESTIA_TEST_RUN_ID??'';
+ if(parent.environment!=='local'||!['127.0.0.1','localhost'].includes(url.hostname)||!/^hestia-app-[a-f0-9]{16}$/.test(runId)||url.pathname!==`/hestia_test_${runId.slice('hestia-app-'.length)}`)throw new Error('Owned synthetic integration bench required');
+ // Summary batches deliberately inspect the whole household queue. Keep this
+ // suite's clocks and job limits independent of other suites' synthetic jobs,
+ // while all three summary/analysis classes still compete inside this database.
+ const database=url.pathname.slice(1)+'_summary';url.pathname='/'+database;
+ const config={...parent,databaseUrl:url.toString()},admin=new Pool({connectionString:parent.databaseUrl,max:1});
  const pool=new Pool({connectionString:config.databaseUrl,max:8}),real=createObjectStore(),access=createAccess(pool,config,createAuth(pool,config));
  const cipher=createClassificationCredentialCipher('synthetic-summary-credential-key-123456789');
  const budget=createStorageBudget();let getHook:(()=>Promise<void>)|undefined;
@@ -100,7 +105,17 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   const document=(await data(await app.handleCaptureFinalize(req({...input,previewToken:preview.previewToken,idempotencyKey:randomUUID()}),c.id))).document;
   ownedHashes.add(document.sha256);return document.id as string;
  }
- beforeAll(async()=>{expect((await pool.query("SELECT to_regclass('hestia_bench_marker') AS marker")).rows[0].marker).toBeTruthy();await migrateDatabase(pool,config);actorId=await provisionSyntheticMember(pool,{email,name:'Auteur résumé synthétique',password});});
+ beforeAll(async()=>{
+  expect((await admin.query('SELECT run_id FROM hestia_bench_marker')).rows).toEqual([{run_id:runId}]);
+  await admin.query(`CREATE DATABASE "${database}"`);await migrateDatabase(pool,config);
+  await pool.query('CREATE TABLE hestia_bench_marker(run_id text PRIMARY KEY)');await pool.query('INSERT INTO hestia_bench_marker VALUES($1)',[runId]);
+  expect((await pool.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
+  expect((await pool.query('SELECT run_id FROM hestia_bench_marker')).rows).toEqual([{run_id:runId}]);
+  const previous=process.env.DATABASE_URL;
+  try{process.env.DATABASE_URL=config.databaseUrl;actorId=await provisionSyntheticMember(pool,{email,name:'Auteur résumé synthétique',password});}
+  finally{if(previous===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=previous;}
+  console.log(JSON.stringify({summaryDatabase:database,parentRunId:runId,scope:'owned-run-summary-suite'}));
+ });
  beforeEach(async()=>{
   await pool.query('UPDATE hestia_summary_scheduler SET next_lane=0');
   await pool.query('UPDATE "rateLimit" SET "lastRequest"=0');const login=await app.handleAuth(new Request(config.origin+'/api/auth/sign-in/email',{method:'POST',headers:{origin:config.origin,'content-type':'application/json'},body:JSON.stringify({email,password})}));expect(login.status).toBe(200);cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ');
@@ -111,7 +126,7 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   folderId=(await data(await app.handleFolders(req({name:`Résumé ${randomUUID()}`})),201)).folder.id;
   image=await sharp({create:{width:8,height:8,channels:3,background:'#'+randomUUID().replaceAll('-','').slice(0,6)}}).png().toBuffer();ownedHashes=new Set([digest(image)]);calls=[];getHook=undefined;effect=async()=>({value:{summary:'Facture synthétique de démonstration.'},actualMicros:20});
  });
- afterAll(()=>pool.end());
+ afterAll(async()=>{await pool.end();await admin.end();});
  it('admits at most one hundred current historical contents per pass in stable order and never duplicates admissions',async()=>{
   const ids:string[]=[];
   for(let index=0;index<102;index++){const content=await original();await mail(content.id);ids.push(content.id);}
