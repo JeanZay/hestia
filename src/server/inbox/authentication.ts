@@ -42,7 +42,7 @@ export async function authenticateGoogle(bytes: Uint8Array, inventory: MimeInven
   });
   if (!valid) reject();
   // A second parser may confirm addresses, never discover attachments for import.
-  const parsed = await simpleParser(bytes, { skipHtmlToText: true, skipTextToHtml: true, skipImageLinks: true, maxHtmlLengthToParse: 65536 });
+  const parsed = await simpleParser(Buffer.from(bytes), { skipHtmlToText: true, skipTextToHtml: true, skipImageLinks: true, maxHtmlLengthToParse: 65536 });
   if (parsed.from?.value.length !== 1 || parsed.from.value[0].address !== sender || parsed.to?.value.length !== 1 || parsed.to.value[0].address !== recipient) reject();
   return { sender, recipient };
 }
