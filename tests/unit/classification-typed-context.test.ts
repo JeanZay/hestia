@@ -16,7 +16,7 @@ const contentId='11111111-1111-4111-8111-111111111111',attachmentId='22222222-22
 const bytes=Buffer.from('Document synthétique sans contexte privé.'),digest=createHash('sha256').update(bytes).digest('hex');
 type Options={subject?:string;body?:string;partial?:boolean;comment?:string;raw?:unknown;actual?:number|null;stale?:'comment'|'generation'|'epoch'|'rights';summary?:boolean};
 async function run(options:Options={}){
- let jobStatus='pending',summaryStatus='pending',generation=1,commentVersion=1,epoch=0,rightsChanged=false;
+ let jobStatus='pending',summaryStatus='pending',summaryRequestId:string|null=null,generation=1,commentVersion=1,epoch=0,rightsChanged=false;
  let published:InboxAnalysisDto|undefined,publishedSummary:unknown,analysisPayload:ProviderPayload|undefined,summaryPayload:SummaryPayload|undefined,calls=0,settlement:unknown;
  const queries:string[]=[],reservationIdentities:unknown[]=[],requests:string[]=[];
  const config={version:'7',provider:'openrouter',model:OPENROUTER_CLASSIFICATION_MODEL,enabled:true,monthly_limit_micros:'50000000',currency:'EUR',credential_sealed:'SYNTHETIC_NOT_REAL'};
@@ -25,7 +25,11 @@ async function run(options:Options={}){
  const answer=(rows:unknown[]=[],rowCount=rows.length)=>({rows,rowCount});
  const client={query:async(sql:string,args:unknown[]=[])=>{
   queries.push(sql);
-  if(sql.startsWith('SELECT s.content_id FROM hestia_content_summary'))return answer(options.summary?[{content_id:contentId}]:[]);
+  // These fixtures already own their summary row; no historical content is
+  // missing. The batch still executes its admission and lane SQL normally.
+  if(sql.startsWith('INSERT INTO hestia_content_summary(content_id,backfill)'))return answer([],0);
+  if(sql.startsWith('UPDATE hestia_summary_scheduler SET next_lane='))return answer([{first_lane:0}]);
+  if(sql.startsWith('SELECT content_id,backfill FROM ('))return answer(options.summary?[{content_id:contentId,backfill:false}]:[]);
   if(sql.startsWith('SELECT attachment_id FROM hestia_inbox_analysis_job'))return answer(options.summary?[]:[{attachment_id:attachmentId}]);
   if(sql.startsWith('SELECT * FROM hestia_inbox_analysis_job'))return answer([{status:jobStatus,generation,attachment_version:1,comment_version:1}]);
   if(sql.startsWith('SELECT a.*,e.subject AS mail_subject'))return answer([attachment()]);
@@ -37,15 +41,17 @@ async function run(options:Options={}){
   if(sql==='SELECT * FROM hestia_classification_config WHERE id=1 FOR UPDATE')return answer([config]);
   if(sql.startsWith('SELECT COALESCE(SUM(actual_micros)'))return answer([{spent:'60780',reserved:'606144'}]);
   if(sql.startsWith('INSERT INTO hestia_classification_request')){reservationIdentities.push(JSON.parse(args[5] as string));return answer([],1);}
-  if(sql.startsWith('UPDATE hestia_inbox_analysis_job SET request_id')||sql.startsWith('UPDATE hestia_content_summary SET request_id'))return answer([],1);
+  if(sql.startsWith('UPDATE hestia_inbox_analysis_job SET request_id'))return answer([],1);
+  if(sql.startsWith('UPDATE hestia_content_summary SET request_id')){summaryRequestId=args[1] as string;return answer([],1);}
   if(sql.startsWith('UPDATE hestia_classification_request SET actual_micros')){settlement={actual:args[1],status:args[2]};return answer([],1);}
   if(sql==='SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')return answer([{version:'7',enabled:true}]);
   if(sql.startsWith('UPDATE hestia_inbox_analysis_job SET status=$2')){if(args[3]!==generation)return answer([],0);jobStatus=args[1] as string;return answer([],1);}
   if(sql==='UPDATE hestia_inbox_attachment SET analysis=$2 WHERE id=$1'){published=JSON.parse(args[1] as string);return answer([],1);}
-  if(sql.startsWith('SELECT * FROM hestia_content_summary WHERE content_id'))return answer([{permitted:true,status:summaryStatus,generation:1}]);
+  if(sql.startsWith('SELECT * FROM hestia_content_summary WHERE content_id'))return answer([{permitted:true,status:summaryStatus,generation:1,request_id:summaryRequestId,not_before:new Date('2000-01-01T00:00:00Z')}]);
   if(sql.startsWith("UPDATE hestia_content_summary SET status='running'")){summaryStatus='running';return answer([],1);}
   if(sql.startsWith('SELECT permitted,generation,status FROM hestia_content_summary'))return answer([{permitted:true,generation:1,status:summaryStatus}]);
-  if(sql.startsWith('UPDATE hestia_content_summary SET status=CASE')){publishedSummary={status:args[1],text:args[2]};return answer([],1);}
+  if(sql.startsWith('SELECT status,generation,request_id FROM hestia_content_summary'))return answer([{status:summaryStatus,generation:1,request_id:summaryRequestId}]);
+  if(sql.startsWith('UPDATE hestia_content_summary SET status=CASE')){summaryStatus=args[1] as string;publishedSummary={status:args[1],text:args[2]};return answer([],1);}
   throw Error('Unexpected synthetic SQL');
  }};
  // These deliberately simulated source decisions check protocol/custody only.

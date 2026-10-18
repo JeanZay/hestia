@@ -10,6 +10,7 @@ import { utcMonth } from '../classification/validation';
 import { typedInboxAnalysisContext, projectInboxAnalysis } from '../inbox/analysis';
 import { parseSummary, type SummaryProvider } from './provider';
 import { observeProviderInvocation, persistProviderObservation } from '../classification/provider-observation';
+import { contentSummary } from '../documents/revisions';
 
 export type SummaryDependencies = Pick<ClassificationDependencies,'clock'|'credentialCipher'|'readAuthorizedFolders'|'providers'|'allowRemote'|'deploymentLimitMicros'|'requestTimeoutMs'|'monotonicNowNs'> & {store:ObjectStore;summaryProviders:readonly SummaryProvider[];monotonicNow?:()=>number};
 type Config={version:string;provider:string;model:string;enabled:boolean;monthly_limit_micros:string;currency:string;credential_sealed:string|null};
@@ -17,13 +18,17 @@ type Content={id:string;object_key:string;owner_id:string;sha256:string;size:num
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const configured=(r:Config):ClassificationConfiguration=>({version:Number(r.version),provider:r.provider,model:r.model,enabled:r.enabled,monthlyLimitMicros:Number(r.monthly_limit_micros),currency:r.currency});
 class WorkDeferred extends Error {}
+/** Raised only before a ledger reservation has committed and before any send. */
+class AdmissionDeferred extends Error {
+ constructor(readonly cause?: 'ai-off'|'budget'){super('Summary admission deferred');}
+}
 export function createSummaryService(access:Access,deps:SummaryDependencies,pool?:Pool){
  const monotonic=deps.monotonicNow??(()=>performance.now());
  const remaining=(deadline:number)=>deadline-monotonic();
  function requireTime(deadline:number,milliseconds:number){if(remaining(deadline)<milliseconds)throw new WorkDeferred();}
  async function readSummary(client:PoolClient,id:string):Promise<DocumentSummaryDto>{
-  const row=(await client.query('SELECT status,text,permitted FROM hestia_content_summary WHERE content_id=$1',[id])).rows[0];
-  return !row||!row.permitted?{status:'unavailable'}:{status:row.status,...(row.status==='ready'&&row.text?{text:row.text}:{})};
+  const row=(await client.query('SELECT status,text,permitted,cause,deferred FROM hestia_content_summary WHERE content_id=$1',[id])).rows[0];
+  return contentSummary(row?.status,row?.text,row?.cause,row?.deferred,row?.permitted);
  }
  async function source(client:PoolClient,id:string):Promise<Content>{
   const row=(await client.query<Content>(`SELECT c.*,m.epoch,u.name,u.email FROM hestia_content c JOIN hestia_member m ON m.user_id=c.owner_id JOIN "user" u ON u.id=c.owner_id WHERE c.id=$1 AND c.deleted_at IS NULL AND c.purge_pending_at IS NULL AND m.active AND NOT m.recovering FOR UPDATE OF c,m`,[id])).rows[0];
@@ -58,7 +63,9 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
     status=CASE WHEN NOT $2 AND status IN ('unavailable','unknown') THEN 'pending' ELSE status END,
     request_id=CASE WHEN NOT $2 AND status IN ('unavailable','unknown') THEN NULL ELSE request_id END,
     generation=generation+CASE WHEN NOT $2 AND status IN ('unavailable','unknown') THEN 1 ELSE 0 END,
-    not_before=CASE WHEN NOT $2 AND status<>'running' THEN '-infinity'::timestamptz ELSE not_before END WHERE content_id=$1`,[contentId,automatic]);
+    not_before=CASE WHEN NOT $2 AND status<>'running' THEN '-infinity'::timestamptz ELSE not_before END,
+    cause=CASE WHEN NOT $2 AND status<>'running' THEN NULL ELSE cause END,
+    deferred=CASE WHEN NOT $2 AND status<>'running' THEN false ELSE deferred END WHERE content_id=$1`,[contentId,automatic]);
   await client.query(`INSERT INTO hestia_inbox_analysis_job(attachment_id,attachment_version,comment_version,auto_origin) SELECT id,version,comment_version,$2 FROM hestia_inbox_attachment WHERE id=$1 AND state='pending' ON CONFLICT(attachment_id) DO UPDATE SET status='pending',request_id=NULL,not_before='-infinity',attachment_version=EXCLUDED.attachment_version,comment_version=EXCLUDED.comment_version,auto_origin=EXCLUDED.auto_origin,generation=hestia_inbox_analysis_job.generation+1,updated_at=clock_timestamp()`,[attachmentId,automatic]);
   await client.query(`UPDATE hestia_inbox_attachment SET analysis='{"status":"pending","suggestions":[]}' WHERE id=$1`,[attachmentId]);
  }
@@ -73,12 +80,18 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
  async function reserve(client:PoolClient,c:Content,kind:'summary'|'inbox_analysis',payload:ProviderPayload){
   const config=(await client.query<Config>('SELECT * FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];
   const provider=kind==='summary'?deps.summaryProviders.find(p=>p.id===config.provider):deps.providers.find(p=>p.id===config.provider);
-  if(!config.enabled||!config.credential_sealed||!provider||provider.mode==='remote'&&!deps.allowRemote)return null;
-  const quote=provider.quote(configured(config),payload);if(!quote||quote.currency!=='EUR'||!Number.isSafeInteger(quote.maximumMicros)||quote.maximumMicros<1)return null;
+  if(!config.enabled){if(kind==='summary')throw new AdmissionDeferred('ai-off');return null;}
+  if(!config.credential_sealed||!provider||provider.mode==='remote'&&!deps.allowRemote){if(kind==='summary')throw new AdmissionDeferred();return null;}
+  const quote=provider.quote(configured(config),payload);if(!quote||quote.currency!=='EUR'||!Number.isSafeInteger(quote.maximumMicros)||quote.maximumMicros<1){if(kind==='summary')throw new AdmissionDeferred();return null;}
   const now=await deps.clock(client),month=utcMonth(now).start;
   const used=(await client.query(`SELECT COALESCE(SUM(actual_micros) FILTER(WHERE month_start=$1::date),0)::text AS spent,COALESCE(SUM(reserved_micros) FILTER(WHERE actual_micros IS NULL),0)::text AS reserved FROM hestia_classification_request`,[month])).rows[0];
   const limit=Math.min(Number(config.monthly_limit_micros),deps.deploymentLimitMicros??1e12);
-  if(!Number.isSafeInteger(limit)||BigInt(used.spent)+BigInt(used.reserved)+BigInt(quote.maximumMicros)>BigInt(limit))return null;
+  if(!Number.isSafeInteger(limit)||BigInt(used.spent)+BigInt(used.reserved)+BigInt(quote.maximumMicros)>BigInt(limit)){
+   // A lower deployment ceiling does not prove the household ceiling is hit.
+   const household=Number(config.monthly_limit_micros);
+   const householdExceeded=Number.isSafeInteger(household)&&BigInt(used.spent)+BigInt(used.reserved)+BigInt(quote.maximumMicros)>BigInt(household);
+   if(kind==='summary')throw new AdmissionDeferred(householdExceeded?'budget':undefined);return null;
+  }
   const id=randomUUID();
   await client.query(`INSERT INTO hestia_classification_request(id,actor_id,actor_epoch,idempotency_key,kind,identity_hash,identity,config_version,month_start,reserved_micros,created_at,sent_at) VALUES($1,$2,$3,$1,$4,$5,$6,$7,$8,$9,$10,$10)`,[id,c.owner_id,c.epoch,kind,hash([c.id,c.sha256,c.epoch]),JSON.stringify({contentId:c.id}),config.version,month,quote.maximumMicros,now]);
   return {id,config,provider,maximum:quote.maximumMicros,credential:deps.credentialCipher.open(config.credential_sealed,`hestia-classification:1:${config.provider}`)};
@@ -90,6 +103,15 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
   const content=await access.transaction(async client=>{
    const row=(await client.query('SELECT * FROM hestia_content_summary WHERE content_id=$1 FOR UPDATE',[id])).rows[0];
    if(!row?.permitted||row.status!=='pending')return null;
+   const now=await deps.clock(client);
+   // Selection happened in an earlier transaction. A competing worker may
+   // since have deferred this job or committed a reservation with a lost reply.
+   if(row.not_before>now)return null;
+   if(row.request_id){
+    await settle(client,row.request_id,null,'failed');
+    await client.query("UPDATE hestia_content_summary SET status='unknown',text=NULL,cause=NULL,deferred=false,generation=generation+1,updated_at=$2 WHERE content_id=$1",[id,now]);
+    return null;
+   }
    let c:Content;try{c=await source(client,id);}catch(error){
     // Revoked consultation must not monopolize the oldest limited batch. Keep
     // the unsent job for a later rights check, without reserving provider cost.
@@ -97,11 +119,11 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
     await client.query("UPDATE hestia_content_summary SET not_before=$2::timestamptz+interval '60 seconds',generation=generation+1,updated_at=$2 WHERE content_id=$1",[id,await deps.clock(client)]);
     return null;
    }
-   await client.query("UPDATE hestia_content_summary SET status='running',updated_at=$2 WHERE content_id=$1",[id,await deps.clock(client)]);return {...c,generation:row.generation};
+   await client.query("UPDATE hestia_content_summary SET status='running',cause=NULL,deferred=false,updated_at=$2 WHERE content_id=$1",[id,await deps.clock(client)]);return {...c,generation:row.generation};
   });
   if(!content)return false;
   let bytes:Uint8Array|undefined,reservation:Awaited<ReturnType<typeof reserve>>=null,actual:number|null=null,text:string|null=null;
-  let status:DocumentSummaryDto['status']='unavailable';
+  let status:DocumentSummaryDto['status']='unavailable',cause:DocumentSummaryDto['cause'],deferred=false;
   let invocation:ReturnType<typeof observeProviderInvocation<ProviderOutcome>>|undefined;
   try{
    bytes=await readBytes(content,deadline-deps.requestTimeoutMs);
@@ -114,12 +136,28 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
     const outcome=await invocation.result;
     actual=typeof outcome.actualMicros==='number'&&Number.isSafeInteger(outcome.actualMicros)&&outcome.actualMicros>=0?outcome.actualMicros:null;
     text=parseSummary(outcome.value);status=actual===null?'unknown':actual>reservation.maximum||!text?'unavailable':'ready';
+    if(text===null&&actual!==null&&actual<=reservation.maximum)cause='unreadable';
    }
-  }catch(error){status=!reservation&&error instanceof WorkDeferred?'pending':reservation&&actual===null?'unknown':'unavailable';}finally{bytes?.fill(0);}
+  }catch(error){
+   if(!reservation){status='pending';deferred=!(error instanceof WorkDeferred);cause=error instanceof AdmissionDeferred?error.cause:undefined;}
+   else status=actual===null?'unknown':'unavailable';
+  }finally{bytes?.fill(0);}
   await access.transaction(async client=>{
    if(reservation)await settle(client,reservation.id,actual,status==='ready'?'complete':'failed');
-   try{const current=await source(client,id);const cfg=(await client.query('SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];if(current.owner_id!==content.owner_id||current.epoch!==content.epoch||reservation&&(cfg.version!==reservation.config.version||!cfg.enabled))status='unavailable';}catch{status='unavailable';}
-   await client.query(`UPDATE hestia_content_summary SET status=CASE WHEN permitted THEN $2 ELSE 'unavailable' END,text=CASE WHEN permitted AND $2='ready' THEN $3 ELSE NULL END,generation=generation+CASE WHEN $2='pending' THEN 1 ELSE 0 END,not_before=CASE WHEN $2='pending' THEN $4::timestamptz+interval '60 seconds' ELSE not_before END,updated_at=$4 WHERE content_id=$1 AND status='running' AND generation=$5`,[id,status,status==='ready'?text:null,await deps.clock(client),content.generation]);
+   const durable=(await client.query('SELECT status,generation,request_id FROM hestia_content_summary WHERE content_id=$1 FOR UPDATE',[id])).rows[0];
+   if(!durable||durable.status!=='running'||durable.generation!==content.generation)return;
+   const uncertainCommit=!reservation&&durable.request_id!==null;
+   if(uncertainCommit){
+    // A thrown transaction does not prove its COMMIT failed. Keep the durable
+    // reservation as unknown debt and never turn it into an automatic retry.
+    status='unknown';cause=undefined;deferred=false;
+    await settle(client,durable.request_id,null,'failed');
+   }
+   try{const current=await source(client,id);const cfg=(await client.query('SELECT version,enabled FROM hestia_classification_config WHERE id=1 FOR UPDATE')).rows[0];if(current.owner_id!==content.owner_id||current.epoch!==content.epoch||reservation&&(cfg.version!==reservation.config.version||!cfg.enabled))throw unavailable();}
+   catch{status=uncertainCommit?'unknown':reservation?'unavailable':'pending';cause=undefined;deferred=!reservation&&!uncertainCommit;}
+   await client.query(`UPDATE hestia_content_summary SET status=CASE WHEN permitted THEN $2 ELSE 'unavailable' END,text=CASE WHEN permitted AND $2='ready' THEN $3 ELSE NULL END,
+    cause=CASE WHEN permitted THEN $6 ELSE NULL END,deferred=permitted AND $7,
+    generation=generation+CASE WHEN $2='pending' THEN 1 ELSE 0 END,not_before=CASE WHEN $2='pending' THEN $4::timestamptz+interval '60 seconds' ELSE not_before END,updated_at=$4 WHERE content_id=$1 AND status='running' AND generation=$5`,[id,status,status==='ready'?text:null,await deps.clock(client),content.generation,cause??null,deferred]);
   });
   if(pool&&reservation)await persistProviderObservation(pool,reservation.id,'summary',invocation?.observation());
   return true;
@@ -170,17 +208,38 @@ export function createSummaryService(access:Access,deps:SummaryDependencies,pool
   if(remaining(deadline)<=deps.requestTimeoutMs)return{processed:0};
   const jobs=await access.transaction(async client=>{
    const now=await deps.clock(client);
-   return {summaries:(await client.query(`SELECT s.content_id FROM hestia_content_summary s
+   // Historical admission is separate from processing: at most100 missing
+   // current originals, no revision fan-out, no reactivation of an existing
+   // result/opt-out. A financial receipt without its summary needs reconciliation.
+   await client.query(`INSERT INTO hestia_content_summary(content_id,backfill)
+    SELECT c.id,true FROM hestia_content c JOIN hestia_member m ON m.user_id=c.owner_id
+    WHERE c.deleted_at IS NULL AND c.purge_pending_at IS NULL AND m.active AND NOT m.recovering
+     AND NOT EXISTS(SELECT 1 FROM hestia_content_summary s WHERE s.content_id=c.id)
+     AND NOT EXISTS(SELECT 1 FROM hestia_classification_request q WHERE q.kind='summary' AND q.identity->>'contentId'=c.id::text)
+     AND EXISTS(SELECT 1 FROM hestia_document_revision r JOIN hestia_document d ON d.current_revision_id=r.id
+      WHERE r.content_id=c.id AND d.trashed_at IS NULL AND d.purged_at IS NULL)
+    ORDER BY c.created_at,c.id LIMIT 100 ON CONFLICT(content_id) DO NOTHING`);
+   const lane=(await client.query(`UPDATE hestia_summary_scheduler SET next_lane=(next_lane+1)%3 WHERE id=true RETURNING (next_lane+2)%3 AS first_lane`)).rows[0].first_lane as number;
+   const summaries=(await client.query(`SELECT content_id,backfill FROM (
+    SELECT s.content_id,s.backfill,s.updated_at,s.created_at,
+     row_number() OVER(PARTITION BY s.backfill ORDER BY s.updated_at,s.created_at,s.content_id) AS lane_rank
+    FROM hestia_content_summary s
     JOIN hestia_content c ON c.id=s.content_id JOIN hestia_member m ON m.user_id=c.owner_id
     WHERE s.permitted AND s.status='pending' AND s.not_before<=$2 AND m.active AND NOT m.recovering
       AND c.deleted_at IS NULL AND c.purge_pending_at IS NULL
       AND (EXISTS(SELECT 1 FROM hestia_inbox_attachment a WHERE a.content_id=c.id AND a.state='pending' AND a.departure_epoch=m.departure_epoch)
         OR EXISTS(SELECT 1 FROM hestia_document_revision r JOIN hestia_document d ON d.id=r.document_id
           WHERE r.content_id=c.id AND d.trashed_at IS NULL AND d.purged_at IS NULL AND (d.current_revision_id=r.id OR r.recoverable_until>$2)))
-    ORDER BY s.updated_at,s.created_at LIMIT $1`,[limit,now])).rows,
-    analyses:(await client.query("SELECT attachment_id FROM hestia_inbox_analysis_job WHERE status='pending' AND not_before<=$2 ORDER BY updated_at LIMIT $1",[limit,now])).rows};
+    ) eligible WHERE lane_rank<=$1 ORDER BY lane_rank,updated_at,created_at,content_id`,[limit,now])).rows;
+   const analyses=(await client.query("SELECT attachment_id FROM hestia_inbox_analysis_job WHERE status='pending' AND not_before<=$2 ORDER BY updated_at,attachment_id LIMIT $1",[limit,now])).rows;
+   const lanes=[summaries.filter(s=>!s.backfill).map(s=>({kind:'summary' as const,id:s.content_id})),
+    analyses.map(a=>({kind:'inbox' as const,id:a.attachment_id})),
+    summaries.filter(s=>s.backfill).map(s=>({kind:'summary' as const,id:s.content_id}))];
+   const ordered:({kind:'summary'|'inbox';id:string})[]=[];
+   for(let i=0;i<limit;i++)for(let step=0;step<3;step++){const job=lanes[(lane+step)%3][i];if(job)ordered.push(job);}
+   return ordered;
   });
-  let processed=0;for(const job of jobs.summaries){if(processed>=limit||remaining(deadline)<=deps.requestTimeoutMs)break;if(await processSummary(job.content_id,deadline))processed++;}for(const job of jobs.analyses){if(processed>=limit||remaining(deadline)<=deps.requestTimeoutMs)break;if(await processInbox(job.attachment_id,deadline))processed++;}return{processed};
+  let processed=0;for(const job of jobs){if(processed>=limit||remaining(deadline)<=deps.requestTimeoutMs)break;if(await(job.kind==='summary'?processSummary(job.id,deadline):processInbox(job.id,deadline)))processed++;}return{processed};
  }
  async function handleDocumentSummary(request:Request,documentId:string){return guarded(async()=>{
   if(!isUuid(documentId)||!['GET','POST'].includes(request.method))throw invalid();if(request.method==='POST'){access.origin(request);await json(request,[]);}

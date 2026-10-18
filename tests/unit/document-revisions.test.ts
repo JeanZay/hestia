@@ -5,7 +5,7 @@ describe('document summary projection', () => {
   it('keeps every asynchronous state distinct and suppresses premature or stale text', () => {
     for (const status of ['pending','running','unavailable','unknown'] as const)
       expect(contentSummary(status, 'private result from another state')).toEqual({status});
-    expect(contentSummary(undefined, undefined)).toEqual({status:'unavailable'});
+    expect(contentSummary(undefined, undefined)).toEqual({status:'none'});
     expect(contentSummary('stale', 'old')).toEqual({status:'unavailable'});
   });
   it('counts Unicode code points without silently truncating invalid output', () => {

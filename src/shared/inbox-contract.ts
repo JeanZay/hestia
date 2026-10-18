@@ -1,6 +1,7 @@
 import type { CaptureDestination, CaptureAccessProjection } from './capture-contract';
 
-export type DocumentSummaryDto = { status: 'pending' | 'running' | 'ready' | 'unavailable' | 'unknown'; text?: string };
+export type DocumentSummaryCause = 'format' | 'unreadable' | 'ai-off' | 'budget';
+export type DocumentSummaryDto = { status: 'none' | 'pending' | 'running' | 'ready' | 'unavailable' | 'unknown'; text?: string; cause?: DocumentSummaryCause };
 export type InboxSettingsDto = { version: number; enabled: boolean; automaticAnalysis: boolean; address: string | null; configured: boolean };
 /** Private presentation reason: provider reason500 + one space + divergence1000 Unicode points, at most1501. */
 export type InboxSuggestionDto = { destination: CaptureDestination; reason: string; label: string };

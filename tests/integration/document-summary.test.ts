@@ -16,6 +16,8 @@ import { createSummaryService, type SummaryDependencies } from '../../src/server
 import type { SummaryPayload, SummaryProvider } from '../../src/server/summary/provider';
 import { promoteInboxContent, createRevisionsService } from '../../src/server/documents/revisions';
 import type { ClassificationProvider, ProviderOutcome, ProviderPayload } from '../../src/server/classification/types';
+import { createInboxService } from '../../src/server/inbox';
+import { RELAY_CHUNK, signEnvelope, type RelayEnvelope } from '../../src/server/inbox/transport';
 
 // A valid ancillary PNG chunk reaches the exact byte boundary without adding
 // pixels. The source remains synthetic; storage-latency simulations below do
@@ -29,8 +31,13 @@ function paddedPng(image:Buffer,size=20*1024*1024){
 }
 
 describe('document-only summaries over real PostgreSQL, objects and durable budget',()=>{
- const config=readServerConfig();
- if(config.environment!=='local'||!/^\/hestia_test_[a-z0-9_]+$/.test(new URL(config.databaseUrl).pathname)||!/^hestia-app-[a-f0-9]{16}$/.test(process.env.HESTIA_TEST_RUN_ID??''))throw new Error('Owned synthetic integration bench required');
+ const parent=readServerConfig(),url=new URL(parent.databaseUrl),runId=process.env.HESTIA_TEST_RUN_ID??'';
+ if(parent.environment!=='local'||!['127.0.0.1','localhost'].includes(url.hostname)||!/^hestia-app-[a-f0-9]{16}$/.test(runId)||url.pathname!==`/hestia_test_${runId.slice('hestia-app-'.length)}`)throw new Error('Owned synthetic integration bench required');
+ // Summary batches deliberately inspect the whole household queue. Keep this
+ // suite's clocks and job limits independent of other suites' synthetic jobs,
+ // while all three summary/analysis classes still compete inside this database.
+ const database=url.pathname.slice(1)+'_summary';url.pathname='/'+database;
+ const config={...parent,databaseUrl:url.toString()},admin=new Pool({connectionString:parent.databaseUrl,max:1});
  const pool=new Pool({connectionString:config.databaseUrl,max:8}),real=createObjectStore(),access=createAccess(pool,config,createAuth(pool,config));
  const cipher=createClassificationCredentialCipher('synthetic-summary-credential-key-123456789');
  const budget=createStorageBudget();let getHook:(()=>Promise<void>)|undefined;
@@ -74,18 +81,43 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   await access.transaction(client=>summaries.enqueueAnalysis(client,{attachmentId,contentId,actorId,automaticAnalysis:true}));return attachmentId;
  }
  async function optOut(){const settings=await data(await app.handleInboxSettings(req()));await data(await app.handleInboxSettings(req({version:settings.version,automaticAnalysis:false},'PATCH')));}
+ async function receivedMail(){
+  const secret='synthetic-summary-relay-secret-only-123456',relayActor='summary-relay',address='synthetic-summary@gmail.com',gmailId=randomUUID().replaceAll('-','');
+  const inbox=createInboxService(pool,access,{store,budget,environment:'dev',address,relayActor,relayEpoch:1,relaySecret:secret,authenticate:async()=>({sender:email,recipient:address}),enqueueAnalysis:summaries.enqueueAnalysis});
+  await pool.query('INSERT INTO hestia_inbox_settings(actor_id,enabled,automatic_analysis) VALUES($1,true,true) ON CONFLICT(actor_id) DO UPDATE SET enabled=true,automatic_analysis=true',[actorId]);
+  const bytes=Buffer.from(`From: ${email}\r\nTo: ${address}\r\nSubject: PRIVATE_MAIL_SUBJECT\r\nMessage-ID: <${randomUUID()}@example.invalid>\r\nDate: Sun, 18 Oct 2026 10:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=summary\r\n\r\n--summary\r\nContent-Type: text/plain\r\n\r\nPRIVATE_MAIL_BODY\r\n--summary\r\nContent-Type: image/png\r\nContent-Disposition: attachment; filename="PRIVATE_MAIL_FILENAME.png"\r\nContent-Transfer-Encoding: base64\r\n\r\n${image.toString('base64')}\r\n--summary--\r\n`);
+  const send=async(operation:'chunk'|'process',index=0)=>{const chunk=bytes.subarray(index*RELAY_CHUNK,(index+1)*RELAY_CHUNK),value:RelayEnvelope={environment:'dev',actor:relayActor,epoch:1,gmailId,rawSha256:digest(bytes),rawSize:bytes.length,chunks:Math.ceil(bytes.length/RELAY_CHUNK),operation,index,chunkSha256:digest(operation==='chunk'?chunk:Buffer.alloc(0)),timestamp:Date.now(),nonce:randomUUID().replaceAll('-',''),payload:operation==='chunk'?chunk.toString('base64'):''};return data(await inbox.handleInboxRelay(new Request(config.origin+'/api/hestia/inbox/relay',{method:'POST',headers:{'content-type':'application/json','x-hestia-signature':signEnvelope(value,secret)},body:JSON.stringify(value)})));};
+  for(let index=0;index<Math.ceil(bytes.length/RELAY_CHUNK);index++)await send('chunk',index);const result=await send('process');expect(result.result.outcome).toBe('accepted');
+  const attachment=(await pool.query('SELECT id,content_id FROM hestia_inbox_attachment WHERE event_id=$1',[result.result.eventId])).rows[0];
+  // The private classification remains covered separately; this assertion owns
+  // the new document summary, including the actual MIME admission boundary.
+  await pool.query("UPDATE hestia_inbox_analysis_job SET status='unavailable' WHERE attachment_id=$1",[attachment.id]);
+  await priority(attachment.content_id);return attachment.content_id as string;
+ }
  async function manual(){const created=await data(await app.handleUploads(req({folderId,idempotencyKey:randomUUID(),fileName:'SECRET_FILENAME.png',title:'Titre manuel',size:image.length,mediaType:'image/png',sha256:digest(image),source:'import'})),201);const id=created.operation.id;
   await data(await app.handleUploadChunk(req(image,'PUT'),id,'0'));const completed=await data(await app.handleUploadComplete(req({keepDuplicate:true}),id));return completed.document.id as string;}
- async function capture(){let c=(await data(await app.handleCaptures(req({kind:'import',idempotencyKey:randomUUID(),currentFolderId:folderId})),201)).capture;
+ async function capture(){let c=(await data(await app.handleCaptures(req({kind:'camera',idempotencyKey:randomUUID(),currentFolderId:folderId})),201)).capture;
   const upload=await data(await app.handleCapturePages(req({version:c.version,idempotencyKey:randomUUID(),fileName:'SECRET_CAPTURE.png',mediaType:'image/png',size:image.length,sha256:digest(image)}),c.id));
   await data(await app.handleCapturePageChunk(req(image,'PUT'),c.id,upload.upload.id,'0'));c=(await data(await app.handleCapturePageComplete(req({version:upload.captureVersion}),c.id,upload.upload.id))).capture;
   const prepared=await data(await app.handleCapturePrepare(req({version:c.version}),c.id));c=prepared.capture;
   const input={version:c.version,artifactId:prepared.artifact.id,destination:{kind:'existing',folderId},keepDuplicate:true};
   const preview=(await data(await app.handleCapturePreview(req(input),c.id))).preview;
-  return(await data(await app.handleCaptureFinalize(req({...input,previewToken:preview.previewToken,idempotencyKey:randomUUID()}),c.id))).document.id as string;
+  const document=(await data(await app.handleCaptureFinalize(req({...input,previewToken:preview.previewToken,idempotencyKey:randomUUID()}),c.id))).document;
+  ownedHashes.add(document.sha256);return document.id as string;
  }
- beforeAll(async()=>{expect((await pool.query("SELECT to_regclass('hestia_bench_marker') AS marker")).rows[0].marker).toBeTruthy();await migrateDatabase(pool,config);actorId=await provisionSyntheticMember(pool,{email,name:'Auteur résumé synthétique',password});});
+ beforeAll(async()=>{
+  expect((await admin.query('SELECT run_id FROM hestia_bench_marker')).rows).toEqual([{run_id:runId}]);
+  await admin.query(`CREATE DATABASE "${database}"`);await migrateDatabase(pool,config);
+  await pool.query('CREATE TABLE hestia_bench_marker(run_id text PRIMARY KEY)');await pool.query('INSERT INTO hestia_bench_marker VALUES($1)',[runId]);
+  expect((await pool.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
+  expect((await pool.query('SELECT run_id FROM hestia_bench_marker')).rows).toEqual([{run_id:runId}]);
+  const previous=process.env.DATABASE_URL;
+  try{process.env.DATABASE_URL=config.databaseUrl;actorId=await provisionSyntheticMember(pool,{email,name:'Auteur résumé synthétique',password});}
+  finally{if(previous===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=previous;}
+  console.log(JSON.stringify({summaryDatabase:database,parentRunId:runId,scope:'owned-run-summary-suite'}));
+ });
  beforeEach(async()=>{
+  await pool.query('UPDATE hestia_summary_scheduler SET next_lane=0');
   await pool.query('UPDATE "rateLimit" SET "lastRequest"=0');const login=await app.handleAuth(new Request(config.origin+'/api/auth/sign-in/email',{method:'POST',headers:{origin:config.origin,'content-type':'application/json'},body:JSON.stringify({email,password})}));expect(login.status).toBe(200);cookie=login.headers.getSetCookie().map(v=>v.split(';')[0]).join('; ');
   await pool.query("UPDATE hestia_content_summary s SET permitted=false,status='unavailable',text=NULL,request_id=NULL FROM hestia_content c WHERE c.id=s.content_id AND c.owner_id=$1",[actorId]);
   await pool.query("UPDATE hestia_inbox_analysis_job j SET status='unavailable',request_id=NULL,generation=j.generation+1 FROM hestia_inbox_attachment a WHERE a.id=j.attachment_id AND a.actor_id=$1",[actorId]);
@@ -94,7 +126,103 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   folderId=(await data(await app.handleFolders(req({name:`Résumé ${randomUUID()}`})),201)).folder.id;
   image=await sharp({create:{width:8,height:8,channels:3,background:'#'+randomUUID().replaceAll('-','').slice(0,6)}}).png().toBuffer();ownedHashes=new Set([digest(image)]);calls=[];getHook=undefined;effect=async()=>({value:{summary:'Facture synthétique de démonstration.'},actualMicros:20});
  });
- afterAll(()=>pool.end());
+ afterAll(async()=>{await pool.end();await admin.end();});
+ it('admits at most one hundred current historical contents per pass in stable order and never duplicates admissions',async()=>{
+  const ids:string[]=[];
+  for(let index=0;index<102;index++){const content=await original();await mail(content.id);ids.push(content.id);}
+  await pool.query('DELETE FROM hestia_content_summary WHERE content_id=ANY($1::uuid[])',[ids]);
+  const expected=(await pool.query('SELECT id FROM hestia_content WHERE id=ANY($1::uuid[]) ORDER BY created_at,id LIMIT 100',[ids])).rows.map(r=>r.id);
+  await summaries.runSummaryBatch(1);
+  const admitted=(await pool.query('SELECT content_id,backfill FROM hestia_content_summary WHERE content_id=ANY($1::uuid[])',[ids])).rows;
+  expect(admitted).toHaveLength(100);expect(admitted.every(r=>r.backfill)).toBe(true);expect(admitted.map(r=>r.content_id).sort()).toEqual(expected.sort());expect(calls).toHaveLength(1);
+  await summaries.runSummaryBatch(1);await summaries.runSummaryBatch(1);
+  expect((await pool.query('SELECT count(*)::int AS n FROM hestia_content_summary WHERE content_id=ANY($1::uuid[])',[ids])).rows[0].n).toBe(102);
+  expect(new Set((await ledger()).map(r=>r.identity.contentId)).size).toBe(3);
+ });
+ it('does not reinterpret a missing summary with an old paid receipt as an unsent historical original',async()=>{
+  const content=await original();await mail(content.id);const requestId=await paidReceipt(content.id,'summary');
+  await pool.query('DELETE FROM hestia_content_summary WHERE content_id=$1',[content.id]);const receipt=(await ledger())[0];
+  await summaries.runSummaryBatch(10);await summaries.runSummaryBatch(10);
+  expect(await row(content.id)).toBeUndefined();expect(calls).toHaveLength(0);expect(await ledger()).toEqual([receipt]);expect(receipt.id).toBe(requestId);
+  // Preserve a terminal sentinel so following tests cannot turn this fixture
+  // into an apparently unsent source after their isolated ledger reset.
+  await pool.query("INSERT INTO hestia_content_summary(content_id,status,permitted) VALUES($1,'unknown',false)",[content.id]);
+ });
+ it('backfills only the current historical revision and admits its missing predecessor after restoration',async()=>{
+  const previous=await original(),document=await mail(previous.id),current=await original();const replacement=await mail(current.id,document.documentId,document.version);
+  await pool.query('DELETE FROM hestia_content_summary WHERE content_id=ANY($1::uuid[])',[[previous.id,current.id]]);
+  await summaries.runSummaryBatch(1);expect(await row(previous.id)).toBeUndefined();expect(await row(current.id)).toMatchObject({status:'ready',backfill:true});expect(calls).toHaveLength(1);
+  await data(await revisions.handleDocumentRevisionRestore(req({version:replacement.version,idempotencyKey:randomUUID()}),document.documentId,document.revisionId));
+  expect((await data(await summaries.handleDocumentSummary(req(),document.documentId))).summary).toEqual({status:'none'});
+  await summaries.runSummaryBatch(1);expect(await row(previous.id)).toMatchObject({status:'ready',backfill:true});expect(calls).toHaveLength(2);
+ });
+ it.each(['disabled','missing-provider'] as const)('resumes only proven unsent %s admission after the durable sixty-second gate',async mode=>{
+  const content=await original(),document=await mail(content.id),wall=new Date();let now=wall;
+  if(mode==='disabled')await pool.query('UPDATE hestia_classification_config SET enabled=false WHERE id=1');
+  const waiting=createSummaryService(access,{...deps,clock:async()=>now,...(mode==='missing-provider'?{summaryProviders:[]}: {})});
+  await waiting.runSummaryBatch(1);const deferred=await row(content.id);
+  expect(deferred).toMatchObject({status:'pending',deferred:true,request_id:null});expect(deferred.not_before.toISOString()).toBe(new Date(wall.getTime()+60000).toISOString());
+  expect((await data(await waiting.handleDocumentSummary(req(),document.documentId))).summary).toEqual({status:'unavailable',...(mode==='disabled'?{cause:'ai-off'}:{})});
+  expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+  await pool.query('UPDATE hestia_classification_config SET enabled=true,version=version+1 WHERE id=1');
+  const resumed=createSummaryService(access,{...deps,clock:async()=>now});now=new Date(wall.getTime()+59999);
+  await resumed.runSummaryBatch(1);expect(await row(content.id)).toEqual(deferred);expect(calls).toHaveLength(0);
+  now=new Date(wall.getTime()+60001);await resumed.runSummaryBatch(1);
+  expect(await row(content.id)).toMatchObject({status:'ready',deferred:false,cause:null});expect(calls).toHaveLength(1);expect(await ledger()).toHaveLength(1);
+ });
+ it('resumes budget admission in a new month while retaining an unknown charge from the previous month',async()=>{
+  const content=await original(),document=await mail(content.id),oldId=await paidReceipt(content.id,'summary');let now=new Date('2030-01-31T23:59:00Z');
+  await pool.query("UPDATE hestia_classification_request SET month_start='2030-01-01',reserved_micros=100,actual_micros=NULL,status='failed' WHERE id=$1",[oldId]);
+  const spentId=await paidReceipt(content.id,'summary');await pool.query("UPDATE hestia_classification_request SET month_start='2030-01-01',actual_micros=20,status='complete',settled_at=clock_timestamp() WHERE id=$1",[spentId]);
+  await pool.query('UPDATE hestia_classification_config SET monthly_limit_micros=200 WHERE id=1');const debt=(await ledger()).find(r=>r.id===oldId);
+  const worker=createSummaryService(access,{...deps,clock:async()=>now});await worker.runSummaryBatch(1);
+  expect(await row(content.id)).toMatchObject({status:'pending',deferred:true,cause:'budget',request_id:null});expect(calls).toHaveLength(0);
+  expect((await data(await worker.handleDocumentSummary(req(),document.documentId))).summary).toEqual({status:'unavailable',cause:'budget'});
+  now=new Date('2030-02-01T00:00:01Z');await pool.query('UPDATE hestia_classification_config SET monthly_limit_micros=199 WHERE id=1');await worker.runSummaryBatch(1);
+  expect(await row(content.id)).toMatchObject({status:'pending',deferred:true,cause:'budget'});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(2);
+  await pool.query('UPDATE hestia_classification_config SET monthly_limit_micros=200 WHERE id=1');now=new Date('2030-02-01T00:01:02Z');await worker.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'ready'});expect(calls).toHaveLength(1);
+  expect((await ledger()).find(r=>r.id===oldId)).toEqual(debt);expect(await ledger()).toHaveLength(3);
+ });
+ it('does not expose a household budget cause when only the deployment ceiling prevented reservation',async()=>{
+  const content=await original(),document=await mail(content.id);const worker=createSummaryService(access,{...deps,deploymentLimitMicros:1});
+  await worker.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'pending',deferred:true,request_id:null,cause:null});
+  expect((await data(await worker.handleDocumentSummary(req(),document.documentId))).summary).toEqual({status:'unavailable'});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+ });
+ it.each(['unknown','unavailable','opt-out'] as const)('never automatically rearms a pre-existing %s result during backfill or configuration changes',async state=>{
+  const content=await original();await mail(content.id);
+  await pool.query("UPDATE hestia_content_summary SET status=$2,permitted=$3,not_before='-infinity' WHERE content_id=$1",[content.id,state==='opt-out'?'unavailable':state,state!=='opt-out']);const before=await row(content.id);
+  await pool.query('UPDATE hestia_classification_config SET version=version+1 WHERE id=1');await summaries.runSummaryBatch(10);await summaries.runSummaryBatch(10);
+  expect(await row(content.id)).toEqual(before);expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+ });
+ it.each([{value:{summary:null},actualMicros:20,cause:'unreadable'},{value:{summary:'invalid',extra:'PRIVATE_DIAGNOSTIC'},actualMicros:20,cause:null},{value:{summary:null},actualMicros:null,cause:null}])('publishes only a proven unreadable cause for outcome %j',async outcome=>{
+  const content=await original(),attachmentId=await pendingArrival(content.id),document=await mail(content.id);effect=async()=>({value:outcome.value,actualMicros:outcome.actualMicros});
+  await pool.query("UPDATE hestia_inbox_analysis_job SET status='unavailable' WHERE attachment_id=$1",[attachmentId]);
+  await summaries.runSummaryBatch(1);const expected={status:outcome.actualMicros===null?'unknown':'unavailable',...(outcome.cause?{cause:outcome.cause}:{})};
+  const results=[(await data(await summaries.handleDocumentSummary(req(),document.documentId))).summary,(await data(await app.handleDocument(req(),document.documentId))).document.summary,
+   (await data(await app.handleDocuments(req(undefined,'GET',`/api/hestia/documents?folderId=${folderId}`)))).documents.find((d:{id:string})=>d.id===document.documentId).summary,
+   (await data(await app.handleWorkspace(req(undefined,'GET',`/api/hestia/workspace?folderId=${folderId}`)))).documents.find((d:{id:string})=>d.id===document.documentId).summary,
+   (await data(await app.handleInboxAttachment(req(),attachmentId))).attachment.summary,
+   (await data(await revisions.handleDocumentVersions(req(),document.documentId))).versions.find((v:{id:string})=>v.id===document.revisionId).summary];
+  for(const result of results)expect(result).toEqual(expected);
+  expect(JSON.stringify(results)).not.toContain('PRIVATE_DIAGNOSTIC');expect(calls).toHaveLength(1);expect(await ledger()).toHaveLength(1);
+ });
+ it.each(['limit-one','deadline'] as const)('lets fresh summaries, historical summaries and private analyses all progress across %s passes',async bound=>{
+  const history=await original();await mail(history.id);await pool.query('DELETE FROM hestia_content_summary WHERE content_id=$1',[history.id]);
+  const fresh=await original();await mail(fresh.id);const arrival=await original(),attachmentId=await pendingArrival(arrival.id);
+  await pool.query("UPDATE hestia_content_summary SET permitted=false,status='unavailable' WHERE content_id=$1",[arrival.id]);let analyses=0,elapsed=0;
+  const classifier:ClassificationProvider={id:provider.id,mode:'synthetic',quote:()=>({maximumMicros:100,currency:'EUR'}),quoteCheck:()=>null,check:async()=>({status:'unreachable',actualMicros:0}),analyze:async()=>{analyses++;elapsed=175;return{value:{existing:[],created:[]},actualMicros:30};}};
+  effect=async()=>{elapsed=175;return{value:{summary:'Résumé synthétique dans la fenêtre.'},actualMicros:20};};
+  const worker=createSummaryService(access,{...deps,providers:[classifier],requestTimeoutMs:50,monotonicNow:()=>elapsed});
+  for(let pass=0;pass<3;pass++){elapsed=0;expect(await worker.runSummaryBatch(bound==='limit-one'?1:10,bound==='limit-one'?35000:200)).toEqual({processed:1});}
+  expect(await row(history.id)).toMatchObject({status:'ready',backfill:true});expect(await row(fresh.id)).toMatchObject({status:'ready',backfill:false});expect(await analysisRow(attachmentId)).toMatchObject({status:'ready'});
+  expect(calls).toHaveLength(2);expect(analyses).toBe(1);expect((await pool.query('SELECT count(*)::int AS n FROM hestia_classification_request WHERE actor_id=$1',[actorId])).rows[0].n).toBe(3);
+ });
+ it.each([0,11,1.5])('rejects invalid total work limit %s before admission or paid work',async limit=>{
+  await expect(summaries.runSummaryBatch(limit)).rejects.toThrow();expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+ });
+ it('rejects a work deadline above thirty-five seconds before admission or paid work',async()=>{
+  await expect(summaries.runSummaryBatch(10,35001)).rejects.toThrow();expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+ });
  it('keeps summary cost and ready state after an observation-only failure',async()=>{
   const content=await original();await mail(content.id);
   const brokenPool={connect:async()=>{throw Error('Synthetic observation unavailable');}} as unknown as Pool;
@@ -176,15 +304,19 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   expect(await data(await summaries.handleDocumentSummary(req(),document.documentId))).toMatchObject({revisionId:document.revisionId,summary:{status:'ready',text:'Facture synthétique de démonstration.'}});
   expect(JSON.stringify((await ledger())[0])).not.toMatch(/NOM_PRIVE|TITRE_PRIVE|MAIL_SUBJECT_PRIVATE|MAIL_BODY_PRIVATE|COMMENT_PRIVATE|Facture synthétique/);
  });
- it('queues new originals from manual upload, Capture and mail in the same transaction',async()=>{
-  const manualId=await manual(),captureId=await capture(),mailContent=await original(),mailDoc=await mail(mailContent.id);
+ it('queues and summarizes real manual upload, camera capture and mail placement originals',async()=>{
+  const manualId=await manual(),captureId=await capture(),mailContentId=await receivedMail(),mailDoc=await mail(mailContentId);
   const queued=(await pool.query(`SELECT d.source,s.status FROM hestia_document d JOIN hestia_document_revision r ON r.id=d.current_revision_id JOIN hestia_content_summary s ON s.content_id=r.content_id WHERE d.id=ANY($1::uuid[])`,[[manualId,captureId,mailDoc.documentId]])).rows;
-  expect(queued.map(r=>r.source).sort()).toEqual(['import','import','mail']);expect(queued.every(r=>r.status==='pending')).toBe(true);expect(calls).toHaveLength(0);
+  expect(queued.map(r=>r.source).sort()).toEqual(['camera','import','mail']);expect(queued.every(r=>r.status==='pending')).toBe(true);expect(calls).toHaveLength(0);
+  for(const id of [manualId,captureId,mailDoc.documentId])await pool.query("UPDATE hestia_content_summary SET updated_at='2000-01-01T00:00:00Z' WHERE content_id=(SELECT r.content_id FROM hestia_document d JOIN hestia_document_revision r ON r.id=d.current_revision_id WHERE d.id=$1)",[id]);
+  expect(await summaries.runSummaryBatch(3)).toEqual({processed:3});expect(calls).toHaveLength(3);expect(await ledger()).toHaveLength(3);
+  for(const id of [manualId,captureId,mailDoc.documentId])expect((await data(await summaries.handleDocumentSummary(req(),id))).summary).toEqual({status:'ready',text:'Facture synthétique de démonstration.'});
  });
  it('does not spend or enqueue work by reading a historical document with no summary row',async()=>{
   const content=await original(),document=await mail(content.id);await pool.query('DELETE FROM hestia_content_summary WHERE content_id=$1',[content.id]);
-  for(const method of ['GET','POST'])expect(await data(await summaries.handleDocumentSummary(req(method==='POST'?{}:undefined,method),document.documentId))).toMatchObject({summary:{status:'unavailable'}});
+  for(const method of ['GET','POST'])expect(await data(await summaries.handleDocumentSummary(req(method==='POST'?{}:undefined,method),document.documentId))).toMatchObject({summary:{status:'none'}});
   await app.handleDocuments(req());expect(await row(content.id)).toBeUndefined();expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+  await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'ready',backfill:true});expect(calls).toHaveLength(1);
  });
  it('keeps a late result on the displaced original and restores that original with its own summary and no extra call',async()=>{
   const first=await original(),document=await mail(first.id);let replacement:{revisionId:string;version:number}|undefined;
@@ -206,19 +338,66 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
  });
  it('reserves against the existing shared budget and keeps classification/manual placement usable when unavailable',async()=>{
   const content=await original();const document=await mail(content.id);await pool.query('UPDATE hestia_classification_config SET monthly_limit_micros=1 WHERE id=1');
-  await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'unavailable',text:null});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
+  await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'pending',deferred:true,cause:'budget',text:null});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);
   expect((await app.handleDocument(req(),document.documentId)).status).toBe(200);
  });
  it('rechecks admission after reading objects and before reserving a paid call',async()=>{
   const content=await original();await mail(content.id);getHook=async()=>{getHook=undefined;await pool.query('UPDATE hestia_member SET recovering=true WHERE user_id=$1',[actorId]);};
-  try{await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'unavailable',text:null});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);}finally{await pool.query('UPDATE hestia_member SET recovering=false WHERE user_id=$1',[actorId]);}
+  try{await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'pending',deferred:true,cause:null,request_id:null,text:null});expect(calls).toHaveLength(0);expect(await ledger()).toHaveLength(0);}finally{await pool.query('UPDATE hestia_member SET recovering=false WHERE user_id=$1',[actorId]);}
  });
  it('serializes concurrent workers per content without holding SQL locks over provider I/O',async()=>{
   const content=await original();const document=await mail(content.id);let release!:()=>void,entered!:()=>void;
+  await pool.query('DELETE FROM hestia_content_summary WHERE content_id=$1',[content.id]);
   const sent=new Promise<void>(resolve=>{entered=resolve;});effect=async()=>{entered();await new Promise<void>(resolve=>{release=resolve;});return{value:{summary:'Document traité une fois.'},actualMicros:20};};
   const first=summaries.runSummaryBatch(1);await sent;
   try{expect((await app.handleDocument(req(),document.documentId)).status).toBe(200);await summaries.runSummaryBatch(1);expect(calls).toHaveLength(1);}finally{release();await first;}
   expect(await row(content.id)).toMatchObject({status:'ready',text:'Document traité une fois.'});expect(await ledger()).toHaveLength(1);
+ });
+ it('retains unknown debt when reservation COMMIT succeeds but its transaction response is lost',async()=>{
+  const content=await original();await mail(content.id);let transactions=0,now=new Date();
+  const ambiguousAccess:typeof access={...access,transaction:async action=>{
+   const position=++transactions,result=await access.transaction(action);
+   // PostgreSQL has committed the genuine reservation before the caller loses
+   // its reply. A thrown promise cannot prove that no durable charge exists.
+   if(position===3)throw new Error('Synthetic reply lost after reservation COMMIT');
+   return result;
+  }};
+  const worker=createSummaryService(ambiguousAccess,{...deps,clock:async()=>now});
+  expect(await worker.runSummaryBatch(1)).toEqual({processed:1});
+  const checkpoint=await row(content.id),requests=await ledger();
+  expect(checkpoint).toMatchObject({status:'unknown',text:null,cause:null,deferred:false});expect(checkpoint.request_id).toBeTruthy();
+  expect(requests).toHaveLength(1);expect(requests[0]).toMatchObject({id:checkpoint.request_id,reserved_micros:'100',actual_micros:null,status:'failed'});expect(calls).toHaveLength(0);
+  now=new Date(now.getTime()+60001);await worker.runSummaryBatch(1);await summaries.runSummaryBatch(1);
+  expect(await row(content.id)).toEqual(checkpoint);expect(await ledger()).toEqual(requests);expect(calls).toHaveLength(0);
+ });
+ it('rechecks durable deferral after a competing batch selected the original before an unsent storage failure',async()=>{
+  const content=await original();await mail(content.id);let selected!:()=>void,release!:()=>void,transactions=0,reads=0,fail=true,now=new Date();
+  const selectionCommitted=new Promise<void>(resolve=>{selected=resolve;}),selectionGate=new Promise<void>(resolve=>{release=resolve;});
+  const pausedAccess:typeof access={...access,transaction:async action=>{
+   const position=++transactions,result=await access.transaction(action);
+   if(position===1){selected();await selectionGate;}
+   return result;
+  }};
+  const timed:SummaryDependencies={...deps,clock:async()=>now,store:{...store,async getRange(...args){reads++;if(fail)throw new Error('Synthetic unavailable original before reservation');return store.getRange(...args);}}};
+  const staleWorker=createSummaryService(pausedAccess,timed),activeWorker=createSummaryService(access,timed),staleBatch=staleWorker.runSummaryBatch(1);
+  await selectionCommitted;
+  try{
+   expect(await activeWorker.runSummaryBatch(1)).toEqual({processed:1});const deferred=await row(content.id);
+   expect(deferred).toMatchObject({status:'pending',deferred:true,request_id:null,cause:null});expect(deferred.not_before.toISOString()).toBe(new Date(now.getTime()+60000).toISOString());
+   expect(reads).toBe(1);expect(await ledger()).toHaveLength(0);fail=false;release();
+   expect(await staleBatch).toEqual({processed:0});expect(await row(content.id)).toEqual(deferred);expect(reads).toBe(1);expect(calls).toHaveLength(0);
+   now=new Date(now.getTime()+59999);await activeWorker.runSummaryBatch(1);expect(await row(content.id)).toEqual(deferred);expect(reads).toBe(1);
+   now=new Date(now.getTime()+2);expect(await activeWorker.runSummaryBatch(1)).toEqual({processed:1});expect(await row(content.id)).toMatchObject({status:'ready'});expect(reads).toBe(2);expect(calls).toHaveLength(1);expect(await ledger()).toHaveLength(1);
+  }finally{release();await staleBatch;}
+ });
+ it('fences a pending original that already carries a durable paid request before any object read or retry',async()=>{
+  const content=await original();await mail(content.id);const requestId=await paidReceipt(content.id,'summary');let reads=0;
+  await pool.query("UPDATE hestia_content_summary SET request_id=$2,status='pending',not_before='-infinity' WHERE content_id=$1",[content.id,requestId]);
+  const receipts=await ledger(),worker=createSummaryService(access,{...deps,store:{...store,async getRange(...args){reads++;return store.getRange(...args);}}});
+  expect(await worker.runSummaryBatch(1)).toEqual({processed:0});const checkpoint=await row(content.id);
+  expect(checkpoint).toMatchObject({status:'unknown',request_id:requestId,text:null,cause:null,deferred:false});expect(reads).toBe(0);expect(calls).toHaveLength(0);
+  const settled=await ledger();expect(settled).toHaveLength(1);expect(settled[0]).toMatchObject({...receipts[0],status:'failed',settled_at:expect.any(Date)});expect(settled[0].actual_micros).toBeNull();expect(settled[0].reserved_micros).toBe('100');
+  await worker.runSummaryBatch(1);expect(await row(content.id)).toEqual(checkpoint);expect(await ledger()).toEqual(settled);expect(reads).toBe(0);expect(calls).toHaveLength(0);
  });
  it('cancels pending automatic jobs on opt-out while an explicit manual request remains available',async()=>{
   const content=await original(),attachmentId=await pendingArrival(content.id);await optOut();
@@ -228,7 +407,8 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
   await access.transaction(client=>summaries.requestAnalysis(client,{attachmentId,contentId:content.id,actorId,idempotencyKey:randomUUID(),version:1,commentVersion:1}));
   expect(await row(content.id)).toMatchObject({permitted:true,status:'pending',auto_origin:false});
   await priority(content.id);
-  await summaries.runSummaryBatch(1);expect(await row(content.id)).toMatchObject({status:'ready',auto_origin:false});expect(calls).toHaveLength(1);
+  for(let pass=0;pass<3&&(await row(content.id)).status==='pending';pass++)await summaries.runSummaryBatch(1);
+  expect(await row(content.id)).toMatchObject({status:'ready',auto_origin:false});expect(calls).toHaveLength(1);
   expect((await pool.query('SELECT automatic_analysis FROM hestia_inbox_settings WHERE actor_id=$1',[actorId])).rows[0].automatic_analysis).toBe(false);
  });
  it('discards an in-flight automatic result after opt-out and keeps its incurred charge without retry',async()=>{
@@ -457,10 +637,27 @@ describe('document-only summaries over real PostgreSQL, objects and durable budg
    await client.query('INSERT INTO "user" VALUES($1,$2)',[actorId,'Auteur synthétique restauré']);
    for(const [table,rows] of [['hestia_member',[member]],['hestia_folder',[folder]],['hestia_grant',grants],['hestia_upload',[{...upload,document_id:null}]],['hestia_upload_object',[object]],['hestia_document',[document]]] as const)
     for(const item of rows)await client.query(`INSERT INTO ${table} OVERRIDING SYSTEM VALUE SELECT * FROM json_populate_record(NULL::${table},$1::json)`,[JSON.stringify(item)]);
-   for(const id of ['016-content-revisions','017-inbox','018-content-summary'])await client.query(await readFile(new URL(`../../src/server/db/migrations/${id}.sql`,import.meta.url),'utf8'));
+   for(const id of ['016-content-revisions','017-inbox','018-content-summary','019-provider-invocation-observation'])await client.query(await readFile(new URL(`../../src/server/db/migrations/${id}.sql`,import.meta.url),'utf8'));
    expect((await client.query('SELECT count(*)::int AS n FROM hestia_content')).rows[0].n).toBe(1);
    expect((await client.query('SELECT count(*)::int AS n FROM hestia_document_revision')).rows[0].n).toBe(1);
    expect((await client.query('SELECT count(*)::int AS n FROM hestia_content_summary')).rows[0].n).toBe(0);
+   const historicalId=(await client.query('SELECT id FROM hestia_content')).rows[0].id,legacyIds=[randomUUID(),randomUUID(),randomUUID()];
+   await client.query(`INSERT INTO hestia_content(id,object_key,owner_id,size,sha256,media_type,file_name,preview_supported)
+    SELECT id,'synthetic-migration/'||id::text,$2,1,repeat('a',64),'image/png','Fixture.png',true FROM unnest($1::uuid[]) AS id`,[legacyIds,actorId]);
+   await client.query("UPDATE hestia_content_summary SET status='ready',text='Phrase existante.' WHERE content_id=$1",[legacyIds[0]]);
+   await client.query("UPDATE hestia_content_summary SET status='unknown' WHERE content_id=$1",[legacyIds[1]]);
+   await client.query("UPDATE hestia_content_summary SET status='unavailable',permitted=false WHERE content_id=$1",[legacyIds[2]]);
+   const before=(await client.query('SELECT content_id,status,text,permitted,generation,request_id FROM hestia_content_summary ORDER BY content_id')).rows;
+   await client.query(await readFile(new URL('../../src/server/db/migrations/020-systematic-summaries.sql',import.meta.url),'utf8'));
+   expect((await client.query('SELECT content_id,status,text,permitted,generation,request_id FROM hestia_content_summary ORDER BY content_id')).rows).toEqual(before);
+   expect((await client.query('SELECT * FROM hestia_summary_scheduler')).rows).toEqual([{id:true,next_lane:0}]);
+   expect((await client.query('SELECT count(*)::int AS n FROM hestia_content_summary WHERE content_id=$1',[historicalId])).rows[0].n).toBe(0);
+   // Prior application SQL remains executable on the additive schema; this
+   // proves these readers/writers, without claiming a full binary rollback.
+   expect((await client.query('SELECT status,text,permitted FROM hestia_content_summary WHERE content_id=$1',[legacyIds[0]])).rows).toEqual([{status:'ready',text:'Phrase existante.',permitted:true}]);
+   await client.query("INSERT INTO hestia_content_summary(content_id,status,permitted) VALUES($1,'pending',true)",[historicalId]);
+   await client.query("UPDATE hestia_content_summary SET status='ready',text='Ancienne écriture compatible.' WHERE content_id=$1",[historicalId]);
+   expect((await client.query('SELECT status,text,permitted,cause,deferred,backfill FROM hestia_content_summary WHERE content_id=$1',[historicalId])).rows).toEqual([{status:'ready',text:'Ancienne écriture compatible.',permitted:true,cause:null,deferred:false,backfill:false}]);
   }finally{await client.query('ROLLBACK');client.release();}
  });
 });

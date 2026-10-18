@@ -11,14 +11,18 @@ const versionConflict = () => new HttpError(409, 'VERSION_CONFLICT', 'Ce documen
 type Content = { id: string; object_key: string; owner_id: string; size: number; sha256: string; media_type: string; file_name: string;
   preview_supported: boolean; deleted_at: Date | null; purge_pending_at: Date | null };
 type Document = { id: string; folder_id: string; owner_id: string; current_revision_id: string; version: number; trashed_at: Date | null; purged_at: Date | null };
-type Revision = Content & { revision_id: string; created_at: Date; recoverable_until: Date | null; summary_status?: string; summary_text?: string };
+type Revision = Content & { revision_id: string; created_at: Date; recoverable_until: Date | null; summary_status?: string; summary_text?: string; summary_cause?: string; summary_deferred?: boolean; summary_permitted?: boolean };
 
-export function contentSummary(status: unknown, text: unknown): DocumentSummaryDto {
+export function contentSummary(status: unknown, text: unknown, cause?: unknown, deferred = false, permitted = true): DocumentSummaryDto {
+  if (permitted === false) return { status: 'unavailable' };
+  if (status === undefined || status === null) return { status: 'none' };
   const supported = ['pending', 'running', 'ready', 'unavailable', 'unknown'];
   if (typeof status !== 'string' || !supported.includes(status)) return { status: 'unavailable' };
   if (status === 'ready') return typeof text === 'string' && text.trim() && [...text].length <= 200
     ? { status: 'ready', text } : { status: 'unavailable' };
-  return { status: status as DocumentSummaryDto['status'] };
+  const projected = status === 'pending' && deferred ? 'unavailable' : status as DocumentSummaryDto['status'];
+  const known = ['format', 'unreadable', 'ai-off', 'budget'].includes(cause as string);
+  return { status: projected, ...(projected === 'unavailable' && known ? { cause: cause as DocumentSummaryDto['cause'] } : {}) };
 }
 
 /** Caller owns the admission transaction and the same idempotent inbox receipt. No network I/O. */
@@ -104,7 +108,7 @@ export function createRevisionsService(pool: Pool, access: Access, dependencies:
           UNION ALL
           (SELECT r.id FROM hestia_document_revision r WHERE r.document_id=$1 AND r.id<>$2 AND (r.recoverable_until IS NULL OR r.recoverable_until<=$3)
             ORDER BY r.created_at DESC,r.id LIMIT 100)
-          ) SELECT c.*,r.id AS revision_id,r.created_at,r.recoverable_until,s.status AS summary_status,s.text AS summary_text
+          ) SELECT c.*,r.id AS revision_id,r.created_at,r.recoverable_until,s.status AS summary_status,s.text AS summary_text,s.cause AS summary_cause,s.deferred AS summary_deferred,s.permitted AS summary_permitted
           FROM hestia_document_revision r JOIN hestia_content c ON c.id=r.content_id LEFT JOIN hestia_content_summary s ON s.content_id=c.id
           JOIN selected ON selected.id=r.id ORDER BY r.created_at DESC,r.id`, [id,doc.current_revision_id,now])).rows;
         if (rows.filter(r=>r.revision_id===doc.current_revision_id||r.recoverable_until&&r.recoverable_until.getTime()>now.getTime()).length > 1000)
@@ -115,7 +119,7 @@ export function createRevisionsService(pool: Pool, access: Access, dependencies:
           const available=!expired&&!r.deleted_at&&!r.purge_pending_at;
           return {id:r.revision_id,current,expired,createdAt:r.created_at.toISOString(),recoverableUntil:r.recoverable_until?.toISOString()??null,
             ...(available?{fileName:r.file_name,mediaType:r.media_type,size:r.size,sha256:r.sha256}:{}),
-            summary:available?contentSummary(r.summary_status,r.summary_text):{status:'unavailable'},
+            summary:available?contentSummary(r.summary_status,r.summary_text,r.summary_cause,r.summary_deferred,r.summary_permitted):{status:'unavailable'},
             canDownload:available&&rights.capabilities.includes('exporter'),canRestore:available&&!current&&rights.capabilities.includes('modifier')};
         });
         return { versions: revisions, version: doc.version, now: now.toISOString() };
