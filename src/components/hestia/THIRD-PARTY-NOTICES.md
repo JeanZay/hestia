@@ -13,3 +13,7 @@ Intégration technique du hand-off Claude Design « Hestia Documents » reçu le
 
 Les polices sont servies localement avec `next/font/local` ; aucune requête Google Fonts au chargement de l’application. Les licences tierces restent applicables aux assets et ne sont pas remplacées par Apache-2.0.
 
+## Envois par email V2 — 18 octobre 2026
+
+Intégration technique du hand-off local `claude-design-handoff-outgoing-email-v2.zip`, SHA-256 `98b5ee741f32a5044249ec78c3c1893dee5a3b18dc9d1b7b397208fa01f1d76a`, validé pour ce lot. `outgoing-design.tsx` et `outgoing.css` reprennent P31 RecipientList, P32 SizeMeter, P33 AttachmentRow de `ds-ext/propositions-1.9.js` ainsi que les compositions de `Hestia Envois.dc.html`. P30 `send` est un tracé Lucide ISC repris statiquement dans `design-system.tsx`, couvert par les notices conservées ci-dessus. IconButton, Progress et FileThumb réemploient les définitions DS1.0 du même package ; aucun nouveau token ou asset de police n'est introduit. `outgoing-workspace.tsx` reprend les états et compositions fournis ; le client et les contrôles d'autorisation remplacent les simulations. Le runtime DC, ses fixtures, les outils de démonstration et les dépendances CDN du prototype ne sont pas importés. La correspondance et les adaptations purement techniques figurent dans `docs/design/outgoing-email-correspondence.md`.
+

@@ -12,6 +12,7 @@ type Maintenance = {
   cleanupSummary?:(limit:number)=>Promise<unknown>;
   runSummaryBatch?:(limit:number,budgetMs:number)=>Promise<unknown>;
   runAcknowledgements?:()=>Promise<unknown>;
+  cleanupOutgoing?:(limit:number)=>Promise<unknown>;
 };
 /** Internal scheduler authentication is separate from family sessions. */
 export function handleMaintenance(request: Request, secret: string | undefined, application: () => Maintenance) {
@@ -31,8 +32,9 @@ export function handleMaintenance(request: Request, secret: string | undefined, 
     const versions=await app.cleanupVersions?.(20,100);
     const inbox=await app.cleanup?.();
     const summaryCleanup=await app.cleanupSummary?.(100);
+    const outgoing=remaining()>2000?await app.cleanupOutgoing?.(100):undefined;
     const acknowledgements=remaining()>6000?await app.runAcknowledgements?.():undefined;
     const summaries=remaining()>DEFAULT_CLASSIFICATION_LIMITS.requestTimeoutMs?await app.runSummaryBatch?.(4,Math.min(35000,remaining())):undefined;
-    return response({trash,uploads,captures,classification,versions,inbox,summaryCleanup,summaries,acknowledgements},trash.failed || captures.failed || versions?.failed ? 503 : 200);
+    return response({trash,uploads,captures,classification,versions,inbox,summaryCleanup,outgoing,summaries,acknowledgements},trash.failed || captures.failed || versions?.failed ? 503 : 200);
   });
 }

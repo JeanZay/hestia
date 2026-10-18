@@ -3,7 +3,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } fro
 /** Server-only byte transport. Authorization and immutable key allocation belong to SQL operations. */
 export interface ObjectStore {
   put(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
-  getRange(key: string, start: number, endInclusive: number): Promise<Uint8Array>;
+  getRange(key: string, start: number, endInclusive: number, options?: { signal?: AbortSignal }): Promise<Uint8Array>;
   delete(key: string): Promise<void>;
 }
 
@@ -77,15 +77,19 @@ export function createS3Storage(config: StorageConfig = storageConfigFromEnv()):
     responseChecksumValidation: "WHEN_REQUIRED",
     requestHandler: { connectionTimeout: 3_000, requestTimeout: validated.timeoutMs },
   });
-  async function bounded<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  async function bounded<T>(operation: (signal: AbortSignal) => Promise<T>, external?: AbortSignal): Promise<T> {
+    if (external?.aborted) throw new StorageError("storage_unavailable");
     const controller = new AbortController();
+    let cancel: () => void = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => { cancel = () => { controller.abort(); reject(new StorageError("storage_unavailable")); }; });
+    external?.addEventListener("abort", cancel, { once: true });
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => { controller.abort(); reject(new StorageError("storage_unavailable")); }, validated.timeoutMs);
     });
-    try { return await Promise.race([operation(controller.signal), timeout]); }
+    try { return await Promise.race([operation(controller.signal), timeout, cancelled]); }
     catch { throw new StorageError("storage_unavailable"); }
-    finally { clearTimeout(timer!); }
+    finally { clearTimeout(timer!); external?.removeEventListener("abort", cancel); }
   }
   return {
     async put(key, bytes, contentType) {
@@ -100,7 +104,7 @@ export function createS3Storage(config: StorageConfig = storageConfigFromEnv()):
         ContentType: contentType, CacheControl: "private, no-store",
       }), { abortSignal: signal }));
     },
-    async getRange(key, start, endInclusive) {
+    async getRange(key, start, endInclusive, options) {
       validateKey(key);
       const length = endInclusive - start + 1;
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(endInclusive) || start < 0 ||
@@ -138,7 +142,7 @@ export function createS3Storage(config: StorageConfig = storageConfigFromEnv()):
           signal.removeEventListener("abort", abortBody);
           (body as { destroy?: () => void }).destroy?.();
         }
-      });
+      }, options?.signal);
     },
     async delete(key) {
       validateKey(key);

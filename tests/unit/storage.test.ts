@@ -10,6 +10,12 @@ const config: StorageConfig = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("private bounded S3 transport", () => {
+  it("cancels a range with its caller deadline even when the SDK never settles", async () => {
+    vi.spyOn(S3Client.prototype,"send").mockImplementation(()=>new Promise(()=>{}));
+    const controller=new AbortController(),store=createS3Storage({...config,timeoutMs:30000});
+    const operation=store.getRange("synthetic/key",0,0,{signal:controller.signal});controller.abort();
+    await expect(operation).rejects.toThrow("storage_unavailable");
+  });
   it("requires explicit configuration rather than SDK ambient credentials", () => {
     expect(() => storageConfigFromEnv({})).toThrow("storage_configuration");
     expect(() => validateStorageConfig({ ...config, accessKeyId: "" })).toThrow("storage_configuration");

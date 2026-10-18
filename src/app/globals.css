@@ -203,3 +203,6 @@ button { cursor: pointer; }
 .h-toast > div { font-size:15px;line-height:1.4;flex:1; }
 .h-toast button { border:0;background:transparent;padding:4px 2px;color:var(--cdv-action-on-dark);font-weight:700;font-size:15px;text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:2px;font-family:inherit; }
 @media(max-width:599px) { .h-toast-host { bottom:80px; } }
+
+/* Envois V2 owns its760px composition without changing neighboring workspaces. */
+.h-content:has(> .ho-workspace){max-width:none}
