@@ -7,6 +7,8 @@ export function Logo({ dark = false }: { dark?: boolean }) {
   return <span className="h-logo"><svg width="32" height="32" viewBox="0 0 48 48" fill="none" role="img" aria-label="Hestia"><path d="M9 44V24a15 15 0 0 1 9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M39 44V24a15 15 0 0 0-9.5-13.95" stroke={dark ? "#FFFFFF" : "var(--cdv-ink)"} strokeWidth="6"/><path d="M20.5 4.5h7l3 9.5h-13z" fill={dark ? "#5FB3C6" : "var(--cdv-action)"}/></svg><span aria-hidden="true">Hestia</span></span>;
 }
 const paths: Record<string, ReactNode> = {
+  // Clé de voûte 1.9 P30, Envois V2 validated hand-off; Lucide ISC.
+  send: <><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></>,
   inbox: <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>,
   history: <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></>,
   mail: <><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></>,
@@ -58,8 +60,8 @@ const paths: Record<string, ReactNode> = {
 export function Icon({ name, size = 20, style }: { name: string; size?: number; style?: CSSProperties }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={size <= 16 ? 2.5 : 2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: "none", ...style }}>{paths[name]}</svg>;
 }
-export function Button({ variant = "primary", icon, loading, compact, children, className = "", disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "tertiary" | "danger"; icon?: string; loading?: boolean; compact?: boolean }) {
-  return <button {...props} type={props.type || "button"} className={`cdv-focus h-button h-button-${variant} ${compact ? "h-compact" : ""} ${className}`} disabled={disabled || loading} aria-busy={loading || undefined}>{(loading || icon) && <Icon name={loading ? "loader" : icon!} size={18} style={loading ? { animation: "cdv-spin 1s linear infinite" } : undefined}/>}<span>{children}</span></button>;
+export function Button({ variant = "primary", icon, iconRight, loading, compact, children, className = "", disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "tertiary" | "danger"; icon?: string; iconRight?: string; loading?: boolean; compact?: boolean }) {
+  return <button {...props} type={props.type || "button"} className={`cdv-focus h-button h-button-${variant} ${compact ? "h-compact" : ""} ${className}`} disabled={disabled || loading} aria-busy={loading || undefined}>{(loading || icon) && <Icon name={loading ? "loader" : icon!} size={18} style={loading ? { animation: "cdv-spin 1s linear infinite" } : undefined}/>}<span>{children}</span>{iconRight && <Icon name={iconRight} size={18}/>}</button>;
 }
 export function TextField({ label, hint, error, id, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; error?: string }) {
   const generated = useId(); const fieldId = id || generated;

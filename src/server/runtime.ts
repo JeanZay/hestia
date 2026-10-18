@@ -8,6 +8,7 @@ import { readClassificationDeployment } from "./classification/deployment";
 import { readTranscriptionDeployment } from "./transcription/deployment";
 import { readSummaryDeployment } from './summary/deployment';
 import { createInboxAcknowledgementTransport } from './inbox/acknowledgement';
+import { readOutgoingDeployment } from './outgoing/deployment';
 
 let application: ReturnType<typeof createApplication> | undefined;
 export function getApplication() {
@@ -17,6 +18,7 @@ export function getApplication() {
       connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 }), config, { store: createObjectStore(),
       classification: readClassificationDeployment(config.environment), transcription: readTranscriptionDeployment(config.environment),
       summary:readSummaryDeployment(config.environment),
+      outgoing:readOutgoingDeployment(config),
       inbox:{...readInboxDeployment(config.environment),acknowledge:createInboxAcknowledgementTransport(config)} });
   }
   return application;
