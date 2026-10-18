@@ -54,3 +54,34 @@ test("Photo : retour supérieur vers Dossiers sans ouvrir le sélecteur", async 
   await expect(main.getByRole("heading", { name: "Dossiers", exact: true })).toBeFocused();
   expect(pickers).toBe(0);
 });
+
+for (const actor of ["camille", "alex"]) test(`Photo : une seule section sélectionnée depuis chaque destination (${actor})`, async ({ page, isMobile }) => {
+  test.skip(!isMobile, "L’entrée Photo est réservée aux appareils mobiles.");
+  await login(page, `${actor}@hestia.invalid`);
+  const nav = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
+  const main = page.getByRole("main");
+  const writes: string[] = [];
+  let pickers = 0;
+  page.on("filechooser", () => { pickers++; });
+  page.on("request", request => {
+    if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/hestia/")) writes.push(request.method());
+  });
+  const destinations = ["Dossiers", "Échanges", "Rechercher", "Corbeille", "Moi"];
+  if (await nav.getByRole("button", { name: "Foyer", exact: true }).count()) destinations.push("Foyer");
+  for (const destination of destinations) {
+    await nav.getByRole("button", { name: destination, exact: true }).click();
+    await expect(nav.locator('[aria-current="page"]')).toHaveText([destination]);
+    await nav.getByRole("button", { name: "Photo", exact: true }).click();
+    await expect(main.getByRole("heading", { name: "Photo", exact: true })).toBeVisible();
+    await expect(nav.locator('[aria-current="page"]')).toHaveText(["Photo"]);
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const rail = page.getByRole("navigation", { name: "Navigation principale", exact: true });
+    await expect(rail.locator('[aria-current="page"]')).toHaveText(["Photo"]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await main.getByRole("button", { name: "Dossiers", exact: true }).click();
+    await expect(main.getByRole("heading", { name: "Dossiers", exact: true })).toBeFocused();
+    await expect(nav.locator('[aria-current="page"]')).toHaveText(["Dossiers"]);
+  }
+  expect(pickers).toBe(0);
+  expect(writes).toEqual([]);
+});
