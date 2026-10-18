@@ -224,7 +224,7 @@ test("JPEG, WebP et HEIC : originaux acceptés, HEIC exporté sans conversion", 
   const documents = await fileList(page,id);
   expect(documents).toHaveLength(3);
   expect(documents.map((d:{mediaType:string})=>d.mediaType).sort()).toEqual(["image/heic","image/jpeg","image/webp"]);
-  await page.getByRole("main").getByRole("button",{name:/synthetic\.heic/}).click();
+  await page.getByRole("main").getByRole("listitem").filter({hasText:/synthetic\.heic/}).getByRole("button",{name:"synthetic",exact:true}).click();
   const detail=page.getByRole("complementary",{name:"Document",exact:true});
   await expect(detail.getByText("Aperçu indisponible",{exact:true})).toBeVisible();
   const pending=page.waitForEvent("download");

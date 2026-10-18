@@ -138,7 +138,7 @@ test("un retour au premier plan pendant une lecture conserve l’invalidation",a
   }finally{held.release();}
 });
 
-test("un poll qui remplace la relecture conserve la confirmation même en erreur 503",async({page})=>{
+test("un poll conserve la relecture, le retour au premier plan conserve la confirmation même en erreur 503",async({page})=>{
   await page.clock.install();
   await login(page);const folder=await create(page,`Confirmation ${randomUUID().slice(0,8)}`);await page.reload();await open(page,folder);
   const held=gate(),reached=gate(),delivered=gate();let reads=0,patches=0;
@@ -150,6 +150,10 @@ test("un poll qui remplace la relecture conserve la confirmation même en erreur
   try{
     const title=`Confirmé malgré lecture ${randomUUID().slice(0,8)}`;await rename(page,title);await reached.promise;
     await page.clock.runFor(30_000);
+    expect(reads).toBe(1);
+    await expect(page.getByText("Renommé.",{exact:true})).toBeVisible();
+    await page.evaluate(()=>window.dispatchEvent(new Event("focus")));
+    await page.clock.runFor(100);
     await expect.poll(()=>reads,{timeout:2500}).toBe(2);
     await expect(page.getByText("Renommé. Actualisation indisponible.",{exact:true})).toBeVisible();
     held.release();await delivered.promise;
