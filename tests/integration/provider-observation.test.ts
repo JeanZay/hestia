@@ -32,12 +32,13 @@ describe("provider observations on an owned synthetic PostgreSQL database", () =
     finally { if (previous === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = previous; }
   });
   afterAll(async () => { await pool.end(); await admin.end(); });
-  it("adds only019, preserves historical rows/debt and eighteen checksums, and reruns idempotently", async () => {
+  it("adds only019, preserves historical rows/debt and all other checksums, and reruns idempotently", async () => {
     await pool.query("DROP TABLE hestia_provider_invocation_observation");
     await pool.query("DELETE FROM hestia_migration WHERE id='019-provider-invocation-observation'");
     await ledger(); await ledger(true, null);
     const before = (await rows()).rows, checksums = (await pool.query("SELECT id,checksum FROM hestia_migration ORDER BY id")).rows;
-    expect(checksums).toHaveLength(18);
+    expect(checksums.filter(({ id }) => Number(id.slice(0, 3)) <= 18)).toHaveLength(18);
+    expect(checksums.some(({ id }) => id === "020-systematic-summaries")).toBe(true);
     await migrateDatabase(pool, config); await migrateDatabase(pool, config);
     expect((await rows()).rows).toEqual(before);
     expect((await pool.query("SELECT id,checksum FROM hestia_migration WHERE id<>'019-provider-invocation-observation' ORDER BY id")).rows).toEqual(checksums);
