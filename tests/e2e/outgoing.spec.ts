@@ -175,6 +175,8 @@ test('API réelle SQL/S3 : ajout depuis la fiche, reprise privée et refus certa
   await page.getByRole('main').getByRole('button', { name: new RegExp(`^${folderName}`) }).click();
   await page.getByRole('button', { name: title, exact: true }).click();
   await page.getByRole('button', { name: 'Ajouter à l’envoi', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Déjà dans la préparation', exact: true })).toBeDisabled();
+  await page.getByRole('complementary', { name: 'Document', exact: true }).getByRole('button', { name: 'Fermer', exact: true }).click();
   await page.getByRole('button', { name: 'Ouvrir Envois', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Envois', exact: true })).toBeVisible();
   await expect(page.getByText(title, { exact: true })).toBeVisible();
