@@ -33,7 +33,7 @@ type StoredDocument = {
   trashed_at: Date | null; purged_at: Date | null; trashed_by_name: string | null;
   trash_group_id: string | null;
   last_lifecycle_action: string | null; last_lifecycle_version: number | null;
-  current_revision_id?: string; summary_status?: string; summary_text?: string;
+  current_revision_id?: string; summary_status?: string; summary_text?: string; summary_cause?: string; summary_deferred?: boolean; summary_permitted?: boolean;
 };
 const hash = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex");
 const conflict = (code: string, message: string) => new HttpError(409, code, message);
@@ -45,19 +45,19 @@ function dto(row: StoredDocument, capabilities: string[]):WorkspaceDocument {
     mediaType: row.media_type, size: row.size, sha256: row.sha256, source: row.source,
     version: row.version, createdAt: row.created_at.toISOString(), uploadedByName: row.uploaded_by_name,
     previewSupported: row.preview_supported, capabilities, revisionId: row.current_revision_id,
-    summary: contentSummary(row.summary_status,row.summary_text) };
+    summary: contentSummary(row.summary_status,row.summary_text,row.summary_cause,row.summary_deferred,row.summary_permitted) };
 }
 async function withSummary(client:PoolClient,row:StoredDocument) {
   if (!row.current_revision_id) return row;
-  const summary=(await client.query(`SELECT s.status,s.text FROM hestia_document_revision r
+  const summary=(await client.query(`SELECT s.status,s.text,s.cause,s.deferred,s.permitted FROM hestia_document_revision r
     LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id WHERE r.id=$1`,[row.current_revision_id])).rows[0];
-  return {...row,summary_status:summary?.status,summary_text:summary?.text};
+  return {...row,summary_status:summary?.status,summary_text:summary?.text,summary_cause:summary?.cause,summary_deferred:summary?.deferred,summary_permitted:summary?.permitted};
 }
 
 /** The caller owns admission, the transaction and its current rights evaluator. */
 export async function readWorkspaceDocuments(client:PoolClient,evaluate:FolderAccessEvaluator,folderId:string|null,q:string):Promise<WorkspaceDocument[]> {
   const rows=(await client.query<StoredDocument>(`SELECT d.id,d.folder_id,d.title,d.file_name,d.media_type,d.size,d.sha256,d.source,
-    d.version,d.created_at,d.uploaded_by_name,d.preview_supported,d.current_revision_id,s.status AS summary_status,s.text AS summary_text FROM hestia_document d
+    d.version,d.created_at,d.uploaded_by_name,d.preview_supported,d.current_revision_id,s.status AS summary_status,s.text AS summary_text,s.cause AS summary_cause,s.deferred AS summary_deferred,s.permitted AS summary_permitted FROM hestia_document d
     LEFT JOIN hestia_document_revision r ON r.id=d.current_revision_id LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id
     WHERE d.purged_at IS NULL AND d.trashed_at IS NULL AND ($1::uuid IS NULL OR d.folder_id=$1)
     ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`,[folderId])).rows;
@@ -315,7 +315,7 @@ export function createDocuments(pool: Pool, access: Access, dependencies?: Docum
           else await permissions(client,actor,folderId,required);
         }
         const now = await clock(client);
-        const rows = (await client.query<StoredDocument>(`SELECT d.*,s.status AS summary_status,s.text AS summary_text FROM hestia_document d
+        const rows = (await client.query<StoredDocument>(`SELECT d.*,s.status AS summary_status,s.text AS summary_text,s.cause AS summary_cause,s.deferred AS summary_deferred,s.permitted AS summary_permitted FROM hestia_document d
           LEFT JOIN hestia_document_revision r ON r.id=d.current_revision_id LEFT JOIN hestia_content_summary s ON s.content_id=r.content_id WHERE d.purged_at IS NULL
           AND (CASE WHEN $2::boolean THEN d.trash_group_id IS NULL AND d.trashed_at IS NOT NULL AND d.trashed_at > $3::timestamptz - interval '168 hours' ELSE d.trashed_at IS NULL END)
           AND ($1::uuid IS NULL OR d.folder_id=$1) ORDER BY d.folder_id,d.created_at,d.id LIMIT 10001`, [folderId,Boolean(trash),now])).rows;

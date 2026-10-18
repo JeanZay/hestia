@@ -120,7 +120,9 @@ export function DocumentsApp() {
   const recordConfirmation=useCallback((title:string,text?:string,folderId=selection.current.folderId)=>{
     const notice:Notice={tone:"success",title,text};confirmation.current={notice,folderId};setNotice(notice);
   },[]);
-  const refresh = useCallback(async (options: {folderId?: string | null; query?: string | null; background?: boolean; interactive?: boolean; confirmed?: string} = {}) => {
+  const refresh = useCallback(async (options: {folderId?: string | null; query?: string | null; background?: boolean; interactive?: boolean; confirmed?: string; quiet?: boolean} = {}) => {
+    // Passive summary/rights reads never cancel a foreground request or mutation.
+    if(options.quiet && (reader.current.pending || captureValidation.current))return false;
     // This read also satisfies any foreground refresh queued before it.
     foregroundRefresh.current?.cancel();
     if (options.folderId !== undefined) selection.current.folderId=options.folderId;
@@ -128,7 +130,7 @@ export function DocumentsApp() {
     if (options.query !== undefined) selection.current.query=options.query;
     const requested = {...selection.current};
     if(options.confirmed)recordConfirmation(options.confirmed);
-    setContentLoading(true);setContentFailure(undefined);if(options.interactive&&!confirmation.current)setNotice(null);
+    if(!options.quiet){setContentLoading(true);setContentFailure(undefined);}if(options.interactive&&!confirmation.current)setNotice(null);
     if (!options.background) { setChecking(true); setSlowLoading(false); setNotice(null); }
     const readRevision=reader.current.revision+1;
     try {
@@ -143,7 +145,9 @@ export function DocumentsApp() {
       // to survive a cookie/session change observed by the next snapshot.
       if(actor.current && actor.current!==result.user.id){clearPrivate();setChecking(false);return false;}
       const returning=!admitted.current;
+      const removedVisible=options.quiet && snapshot.current?.documents.some(before=>!result.documents.some(after=>after.id===before.id));
       actor.current=result.user.id;snapshot.current=result;
+      if(removedVisible)setNotice({tone:"info",title:"La liste a été actualisée.",text:"Les documents affichés correspondent à vos accès actuels."});
       capturePreviews.admit(result.user.id,generation.current);
       if(returning&&pendingTrash.current){if(pendingTrash.current.userId!==result.user.id)pendingTrash.current=null;else {setTrashSource(null);setTrashView(true);}}
       if(moveActor.current&&moveActor.current!==result.user.id){pendingMove.current=null;moveActor.current=null;moveScope.current=null;setMoveSource(null);}
@@ -173,8 +177,8 @@ export function DocumentsApp() {
     } catch (error) {
       if(readRevision!==reader.current.revision)return false;
       if(error instanceof RequestError && [401,403].includes(error.status)) clearPrivate();
-      else {const committed=confirmation.current;setNotice({tone:committed ? "warning" : "danger",title:committed ? `${committed.notice.title} Actualisation indisponible.` : admitted.current ? "Actualisation indisponible." : "Connexion indisponible.",text:committed ? "L’action est enregistrée. Réessayez seulement la lecture pour afficher les informations à jour." : errorMessage(error),action:"Actualiser",onAction:()=>void refresh({background:true,interactive:true})});}
-      setChecking(false);setContentLoading(false);setContentFailure(errorMessage(error));
+      else if(!options.quiet){const committed=confirmation.current;setNotice({tone:committed ? "warning" : "danger",title:committed ? `${committed.notice.title} Actualisation indisponible.` : admitted.current ? "Actualisation indisponible." : "Connexion indisponible.",text:committed ? "L’action est enregistrée. Réessayez seulement la lecture pour afficher les informations à jour." : errorMessage(error),action:"Actualiser",onAction:()=>void refresh({background:true,interactive:true})});}
+      setChecking(false);setContentLoading(false);if(!options.quiet)setContentFailure(errorMessage(error));
       return false;
     }
   }, [clearPrivate,validateNameScope,recordConfirmation]);
@@ -221,7 +225,7 @@ export function DocumentsApp() {
   }, [checking]);
   useEffect(() => {
     if (!user) return;
-    const timer = window.setInterval(() => { if(!document.hidden)void refresh({background:true}); },30000);
+    const timer = window.setInterval(() => { if(!document.hidden&&admitted.current)void refresh({background:true,quiet:true}); },15000);
     return () => clearInterval(timer);
   }, [user,refresh]);
   useEffect(()=>{if(!user)return;const ac=new AbortController();const read=()=>void inboxRequest<{pendingCount:number}>("/inbox",ac.signal).then(value=>{if(!ac.signal.aborted)setInboxCount(value.pendingCount);}).catch(()=>{});read();const timer=setInterval(read,30000);return()=>{ac.abort();clearInterval(timer);};},[user]);
