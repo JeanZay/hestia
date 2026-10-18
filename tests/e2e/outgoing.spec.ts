@@ -184,22 +184,39 @@ test('API réelle SQL/S3 : ajout depuis la fiche, reprise privée et refus certa
   await page.getByRole('textbox', { name: 'À', exact: true }).press('Enter');
   await page.getByRole('textbox', { name: 'Objet', exact: true }).fill(`Objet durable ${suffix}`);
   await expect(page.getByText('Enregistrée dans Hestia', { exact: true })).toBeVisible();
-  const other = await browser.newContext({ baseURL: new URL(page.url()).origin, storageState: await page.context().storageState() });
+  // A manually created context inherits the project's device options. Keep the
+  // second device explicit and open its matching desktop/mobile navigation.
+  const other = await browser.newContext({ baseURL: new URL(page.url()).origin, storageState: await page.context().storageState(), viewport: page.viewportSize(), isMobile, hasTouch: isMobile });
+  let resumedFailed = false;
   try {
-    const resumed = await other.newPage(); await resumed.goto('/'); await openOutgoing(resumed, false);
-    await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue(`Objet durable ${suffix}`);
-    await expect(resumed.getByText(title, { exact: true })).toBeVisible();
-    const persisted = await resumed.request.get('/api/hestia/outgoing'); expect(persisted.status()).toBe(200);
-    expect((await persisted.json()).service.configured).toBe(false);
-    await resumed.getByRole('button', { name: 'Vérifier l’envoi', exact: true }).click();
-    await expect(resumed.getByRole('heading', { name: 'Vérifier avant d’envoyer', exact: true })).toBeVisible();
-    await resumed.getByRole('button', { name: 'Envoyer', exact: true }).click();
-    await expect(resumed.getByText('Le service d’envoi n’est pas configuré pour le foyer. Rien n’a été envoyé.', { exact: true })).toBeVisible();
-    await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue(`Objet durable ${suffix}`);
-    await resumed.getByRole('button', { name: 'Abandonner la préparation', exact: true }).click();
-    await resumed.getByRole('dialog').getByRole('button', { name: 'Abandonner', exact: true }).click();
-    await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue('');
-  } finally { await other.close(); }
+    const resumed = await other.newPage();
+    await test.step('Reprendre la préparation sur un autre appareil du même profil', async () => {
+      await resumed.goto('/');
+      await expect(resumed.getByRole('navigation', { name: isMobile ? 'Navigation principale mobile' : 'Navigation principale', exact: true })).toBeVisible();
+      await openOutgoing(resumed, isMobile);
+      await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue(`Objet durable ${suffix}`);
+      await expect(resumed.getByText(title, { exact: true })).toBeVisible();
+      const persisted = await resumed.request.get('/api/hestia/outgoing'); expect(persisted.status()).toBe(200);
+      expect((await persisted.json()).service.configured).toBe(false);
+    });
+    await test.step('Constater le refus certain du fournisseur désactivé sans perdre la préparation', async () => {
+      await resumed.getByRole('button', { name: 'Vérifier l’envoi', exact: true }).click();
+      await expect(resumed.getByRole('heading', { name: 'Vérifier avant d’envoyer', exact: true })).toBeVisible();
+      await resumed.getByRole('button', { name: 'Envoyer', exact: true }).click();
+      await expect(resumed.getByText('Le service d’envoi n’est pas configuré pour le foyer. Rien n’a été envoyé.', { exact: true })).toBeVisible();
+      await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue(`Objet durable ${suffix}`);
+    });
+    await test.step('Abandonner explicitement la préparation enregistrée', async () => {
+      await resumed.getByRole('button', { name: 'Abandonner la préparation', exact: true }).click();
+      await resumed.getByRole('dialog').getByRole('button', { name: 'Abandonner', exact: true }).click();
+      await expect(resumed.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue('');
+    });
+  } catch (error) { resumedFailed = true; throw error; }
+  finally {
+    // A secondary cleanup error must not replace the action/step that failed.
+    if (resumedFailed) await other.close().catch(() => {});
+    else await other.close();
+  }
   await page.reload(); await openOutgoing(page, isMobile);
   await expect(page.getByRole('textbox', { name: 'Objet', exact: true })).toHaveValue('');
 });
