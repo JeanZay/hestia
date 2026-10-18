@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpError, bodyBytes, invalid } from '../access';
-import { MAX_RAW, strictBase64 } from './mime';
+import { MAX_RAW } from './mime';
 export const RELAY_CHUNK = 720 * 1024;
 export type InboxTick = { environment: string; actor: string; epoch: number; timestamp: number; nonce: string };
 export type RelayAuthentication = { environment: string; relayActor: string; relayEpoch: number; relaySecret: string };
@@ -31,8 +31,9 @@ export function verifyEnvelope(value: RelayEnvelope, signature: string, config: 
     || typeof value.payload !== 'string' || value.payload.length > Math.ceil(RELAY_CHUNK / 3) * 4 || !/^[a-f0-9]{64}$/.test(signature)) throw invalid();
   const expected = signEnvelope(value, config.relaySecret); if (!timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'))) throw new HttpError(401, 'RELAY_AUTHENTICATION', 'Relais refusé.');
   if (value.operation !== 'chunk' && value.payload !== '') throw invalid();
-  const bytes = value.operation === 'chunk' ? strictBase64(value.payload) : Buffer.alloc(0);
-  if (value.operation === 'chunk' && (bytes.length !== Math.min(RELAY_CHUNK, value.rawSize - value.index * RELAY_CHUNK) || digest(bytes) !== value.chunkSha256)) throw invalid();
+  // JSON transport uses canonical unwrapped base64; MIME line limits apply inside the raw message only.
+  const bytes = value.operation === 'chunk' ? Buffer.from(value.payload, 'base64') : Buffer.alloc(0);
+  if (value.operation === 'chunk' && (bytes.toString('base64') !== value.payload || bytes.length !== Math.min(RELAY_CHUNK, value.rawSize - value.index * RELAY_CHUNK) || digest(bytes) !== value.chunkSha256)) throw invalid();
   return bytes;
 }
 export async function readEnvelope(request: Request) {
