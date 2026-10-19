@@ -93,6 +93,13 @@ export function createAccess(pool: Pool, config: ServerConfig, auth: ReturnType<
     return transaction(async client => {
       const member = await client.query("SELECT active,epoch,recovering FROM hestia_member WHERE user_id=$1 FOR UPDATE", [signed.user.id]);
       if (!member.rows[0]?.active || member.rows[0].recovering) throw unauthenticated();
+      // Optional stale-tab precondition. Agenda and its reused upload routes bind
+      // the intended actor before any business SQL, rather than after a POST.
+      const expectedActor=request.headers.get('X-Hestia-Expected-Actor');
+      if(expectedActor!==null){
+        let expected:string;try{expected=decodeURIComponent(expectedActor);}catch{throw unauthenticated();}
+        if(expected!==signed.user.id)throw unauthenticated();
+      }
       const session = await client.query(`SELECT s.id FROM session s JOIN hestia_session_policy p ON p.session_id=s.id
         WHERE s.id=$1 AND s."userId"=$2 AND s."expiresAt">clock_timestamp()
           AND p.member_epoch=$3 AND p.started_at > clock_timestamp()-interval '12 hours'

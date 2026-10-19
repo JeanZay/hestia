@@ -1,0 +1,38 @@
+import type {PoolClient} from 'pg';
+import type {Actor} from '../access';
+import {HttpError,unavailable} from '../access';
+import {getFolderAccessEvaluator,type FolderAccessEvaluator} from '../permissions/service';
+import type {AgendaAvailableDocument,AgendaCard,AgendaDocument,AgendaReminder,AgendaReminderState} from '../../shared/agenda-contract';
+export type AgendaRow={id:string;creator_id:string;creator_departure_epoch:number;revision:number;title:string;description:string;category:string;start_date:string|null;start_time:string|null;end_date:string|null;end_time:string|null;start_fold:'first'|'second'|null;share_mode:'all'|'selected';links:{label:string;url:string}[];archived_at:Date|null;creator_departed_at:Date|null;created_at:Date;updated_at:Date;creator_name:string;creator_active:boolean;creator_current_departure_epoch:number};
+export const agendaSelect=`SELECT c.*,c.start_date::text AS start_date,c.end_date::text AS end_date,u.name AS creator_name,m.active AS creator_active,m.departure_epoch AS creator_current_departure_epoch FROM hestia_agenda_card c JOIN "user" u ON u.id=c.creator_id JOIN hestia_member m ON m.user_id=c.creator_id`;
+export async function canReadAgenda(client:PoolClient,actorId:string,id:string):Promise<AgendaRow>{
+ const row=(await client.query<AgendaRow>(`${agendaSelect} JOIN hestia_agenda_access a ON a.card_id=c.id JOIN hestia_member reader ON reader.user_id=a.user_id WHERE c.id=$1 AND a.user_id=$2 AND a.active AND reader.active AND NOT reader.recovering AND a.subject_departure_epoch=reader.departure_epoch FOR UPDATE OF c`,[id,actorId])).rows[0];
+ if(!row)throw unavailable();return row;
+}
+export async function readAgendaAudience(client:PoolClient,cardId:string,dueAt:Date){return (await client.query<{userId:string;departureEpoch:number;eligibilityToken:string;eligibleSince:Date}>(`SELECT a.user_id AS "userId",a.subject_departure_epoch AS "departureEpoch",a.eligibility_token AS "eligibilityToken",a.eligible_since AS "eligibleSince" FROM hestia_agenda_access a JOIN hestia_member m ON m.user_id=a.user_id JOIN hestia_agenda_card c ON c.id=a.card_id JOIN hestia_member owner ON owner.user_id=c.creator_id WHERE c.id=$1 AND c.archived_at IS NULL AND c.creator_departed_at IS NULL AND owner.active AND owner.departure_epoch=c.creator_departure_epoch AND a.active AND m.active AND NOT m.recovering AND a.subject_departure_epoch=m.departure_epoch AND a.eligible_since<=$2 ORDER BY a.user_id`,[cardId,dueAt])).rows;}
+export type AgendaDocumentRow={id:string;folder_id:string;title:string;file_name:string;media_type:string;size:number;trashed_at:Date|null;purged_at:Date|null;link_id?:string};
+export async function agendaDocumentPath(client:PoolClient,folderId:string,evaluate:FolderAccessEvaluator){
+ const rows=(await client.query<{id:string;name:string;depth:number}>(`WITH RECURSIVE chain AS (SELECT id,name,parent_folder_id,0 AS depth,ARRAY[id] AS seen FROM hestia_folder WHERE id=$1 UNION ALL SELECT f.id,f.name,f.parent_folder_id,c.depth+1,c.seen||f.id FROM hestia_folder f JOIN chain c ON c.parent_folder_id=f.id WHERE c.depth<64 AND NOT f.id=ANY(c.seen)) SELECT id,name,depth FROM chain ORDER BY depth DESC`,[folderId])).rows;
+ if(rows.length>64)throw new HttpError(503,'RESOURCE_LIMIT','Arborescence trop profonde.');return rows.filter(r=>evaluate(r.id).capabilities.includes('consulter')).map(r=>r.name).join(' › ');
+}
+export async function projectAgendaDocument(client:PoolClient,row:AgendaDocumentRow,evaluate:FolderAccessEvaluator):Promise<AgendaAvailableDocument|null>{
+ if(row.trashed_at||row.purged_at)return null;const rights=evaluate(row.folder_id);if(!rights.capabilities.includes('consulter'))return null;
+ return {documentId:row.id,title:row.title,fileName:row.file_name,mediaType:row.media_type,size:Number(row.size),path:await agendaDocumentPath(client,row.folder_id,evaluate),canDownload:rights.capabilities.includes('exporter')};
+}
+export async function projectAgendaCard(client:PoolClient,actor:Actor,row:AgendaRow,now:Date,evaluator?:FolderAccessEvaluator):Promise<AgendaCard>{
+ const manage=row.creator_id===actor.id&&row.creator_active&&!row.creator_departed_at&&row.creator_departure_epoch===row.creator_current_departure_epoch;
+ const evaluate=evaluator??await getFolderAccessEvaluator(client,actor.id),documents:AgendaDocument[]=[];
+ const links=(await client.query<AgendaDocumentRow>(`SELECT d.*,l.id AS link_id FROM hestia_agenda_document_link l JOIN hestia_document d ON d.id=l.document_id WHERE l.card_id=$1 ORDER BY l.position,l.id`,[row.id])).rows;
+ for(const link of links){const item=await projectAgendaDocument(client,link,evaluate);documents.push(item?{linkId:link.link_id!,state:'available',...item}:{linkId:link.link_id!,state:'unavailable'});}
+ const reminders=(await client.query<{id:string;unit:'days'|'hours';value:number;send_time:string|null;generation:number;due_at:Date|null;cutoff_at:Date|null;configuration_state:'scheduled'|'past'|'clarify'|'stopped'}>('SELECT * FROM hestia_agenda_reminder WHERE card_id=$1 AND removed_at IS NULL ORDER BY id',[row.id])).rows;
+ const reminderDtos:AgendaReminder[]=[];
+ if(manage)for(const r of reminders){
+  const deliveries=(await client.query<{state:string;count:string;accepted_late:boolean}>(`SELECT state,count(*)::text AS count,bool_or(accepted_at>due_at) AS accepted_late FROM hestia_agenda_delivery WHERE card_id=$1 AND reminder_id=$2 AND reminder_generation=$3 GROUP BY state`,[row.id,r.id,r.generation])).rows;
+  const counts:Partial<Record<AgendaReminderState,number>>={};for(const d of deliveries){const state:AgendaReminderState=d.state==='accepted'?(d.accepted_late?'accepted-late':'accepted'):d.state==='uncertain'||d.state==='marked'?'uncertain':d.state==='failed'?'failed':d.state==='expired'?'expired':d.state==='cancelled'?'stopped':r.due_at&&r.due_at<=now?'late':'scheduled';counts[state]=(counts[state]??0)+Number(d.count);}
+  let state:AgendaReminderState=row.archived_at||row.creator_departed_at?'stopped':r.configuration_state;
+  if(state==='scheduled'){if(counts.uncertain)state='uncertain';else if(counts.failed)state='failed';else if(counts.late)state='late';else if(counts.expired)state='expired';else if(counts['accepted-late'])state='accepted-late';else if(counts.accepted)state='accepted';else if(r.cutoff_at&&r.cutoff_at<=now)state='expired';else if(r.due_at&&r.due_at<=now)state='late';}
+  reminderDtos.push({id:r.id,unit:r.unit,value:r.value,sendTime:r.send_time?.slice(0,5)??null,state,sendAt:r.due_at?.toISOString()??null,deliveryCounts:counts});
+ }
+ const readerIds=manage?(await client.query<{user_id:string}>('SELECT a.user_id FROM hestia_agenda_access a JOIN hestia_member m ON m.user_id=a.user_id WHERE a.card_id=$1 AND a.active AND m.active AND a.subject_departure_epoch=m.departure_epoch AND a.user_id<>$2 ORDER BY a.user_id',[row.id,row.creator_id])).rows.map(r=>r.user_id):undefined;
+ return {id:row.id,revision:row.revision,title:row.title,description:row.description,category:row.category,startDate:row.start_date,startTime:row.start_time?.slice(0,5)??null,endDate:row.end_date,endTime:row.end_time?.slice(0,5)??null,startFold:row.start_fold,shareMode:row.share_mode,links:row.links,creator:{id:row.creator_id,name:row.creator_name,departed:!!row.creator_departed_at},canManage:manage,archived:!!row.archived_at,audience:{mode:row.share_mode,summary:row.share_mode==='all'?'household':'restricted'},...(manage?{readerIds}:{}),documents,reminders:reminderDtos,reminderSummary:{count:reminders.length,receives:!row.archived_at&&!row.creator_departed_at&&reminders.length>0},createdAt:row.created_at.toISOString(),updatedAt:row.updated_at.toISOString()};
+}

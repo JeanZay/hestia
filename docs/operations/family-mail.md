@@ -91,3 +91,23 @@ destinataires autorisés. Ne jamais consigner les OTP, liens privés ou valeurs
 de secrets dans les preuves. La procédure de secours opérateur conserve ses
 propres contrôles. Toute Production attend la recette et le GO explicite sur
 le candidat exact.
+
+## Rappels d’idées et d’agenda
+
+Le même worker traite maintenant deux outboxes distinctes : identité en priorité,
+puis au plus quatre rappels d’agenda, dans une fenêtre de travail commune bornée.
+L’agenda externe exige `HESTIA_AGENDA_MAIL_ENABLED=true`. Sa désactivation est
+neutre pour le worker d’identité ; une erreur d’agenda ne bloque pas le traitement
+prioritaire des messages d’identité.
+
+Les rappels ont leurs propres baux, générations, admissions de lecteurs et clés
+`hestia/agenda/<intention>`. Avant chaque appel, le worker revérifie l’état de la
+fiche, sa date de début, les membres et droits courants ainsi que l’adresse
+vérifiée. Le corps ne contient ni document ni description : titre, début et lien
+authentifié vers la fiche seulement. Une tentative dont le fournisseur a pu
+accepter le mail conserve son état incertain lors d’une annulation ultérieure.
+
+Les bornes de reprise, limites des compteurs et conditions d’activation sont
+décrites dans [Agenda V1](../agenda.md). Le réveil périodique doit être observé sur
+le déploiement exact de chaque environnement. Ni sa configuration ni une réponse
+HTTP d’acceptation ne prouvent la réception dans la boîte du destinataire.

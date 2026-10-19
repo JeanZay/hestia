@@ -25,6 +25,9 @@ import { createInboxService, type InboxDependencies } from './inbox';
 import { createRevisionsService } from './documents/revisions';
 import { createSummaryService, type SummaryDependencies } from './summary/service';
 import { createOutgoingService, type OutgoingDependencies } from './outgoing/service';
+import { createAgendaService } from './agenda/service';
+import { dispatchAgendaMail } from './agenda/worker';
+import type { AgendaMailTransport } from './agenda/transport';
 const folderName = (value: unknown) => textField(value, 120);
 type Folder = WorkspaceFolder;
 type FolderRow = { id:string; name:string; version:number; parent_folder_id:string|null; document_count:string; created_at:Date; creator_name:string };
@@ -270,6 +273,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
   });
   const store=dependencies?.store??{put:missingStorage,getRange:missingStorage,delete:missingStorage};
   const outgoing=createOutgoingService(pool,access,config,{store,now:dependencies?.now,...dependencies?.outgoing});
+  const agenda=createAgendaService(pool,access,{now:dependencies?.now});
   const summaries=createSummaryService(access,{
     clock,store,credentialCipher:createClassificationCredentialCipher(config.secret),
     readAuthorizedFolders:async(client,actor)=>(await foldersFor(client,actor))
@@ -303,7 +307,8 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
   return { handleAuth, handleSession, handleWorkspace, handleFolders, handleFolder, handleFolderOperation, ...createSharing(access),
     ...createFolderMoves(access, { now: dependencies?.now }),
     ...documents, ...folderTrash, ...captureHandlers, ...classification, ...transcription, ...revisions,
-    ...inbox,...summaries,...outgoing,
+    ...inbox,...summaries,...outgoing,...agenda,
+    dispatchAgendaMail:(transport?:AgendaMailTransport)=>dispatchAgendaMail(pool,config.secret,transport,{now:dependencies?.now}),
     async cleanupTrash(limit:number) {
       const result=await documents.cleanupTrash(limit);
       await folderTrash.cleanupFolderTrash(limit);
