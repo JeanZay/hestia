@@ -36,6 +36,29 @@ async function setup(page:Page,{existing=false,lost=false,conflict=false,deep=fa
 async function agenda(page:Page,isMobile:boolean){await page.getByRole('navigation',{name:isMobile?'Navigation principale mobile':'Navigation principale',exact:true}).getByRole('button',{name:'Agenda',exact:true}).click();await expect(page.getByRole('heading',{name:'Agenda',exact:true})).toBeVisible();}
 async function existing(page:Page,isMobile:boolean){await agenda(page,isMobile);await page.getByRole('tab',{name:'Liste',exact:true}).click();await page.getByRole('button',{name:/Sortie synthétique/}).click();await page.getByRole('button',{name:'Modifier',exact:true}).click();}
 
+test('Les contrôles du jour restent alignés et de même hauteur',async({page,isMobile})=>{
+  await setup(page);await agenda(page,isMobile);
+  const widths=isMobile?[320,360,390]:[1280];
+  for(const width of widths){
+    await page.setViewportSize({width,height:844});
+    const date=page.getByLabel('Aller au',{exact:true});
+    const today=page.getByRole('button',{name:'Aujourd’hui',exact:true});
+    const current=await date.inputValue();
+    for(const value of [current,'2027-04-05']){
+      await date.fill(value);await expect(date).toHaveValue(value);
+      if(value===current)await expect(today).toBeDisabled();else await expect(today).toBeEnabled();
+      const buttonBox=await today.boundingBox(),dateBox=await date.boundingBox();
+      expect(buttonBox).not.toBeNull();expect(dateBox).not.toBeNull();
+      expect(Math.abs(buttonBox!.height-dateBox!.height)).toBeLessThanOrEqual(1);
+      expect(Math.abs(buttonBox!.y-dateBox!.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(buttonBox!.y+buttonBox!.height-dateBox!.y-dateBox!.height)).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+      await page.locator('.ha-day').screenshot({path:test.info().outputPath(`agenda-controls-${width}-${value===current?'today':'other'}.png`)});
+    }
+    await today.click();await expect(date).toHaveValue(current);await expect(today).toBeDisabled();
+  }
+});
+
 test('Créer une idée sans date garde une seule fiche sans rappel et la navigation approuvée',async({page,isMobile})=>{
   const state=await setup(page);await agenda(page,isMobile);await page.getByRole('tab',{name:'Liste',exact:true}).click();await page.getByRole('button',{name:'Nouvelle fiche',exact:true}).click();await page.getByRole('textbox',{name:'Titre',exact:true}).fill('Idée synthétique');await page.getByRole('button',{name:'Enregistrer',exact:true}).click();await expect(page.getByRole('heading',{name:'Idée synthétique',exact:true})).toBeVisible();expect(state.writes).toHaveLength(1);expect(state.writes[0]).toMatchObject({startDate:null,startTime:null,reminders:[]});
   if(isMobile){const nav=page.getByRole('navigation',{name:'Navigation principale mobile'});expect(await nav.getByRole('button').allTextContents()).toEqual(['Dossiers','Agenda','Échanges','Photo','Moi']);await expect(page.getByRole('button',{name:'Rechercher',exact:true})).toBeVisible();}else await expect(page.getByRole('searchbox',{name:'Rechercher un document ou un dossier'})).toBeVisible();
