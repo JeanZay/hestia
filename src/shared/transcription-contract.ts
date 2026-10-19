@@ -1,6 +1,10 @@
 /** Public dictation contract. Credentials, audio and vocabulary never appear in reads. */
 export const TRANSCRIPTION_MAX_DURATION_MS = 120_000;
 export const TRANSCRIPTION_MAX_AUDIO_BYTES = 4 * 1024 * 1024;
+export type OutgoingTranscriptionField = "subject" | "message";
+export type OutgoingTranscriptionResult = {
+  draftId: string; field: OutgoingTranscriptionField; baseRevision: number; revision: number;
+};
 export type TranscriptionSettingsDto = {
   version: number; provider: string; model: string; enabled: boolean;
   monthlyLimitMicros: number; currency: "EUR"; keyPresent: boolean; keySetAt: string | null;
@@ -16,4 +20,5 @@ export type TranscriptionAvailabilityDto = {
 };
 export type TranscriptionResultDto = {
   transcriptionId: string; status: "pending" | "complete" | "failed" | "stale"; text?: string;
+  outgoing?: OutgoingTranscriptionResult;
 };

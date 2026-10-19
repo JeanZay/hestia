@@ -39,9 +39,11 @@ export function dictationVocabulary(folders: readonly AuthorizedFolder[]): strin
   return phrases;
 }
 
-export function transcriptText(value: unknown): string {
-  if (typeof value !== "string" || Buffer.byteLength(value) > 65_536 || [...value].length > 16_384
-    || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) throw invalid();
+export function transcriptText(value: unknown, source?: "outgoing"): string {
+  if (typeof value !== "string" || Buffer.byteLength(value) > 65_536 || [...value].length > (source === "outgoing" ? 32_768 : 16_384)
+    || source !== "outgoing" && /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) throw invalid();
+  // Outgoing output remains an untrusted editable proposal. Its normal draft
+  // validator still refuses forbidden characters before any persistence/send.
   // Over 2,000 characters is intentionally allowed: the user edits it separately.
   return value.trim();
 }

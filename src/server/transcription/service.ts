@@ -83,17 +83,26 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
     });
   }
   async function assertSame(client: PoolClient, actor: Actor, identity: TranscriptionIdentity) {
-    if (typeof identity.inboxAttachmentId === 'string') {
+    if (typeof identity.outgoingDraftId === 'string') {
+      if (!deps.outgoing) throw stale();
+      const current = await deps.outgoing.assertAvailable(client, actor, identity.outgoingDraftId, identity.field, identity.baseRevision);
+      if (current.outgoingDraftId !== identity.outgoingDraftId || current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch
+        || current.departureEpoch !== identity.departureEpoch || current.field !== identity.field || current.revision < identity.revision
+        || current.consumedRevision !== identity.consumedRevision) throw stale();
+      return current;
+    } else if (typeof identity.inboxAttachmentId === 'string') {
       if (!deps.inbox) throw stale();
       const current=await deps.inbox.assertAvailable(client,actor,identity.inboxAttachmentId);
       if (current.inboxAttachmentId!==identity.inboxAttachmentId || current.actorId!==identity.actorId || current.actorEpoch!==identity.actorEpoch
         || current.departureEpoch!==identity.departureEpoch || current.attachmentVersion!==identity.attachmentVersion || current.commentVersion!==identity.commentVersion) throw stale();
+      return current;
     } else {
       const current = await deps.capture.assertAvailable(client, actor, identity.captureId);
       if (current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch || current.expiresAt !== identity.expiresAt) throw stale();
+      return current;
     }
   }
-  async function availability(client: PoolClient, row: ConfigRow): Promise<TranscriptionAvailabilityDto> {
+  async function availability(client: PoolClient, row: ConfigRow, outgoing = false): Promise<TranscriptionAvailabilityDto> {
     const base = { enabled: row.enabled, available: false, maxDurationMs: TRANSCRIPTION_MAX_DURATION_MS,
       maxAudioBytes: TRANSCRIPTION_MAX_AUDIO_BYTES, mediaTypes: ["audio/wav" as const], vocabularySupported: false };
     if (!row.enabled) return { ...base, reason: "disabled" };
@@ -101,7 +110,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
     try { ({ selected, maximum } = quote(row)); } catch { return { ...base, reason: "model-unavailable" }; }
     const totals = await usage(client);
     if (BigInt(totals.spentMicros) + BigInt(totals.reservedMicros) + BigInt(maximum) > BigInt(limit(row))) return { ...base, reason: "budget" };
-    return { ...base, available: true, vocabularySupported: !!selected.models.find(item => item.id === row.model)?.vocabularySupported };
+    return { ...base, available: true, vocabularySupported: !outgoing && !!selected.models.find(item => item.id === row.model)?.vocabularySupported };
   }
   async function settle(id: string, actual: unknown, status: "complete" | "failed") {
     return access.transaction(async client => {
@@ -122,22 +131,34 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
   async function handleTranscriptions(request: Request) {
     return guarded(async () => {
       const params = new URL(request.url).searchParams, captureId = params.get("captureId"), inboxAttachmentId=params.get('inboxAttachmentId'), key = params.get("idempotencyKey");
-      if ((captureId===null)===(inboxAttachmentId===null) || !isUuid(captureId??inboxAttachmentId) || !["GET", "POST"].includes(request.method)
-        || [...params.keys()].some(name => !["captureId", "inboxAttachmentId", "idempotencyKey"].includes(name))
-        || params.getAll("captureId").length>1 || params.getAll('inboxAttachmentId').length>1 || params.getAll("idempotencyKey").length > 1) throw invalid();
+      const outgoingDraftId = params.get("outgoingDraftId"), field = params.get("field"), revision = params.get("baseRevision");
+      const allowed = ["captureId", "inboxAttachmentId", "outgoingDraftId", "field", "baseRevision", "idempotencyKey"];
+      if ([captureId, inboxAttachmentId, outgoingDraftId].filter(value => value !== null).length !== 1
+        || !isUuid(captureId ?? inboxAttachmentId ?? outgoingDraftId) || !["GET", "POST"].includes(request.method)
+        || [...params.keys()].some(name => !allowed.includes(name)) || allowed.some(name => params.getAll(name).length > 1)) throw invalid();
+      if (outgoingDraftId !== null ? !["subject", "message"].includes(field ?? "")
+        || request.method === "POST" && revision === null : field !== null || revision !== null) throw invalid();
+      if (revision !== null && (!/^[1-9]\d{0,9}$/.test(revision) || Number(revision) >= 2147483647)) throw invalid();
       const assertSource=async(client:PoolClient,actor:Actor):Promise<TranscriptionIdentity>=>{
+        if (outgoingDraftId !== null) {
+          if (!deps.outgoing) throw stale();
+          return deps.outgoing.assertAvailable(client, actor, outgoingDraftId, field as "subject" | "message", revision === null ? undefined : Number(revision));
+        }
         if(inboxAttachmentId!==null){if(!deps.inbox)throw stale();return deps.inbox.assertAvailable(client,actor,inboxAttachmentId);}
         return deps.capture.assertAvailable(client,actor,captureId!);
       };
       if (request.method === "GET") return access.withActor(request, async (client, actor) => {
-        await assertSource(client,actor); return response(await availability(client, await config(client)));
+        await assertSource(client,actor); return response(await availability(client, await config(client), outgoingDraftId !== null));
       }, false);
       access.origin(request);
       if (!isUuid(key) || request.headers.get("content-type")?.split(";")[0] !== "audio/wav") throw invalid();
       // Reject unauthenticated/disabled/idempotent calls before buffering audio.
       const initial = await access.withActor(request, async (client, actor) => {
         const identity=await assertSource(client,actor);
-        const identityHash=typeof identity.inboxAttachmentId==='string'
+        const identityHash=typeof identity.outgoingDraftId === 'string'
+          ? hash({source:'outgoing', draftId:identity.outgoingDraftId, field:identity.field, baseRevision:identity.baseRevision,
+            epoch:identity.actorEpoch, departureEpoch:identity.departureEpoch, consumedRevision:identity.consumedRevision})
+          : typeof identity.inboxAttachmentId==='string'
           ? hash({source:'inbox',inboxAttachmentId:identity.inboxAttachmentId,epoch:identity.actorEpoch,departureEpoch:identity.departureEpoch,
             attachmentVersion:identity.attachmentVersion,commentVersion:identity.commentVersion})
           : hash({captureId:identity.captureId,epoch:identity.actorEpoch});
@@ -168,7 +189,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
           }
           const totals = await usage(client);
           if (BigInt(totals.spentMicros) + BigInt(totals.reservedMicros) + BigInt(maximum) > BigInt(limit(row))) throw budgetError();
-          const vocabularySupported = !!selected.models.find(item => item.id === row.model)?.vocabularySupported;
+          const vocabularySupported = outgoingDraftId === null && !!selected.models.find(item => item.id === row.model)?.vocabularySupported;
           const vocabulary = vocabularySupported ? dictationVocabulary(await deps.readAuthorizedFolders(client, actor)) : [];
           const id = randomUUID();
           await client.query(`INSERT INTO hestia_transcription_request(id,actor_id,actor_epoch,idempotency_key,identity_hash,config_version,month_start,reserved_micros,created_at)
@@ -194,21 +215,24 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
           const payload: TranscriptionPayload = { bytes, mediaType: "audio/wav", durationMs, vocabulary };
           const outcome = await bounded(signal => selected.transcribe(configured(row), payload, credential, signal));
           actual = outcome.actualMicros;
-          try { text = transcriptText(outcome.text); } catch { throw transcriptionFailure("transcript", "INVALID_TEXT"); }
+          try { text = transcriptText(outcome.text, outgoingDraftId === null ? undefined : "outgoing"); } catch { throw transcriptionFailure("transcript", "INVALID_TEXT"); }
           status = await settle(id, actual, "complete");
           if (status === "failed") reportTranscriptionFailure(id, transcriptionFailure("service", "SETTLEMENT_FAILED"), actual);
         } catch (error) { reportTranscriptionFailure(id, error, actual); status = await settle(id, actual, "failed"); }
         // Configuration changes affect subsequent calls only. Rights and lifetime
         // are authoritative again after provider I/O; no transaction spans I/O.
         return access.withActor(request, async (client, actor) => {
+          let current: TranscriptionIdentity;
           try {
-            await assertSame(client, actor, identity);
+            current = await assertSame(client, actor, identity);
             if (vocabularySupported && hash(dictationVocabulary(await deps.readAuthorizedFolders(client, actor))) !== hash(vocabulary)) throw stale();
           } catch (error) {
             if (error instanceof HttpError) return response({ transcriptionId: id, status: "stale" } satisfies TranscriptionResultDto);
             throw error;
           }
-          return response({ transcriptionId: id, status, ...(status === "complete" ? { text } : {}) } satisfies TranscriptionResultDto);
+          return response({ transcriptionId: id, status, ...(status === "complete" ? { text,
+            ...(typeof current.outgoingDraftId === "string" ? { outgoing: { draftId: current.outgoingDraftId, field: current.field,
+              baseRevision: current.baseRevision, revision: current.revision } } : {}) } : {}) } satisfies TranscriptionResultDto);
         }, false);
       } finally { bytes?.fill(0); active--; }
     });

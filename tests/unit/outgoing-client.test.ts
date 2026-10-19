@@ -13,6 +13,24 @@ async function create() { const client = new OutgoingClient(); clients.push(clie
 afterEach(() => { for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('outgoing actor state and durable intent', () => {
+  it('coalesces draft creation between microphone preparation and an autosave without losing local text', async () => {
+    const created = deferred<Response>(); let creations = 0;
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/hestia/outgoing' && init?.method === 'POST') { creations++; return created.promise; }
+      if (init?.method === 'PATCH') { const body = JSON.parse(String(init.body)); return response({ draft: { ...draft(2), ...body, revision: 2 } }); }
+      return response(state(null));
+    }));
+    const client = await create(), prepared = client.prepareDictation(); client.edit({ subject: 'Texte pendant préparation' });
+    const save = client.save(); created.resolve(await response(state(draft())));
+    expect((await prepared).draftId).toBe('draft-a'); expect(await save).toBe(true); expect(creations).toBe(1);
+    expect(client.getSnapshot().local.subject).toBe('Texte pendant préparation');
+  });
+  it('does not submit or truncate a composition exceeding the Unicode limits', async () => {
+    const fetcher = vi.fn(() => response(state(draft()))); vi.stubGlobal('fetch', fetcher);
+    const client = await create(); client.edit({ message: '🪁'.repeat(20001) });
+    expect(await client.save()).toBe(false); expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(client.getSnapshot().local.message).toBe('🪁'.repeat(20001)); expect(client.getSnapshot().save).toBe('failed');
+  });
   it('creates an absent draft with the empty JSON envelope required by the real HTTP handler', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {

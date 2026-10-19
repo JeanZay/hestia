@@ -1,5 +1,6 @@
 import type { OutgoingAttachmentDto, OutgoingAvailableDocument, OutgoingCheckDto, OutgoingDraftDto, OutgoingOperationDto, OutgoingRecapDto, OutgoingSelection, OutgoingSendDto, OutgoingStateDto } from '../../shared/outgoing-contract';
 import { OUTGOING_LIMITS } from '../../shared/outgoing-contract';
+import { outgoingTextProblem, type OutgoingDictationField } from '../../shared/outgoing-dictation';
 
 export const OUTGOING_EMAIL = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]{2,}$/;
 export type OutgoingComposition = { to: string[]; subject: string; message: string; attachmentIds: string[] };
@@ -36,10 +37,25 @@ export class OutgoingClient {
   private actor: string | null = null;
   private accessLost: () => void = () => {};
   private intention: { draftId: string; revision: number; token: string; requestId: string } | null = null;
+  private dictationEpoch = 0;
+  private fieldVersions = { subject: 0, message: 0 };
+  private draftTask: Promise<OutgoingDraftDto> | null = null;
+  private dictationPending = false;
+  setDictationPending(value: boolean) { this.dictationPending = value; }
+  dictationIdentity() { return { epoch: this.dictationEpoch, draftId: this.state.server?.draft?.id ?? null, versions: { ...this.fieldVersions } }; }
+  loseDictationAccess() { this.clear(); this.accessLost(); }
+  async prepareDictation() {
+    const epoch = this.dictationEpoch;
+    if (!this.actor || this.state.loading || this.state.failedLoad || outgoingLocked(this.state) || this.state.step !== 'edit') throw new Error('Préparation indisponible.');
+    const draft = await this.ensureDraft();
+    if (epoch !== this.dictationEpoch || draft.state !== 'editable') throw new DOMException('Préparation changée', 'AbortError');
+    return { draftId: draft.id, revision: draft.revision, epoch };
+  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getSnapshot = () => this.state;
   private update(patch: Partial<OutgoingSnapshot>) { this.state = { ...this.state, ...patch }; this.listeners.forEach(listener => listener()); }
   clear = () => {
+    this.dictationEpoch++; this.fieldVersions = { subject: 0, message: 0 }; this.draftTask = null; this.dictationPending = false;
     this.epoch++; this.readGeneration++; this.operationRead++; this.controller.abort(); this.controller = new AbortController();
     clearTimeout(this.timer); clearInterval(this.poll); this.actor = null; this.mutation = false; this.saveTask = null; this.intention = null; this.edits = 0;
     this.state = initial(); this.listeners.forEach(listener => listener());
@@ -93,6 +109,7 @@ export class OutgoingClient {
   }
   edit(patch: Partial<OutgoingComposition>) {
     if (outgoingLocked(this.state)) return;
+    for (const field of ['subject', 'message'] as OutgoingDictationField[]) if (patch[field] !== undefined && patch[field] !== this.state.local[field]) this.fieldVersions[field]++;
     this.edits++; this.operationRead++; this.intention = null;
     this.update({ local: { ...this.state.local, ...patch }, dirty: true, save: this.state.save === 'conflict' ? 'conflict' : 'pending', recap: null, step: 'edit', result: null });
     clearTimeout(this.timer);
@@ -100,10 +117,15 @@ export class OutgoingClient {
   }
   private async ensureDraft() {
     if (this.state.server?.draft) return this.state.server.draft;
-    const result = await this.request<OutgoingStateDto>('', 'POST', {});
-    this.update({ server: result });
-    if (!result.draft) throw new Error('Préparation indisponible.');
-    return result.draft;
+    if (this.draftTask) return this.draftTask;
+    ++this.readGeneration;
+    const task = this.request<OutgoingStateDto>('', 'POST', {}).then(result => {
+      this.update({ server: result });
+      if (!result.draft) throw new Error('Préparation indisponible.');
+      return result.draft;
+    });
+    this.draftTask = task;
+    try { return await task; } finally { if (this.draftTask === task) this.draftTask = null; }
   }
   private async conflict(again: boolean) {
     const server = await this.request<OutgoingStateDto>();
@@ -120,6 +142,9 @@ export class OutgoingClient {
     if (this.state.save === 'conflict' && againstRevision === undefined) return false;
     if (!this.state.dirty && againstRevision === undefined && this.state.server?.draft?.operation?.state !== 'failed') return true;
     if (this.state.save === 'conflict' && !this.state.server?.draft) return false;
+    if (outgoingTextProblem('subject', this.state.local.subject) || outgoingTextProblem('message', this.state.local.message)) {
+      clearTimeout(this.timer); this.update({ save: 'failed', announcement: 'Préparation non enregistrée. Corrigez les limites ou caractères du texte ; rien n’a été coupé.' }); return false;
+    }
     clearTimeout(this.timer); this.mutation = true; ++this.readGeneration;
     const epoch = this.epoch, version = this.edits, local = this.state.local;
     this.update({ save: 'saving' });
@@ -140,6 +165,7 @@ export class OutgoingClient {
   }
   async useServer() {
     if (this.mutation) return;
+    this.dictationEpoch++;
     clearTimeout(this.timer); this.edits++; ++this.readGeneration; this.mutation = true;
     const epoch = this.epoch; this.update({ busy: true });
     try {
@@ -183,9 +209,9 @@ export class OutgoingClient {
     const current = row.current;
     return this.mutateDraft(id => `/${encodeURIComponent(id)}/attachments/${encodeURIComponent(row.id)}/accept`, 'POST', draft => ({ revision: draft.revision, documentVersion: current.documentVersion, revisionId: current.revisionId }));
   }
-  abandon() { return this.mutateDraft(id => `/${encodeURIComponent(id)}`, 'DELETE', draft => ({ revision: draft.revision })); }
+  abandon() { this.dictationEpoch++; this.update({}); return this.mutateDraft(id => `/${encodeURIComponent(id)}`, 'DELETE', draft => ({ revision: draft.revision })); }
   async check() {
-    if (outgoingLocked(this.state) || this.state.save === 'conflict') return;
+    if (this.dictationPending || outgoingLocked(this.state) || this.state.save === 'conflict') return;
     if (!await this.save()) return;
     const draft = this.state.server?.draft; if (!draft || this.mutation) return;
     this.mutation = true; ++this.readGeneration; this.update({ busy: true, result: null }); const epoch = this.epoch; let reconcile = false;
@@ -200,7 +226,7 @@ export class OutgoingClient {
     } finally { if (epoch === this.epoch) { this.mutation = false; this.update({ busy: false }); if (reconcile) void this.load(true); } }
   }
   back() { if (!outgoingLocked(this.state)) this.update({ step: 'edit', recap: null }); }
-  fresh() { this.intention = null; this.update({ step: 'edit', accepted: null, operation: null, result: null, local: emptyComposition() }); void this.load(); }
+  fresh() { this.dictationEpoch++; this.intention = null; this.update({ step: 'edit', accepted: null, operation: null, result: null, local: emptyComposition() }); void this.load(); }
   private applyOperation(result: OutgoingSendDto) {
     const { operation, draft } = result;
     if (operation.state === 'accepted') {
@@ -239,6 +265,8 @@ export function outgoingValidation(state: OutgoingSnapshot) {
   if (bad.length) errors.push(`Corrigez les adresses : ${bad.join(', ')}.`);
   if (local.to.length > OUTGOING_LIMITS.recipients) errors.push(`La limite est de ${OUTGOING_LIMITS.recipients} destinataires.`);
   if (!local.subject.trim()) errors.push('Indiquez un objet.');
+  if (outgoingTextProblem('subject', local.subject)) errors.push(`L’objet est à corriger. ${outgoingTextProblem('subject', local.subject)}`);
+  if (outgoingTextProblem('message', local.message)) errors.push(`Le message est à corriger. ${outgoingTextProblem('message', local.message)}`);
   if (!rows.length) errors.push('Ajoutez au moins un document.');
   const invalid = rows.filter(row => row.state !== 'ok').length;
   if (invalid) errors.push(`${invalid} pièce${invalid > 1 ? 's jointes sont' : ' jointe est'} à corriger.`);
