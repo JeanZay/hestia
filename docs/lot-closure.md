@@ -38,6 +38,8 @@ Après la mutation, relire la PR fusionnée, le commit résultant et sa présenc
 
 Le merge distant ne réécrit pas silencieusement le checkout local principal. L'agent le synchronise ensuite sans écraser de travail existant, puis requalifie le point de reprise et les références affectées. Les Issues et le Project sont mis à jour dans le périmètre autorisé ; une PR fusionnée ne clôt pas automatiquement le besoin parent ni ne livre Dev ou Production.
 
+La clôture Git ne vaut pas réconciliation du backlog. Après intégration puis après livraison Dev/Production, appliquer le [rapprochement des Issues](product-workflow.md#tenir-github-sans-demander-une-administration-manuelle) : résultat réel, critères restants, réserves et raison de maintien ouvert ou delta autorisé. Le reçu du lot désigne les Issues directes, parents et besoins larges examinés, les observations datées et les mutations effectuées ou proposées. Un contrôle `closure` réussi ne couvre pas cette vérification métier ; ne pas annoncer « backlog à jour » sans lecture distante. La commande d'audit est en lecture seule et ne crée aucune autorisation de mutation.
+
 ## Préservation et nettoyage
 
 Le contrôle de nettoyage est distinct d'une suppression. Avant tout retrait, inventorier modifications, fichiers non suivis et ignorés, auteurs encore actifs et dépendances entre worktrees. Un répertoire Git propre peut contenir les seuls exemplaires d'un brief, d'un accord, d'une preuve ou d'un hand-off ignoré. Les préserver hors du worktree, vérifier les octets et la reprise depuis la destination, puis seulement retirer les cibles exactes et devenues inutiles dans le périmètre autorisé. Le checkout principal, les travaux inconnus et les liens restent protégés.
