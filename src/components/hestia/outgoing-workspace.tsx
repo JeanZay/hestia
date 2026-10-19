@@ -1,10 +1,12 @@
 "use client";
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { OutgoingAvailableDocument, OutgoingDraftDto } from '../../shared/outgoing-contract';
 import { OUTGOING_LIMITS } from '../../shared/outgoing-contract';
 import { Banner, Button, Checkbox, Dialog, EmptyState, Icon, TextArea, TextField } from './design-system';
 import { AttachmentRow, fmtMio, mergeRecipients, OutgoingProgress, RecipientList, SizeMeter } from './outgoing-design';
 import { OutgoingClient, OUTGOING_EMAIL, outgoingAttachments, outgoingLocked, outgoingSelection, outgoingTotal, outgoingValidation, type OutgoingSnapshot } from './outgoing-client';
+import { OutgoingDictationClient } from './outgoing-dictation-client';
+import { OutgoingDictation } from './outgoing-dictation';
 import './outgoing.css';
 
 function DocumentPicker({ client, state, onClose }: { client: OutgoingClient; state: OutgoingSnapshot; onClose: () => void }) {
@@ -35,6 +37,16 @@ function SavedVersion({ draft }: { draft: OutgoingDraftDto | null }) {
 export function OutgoingWorkspace({ client, state }: { client: OutgoingClient; state: OutgoingSnapshot }) {
   const [picker, setPicker] = useState(false), [discard, setDiscard] = useState(false), [showServer, setShowServer] = useState(false), [toText, setToText] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
+  const [dictation] = useState(() => new OutgoingDictationClient(client));
+  const voice = useSyncExternalStore(dictation.subscribe, dictation.getSnapshot, dictation.getSnapshot);
+  const [dictationErrors, setDictationErrors] = useState(false);
+  useEffect(() => {
+    const disconnect = dictation.connect();
+    const hidden = () => { if (document.hidden) dictation.cancel(true, true); };
+    const pagehide = () => dictation.cancel(false, true);
+    document.addEventListener('visibilitychange', hidden); window.addEventListener('pagehide', pagehide);
+    return () => { document.removeEventListener('visibilitychange', hidden); window.removeEventListener('pagehide', pagehide); disconnect(); };
+  }, [dictation]);
   const title = useRef<HTMLHeadingElement>(null), errorTitle = useRef<HTMLElement>(null), resultTitle = useRef<HTMLElement>(null), conflictTitle = useRef<HTMLElement>(null), recapTitle = useRef<HTMLHeadingElement>(null);
   const locked = outgoingLocked(state), draft = state.server?.draft, rows = outgoingAttachments(state), total = outgoingTotal(rows), uncertain = state.ambiguous || draft?.state === 'uncertain';
   const hardLocked = state.ambiguous || !!(draft && draft.state !== 'editable') || state.operation?.state === 'preparing' || state.operation?.state === 'sending';
@@ -42,6 +54,9 @@ export function OutgoingWorkspace({ client, state }: { client: OutgoingClient; s
   useEffect(() => { title.current?.focus(); }, []);
   useEffect(() => { if (state.step === 'recap') recapTitle.current?.focus(); else if (state.step === 'accepted' || state.result || uncertain) resultTitle.current?.focus(); else if (state.save === 'conflict') conflictTitle.current?.focus(); }, [state.step, state.result, state.save, uncertain, state.conflictAgain]);
   const check = () => {
+    const voiceErrors = dictation.blockingErrors();
+    setDictationErrors(voiceErrors.length > 0);
+    if (voiceErrors.length) { setErrors(voiceErrors); setTimeout(() => errorTitle.current?.focus(), 0); return; }
     if (toText.trim()) { client.edit({ to: mergeRecipients(client.getSnapshot().local.to, toText) }); setToText(''); }
     const current = client.getSnapshot();
     if (current.save === 'conflict') { conflictTitle.current?.focus(); return; }
@@ -58,10 +73,10 @@ export function OutgoingWorkspace({ client, state }: { client: OutgoingClient; s
       {state.step === 'accepted' ? <div className="ho-accepted"><strong ref={resultTitle} tabIndex={-1}><Icon name="check"/>Accepté pour envoi.</strong>{state.accepted && <span>« {state.accepted.subject} » a été accepté par le fournisseur pour {state.accepted.count} destinataire{state.accepted.count > 1 ? 's' : ''}. La préparation a été vidée.</span>}<span className="ho-receipt-note">L’acceptation par le fournisseur ne garantit pas la remise à chaque destinataire. Hestia ne garde pas d’historique de vos envois.</span><div><Button icon="plus" onClick={() => { setErrors([]); setToText(''); client.fresh(); }}>Préparer un nouvel email</Button></div></div> : <>
         {state.save === 'conflict' && <div className="ho-conflict" role="alert"><strong ref={conflictTitle} tabIndex={-1}>Préparation modifiée sur un autre appareil.</strong><span>Vos dernières modifications ici ne sont pas enregistrées et rien n’a été écrasé. Relisez la version enregistrée, puis choisissez laquelle garder.</span>{state.conflictAgain && <strong><Icon name="alert" size={18}/>La version enregistrée a encore changé depuis votre lecture : rien n’a été écrasé. Relisez la version ci-dessous, puis choisissez à nouveau.</strong>}<Button variant="secondary" compact aria-expanded={showServer || state.conflictAgain} onClick={() => setShowServer(!showServer)}>{showServer || state.conflictAgain ? 'Masquer la version enregistrée' : 'Voir la version enregistrée'}</Button>{(showServer || state.conflictAgain) && <><SavedVersion draft={state.conflict}/><div className="h-actions"><Button compact onClick={() => { void client.useServer(); setToText(''); setErrors([]); }}>Utiliser la version enregistrée</Button><Button variant="secondary" compact disabled={state.conflictRevision === null} onClick={() => void client.keepMine()}>Enregistrer ma version à la place</Button></div></>}</div>}
         {state.result && <div className="ho-error" role="alert"><strong ref={resultTitle} tabIndex={-1}><Icon name="alert" size={18}/>Envoi impossible.</strong><span>{state.result}</span></div>}
-        {!!errors.length && <div className="ho-error" role="alert"><strong ref={errorTitle} tabIndex={-1}>{errors.length > 1 ? `${errors.length} points à corriger avant l’envoi` : 'Un point à corriger avant l’envoi'}</strong><ul>{errors.map(error => <li key={error}>{error}</li>)}</ul></div>}
+        {!!errors.length && <div className="ho-error" role="alert"><strong ref={errorTitle} tabIndex={-1}>{dictationErrors ? 'Dictée à terminer avant l’envoi' : errors.length > 1 ? `${errors.length} points à corriger avant l’envoi` : 'Un point à corriger avant l’envoi'}</strong><ul>{errors.map(error => <li key={error}>{error}</li>)}</ul></div>}
         {state.step === 'edit' ? <div className="ho-compose"><span className="ho-private"><Icon name="lock" size={18}/>Préparation visible par vous seul, enregistrée dans Hestia. Vous pouvez la reprendre sur un autre appareil.</span>{transmitting && <OutgoingProgress/>}
           <RecipientList values={local.to} text={toText} onText={setToText} onChange={to => { client.edit({ to }); setErrors([]); }} disabled={locked} locked={hardLocked} error={errors.length && (!local.to.length || local.to.some(value => !OUTGOING_EMAIL.test(value))) ? 'Ajoutez une adresse valide, par exemple nom@example.com.' : undefined}/>
-          <TextField label="Objet" required value={local.subject} maxLength={OUTGOING_LIMITS.subject} onChange={event => { client.edit({ subject: event.target.value }); setErrors([]); }} error={errors.length && !local.subject.trim() ? 'Indiquez un objet.' : undefined} disabled={locked}/><TextArea label="Message" hint="Texte simple, envoyé tel que vous l’écrivez. Facultatif." rows={4} maxLength={OUTGOING_LIMITS.message} value={local.message} onChange={event => client.edit({ message: event.target.value })} disabled={locked}/>
+          <TextField label="Objet" required value={local.subject} onChange={event => { client.edit({ subject: event.target.value }); setErrors([]); }} error={errors.length && !local.subject.trim() ? 'Indiquez un objet.' : undefined} disabled={locked}/><OutgoingDictation field="subject" controller={dictation} voice={voice} state={state}/><TextArea label="Message" hint="Texte simple, envoyé tel que vous l’écrivez. Facultatif." rows={4} value={local.message} onChange={event => client.edit({ message: event.target.value })} disabled={locked}/><OutgoingDictation field="message" controller={dictation} voice={voice} state={state}/>
           <section className="ho-attachments" aria-labelledby="outgoing-attachments"><h2 id="outgoing-attachments">Pièces jointes</h2>{rows.length ? <><ul aria-label="Pièces jointes" className={total > OUTGOING_LIMITS.rawBytes ? 'ho-over-limit' : ''}>{rows.map((row, index) => <AttachmentRow key={row.id} row={row} last={index === rows.length - 1} disabled={locked} onRemove={() => { client.edit({ attachmentIds: local.attachmentIds.filter(id => id !== row.id) }); setErrors([]); }} onAccept={() => void client.accept(row)}/>)}</ul><SizeMeter total={total}/></> : <span className="ho-muted">Aucun document. Ajoutez-en ici ou depuis la fiche d’un document.</span>}
             {!hardLocked && <div><Button variant="secondary" icon="plus" disabled={locked} aria-expanded={picker} onClick={() => setPicker(!picker)}>Ajouter des documents</Button></div>}{picker && !hardLocked && <DocumentPicker client={client} state={state} onClose={() => setPicker(false)}/>}
           </section>{!hardLocked && <footer className="ho-actions"><Button variant="tertiary" icon="trash" disabled={empty||locked} onClick={() => setDiscard(true)}>Abandonner la préparation</Button><Button iconRight="chevron-right" loading={state.busy||state.save === 'saving'} onClick={check}>Vérifier l’envoi</Button></footer>}
@@ -71,6 +86,7 @@ export function OutgoingWorkspace({ client, state }: { client: OutgoingClient; s
     </>}
     {discard && <Dialog title="Abandonner la préparation ?" confirmLabel="Abandonner" confirmVariant="danger" busy={state.busy} onCancel={() => setDiscard(false)} onConfirm={() => { void client.abandon().then(ok => { if (ok) { setDiscard(false); setErrors([]); setToText(''); } }); }}>Destinataires, objet, message et la liste des documents seront effacés de la préparation. Les documents restent dans leurs dossiers.</Dialog>}
     <div className="ho-live" role="status" aria-live="polite">{state.announcement}</div>
+    <div className="ho-live" role="status" aria-live="polite">{voice.announcement}</div>
   </section>;
 }
 export function ExchangesWorkspace({ count, state, onInbox, onOutgoing }: { count: number; state: OutgoingSnapshot; onInbox: () => void; onOutgoing: () => void }) {

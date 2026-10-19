@@ -38,6 +38,14 @@ describe("dictation input and vocabulary boundaries", () => {
     const long = "é".repeat(2500); expect(transcriptText(long)).toBe(long); expect(transcriptText("   ")).toBe("");
     expect(() => transcriptText("x".repeat(16385))).toThrow(); expect(() => transcriptText("bad\u0000text")).toThrow();
   });
+  it("bounds outgoing proposals separately while leaving existing sources strict", () => {
+    for (const value of ["x".repeat(20_001), "x".repeat(32_768), "bad\u0000text", "bad\u000ctext"])
+      expect(transcriptText(value, "outgoing")).toBe(value);
+    expect(() => transcriptText("x".repeat(32_769), "outgoing")).toThrow();
+    expect(() => transcriptText("é".repeat(32_769), "outgoing")).toThrow();
+    expect(() => transcriptText("bad\u0000text")).toThrow();
+    expect(() => transcriptText("x".repeat(20_001))).toThrow();
+  });
   it("excludes whole terms over 50 UTF8 bytes after normalization and keeps eligible Unicode intact", () => {
     const names = ["a".repeat(51), "a".repeat(50), "é".repeat(26), "  " + "e\u0301".repeat(25) + "  ",
       "é".repeat(25), "😀".repeat(13), "😀".repeat(12), "Véhicule-B", "Maëlys"];

@@ -1,11 +1,15 @@
 import type { PoolClient } from "pg";
 import type { Actor } from "../access";
 import type { ClassificationCredentialCipher, ReadAuthorizedFolders, ServerClock } from "../classification/types";
+import type { OutgoingTranscriptionField } from "../../shared/transcription-contract";
 
-export type CaptureTranscriptionIdentity = Readonly<{ captureId: string; inboxAttachmentId?: never; actorId: string; actorEpoch: number; expiresAt: string }>;
-export type InboxTranscriptionIdentity = Readonly<{ inboxAttachmentId: string; captureId?: never; actorId: string; actorEpoch: number;
+export type CaptureTranscriptionIdentity = Readonly<{ captureId: string; inboxAttachmentId?: never; outgoingDraftId?: never; actorId: string; actorEpoch: number; expiresAt: string }>;
+export type InboxTranscriptionIdentity = Readonly<{ inboxAttachmentId: string; captureId?: never; outgoingDraftId?: never; actorId: string; actorEpoch: number;
   departureEpoch: number; attachmentVersion: number; commentVersion: number }>;
-export type TranscriptionIdentity = CaptureTranscriptionIdentity | InboxTranscriptionIdentity;
+export type OutgoingTranscriptionIdentity = Readonly<{ outgoingDraftId: string; captureId?: never; inboxAttachmentId?: never;
+  actorId: string; actorEpoch: number; departureEpoch: number; field: OutgoingTranscriptionField;
+  baseRevision: number; revision: number; consumedRevision: number | null }>;
+export type TranscriptionIdentity = CaptureTranscriptionIdentity | InboxTranscriptionIdentity | OutgoingTranscriptionIdentity;
 export type TranscriptionConfiguration = Readonly<{
   version: number; provider: string; model: string; enabled: boolean; monthlyLimitMicros: number; currency: "EUR";
 }>;
@@ -20,6 +24,7 @@ export interface TranscriptionDependencies {
   clock: ServerClock;
   capture: { assertAvailable(client: PoolClient, actor: Actor, captureId: string): Promise<CaptureTranscriptionIdentity> };
   inbox?: { assertAvailable(client: PoolClient, actor: Actor, inboxAttachmentId: string): Promise<InboxTranscriptionIdentity> };
+  outgoing?: { assertAvailable(client: PoolClient, actor: Actor, draftId: string, field: OutgoingTranscriptionField, baseRevision?: number): Promise<OutgoingTranscriptionIdentity> };
   readAuthorizedFolders: ReadAuthorizedFolders; credentialCipher: ClassificationCredentialCipher;
   providers: readonly TranscriptionProvider[]; allowRemote: boolean; requestTimeoutMs: number;
   deploymentLimitMicros?: number;
