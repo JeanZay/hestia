@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OUTGOING_LIMITS, type OutgoingAttachmentDto, type OutgoingAvailableDocument, type OutgoingDraftDto, type OutgoingStateDto } from '../../src/shared/outgoing-contract';
 import { OutgoingClient, outgoingTotal, outgoingValidation } from '../../src/components/hestia/outgoing-client';
+import { OutgoingDictationClient } from '../../src/components/hestia/outgoing-dictation-client';
 
 const clients: OutgoingClient[] = [];
 const service = { configured: true, reason: null, sender: { name: 'Hestia', email: 'envois@example.com' }, replyTo: 'camille@example.com', limits: OUTGOING_LIMITS } as const;
@@ -13,6 +14,28 @@ async function create() { const client = new OutgoingClient(); clients.push(clie
 afterEach(() => { for (const client of clients.splice(0)) client.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('outgoing actor state and durable intent', () => {
+  it('rechecks dictation after the verification save resolves and preserves recording started during that save', async () => {
+    const saved = deferred<Response>(); let patchEntered = false, checks = 0;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/transcriptions')) return response({ enabled: true, available: true, maxDurationMs: 120000, maxAudioBytes: 4194304, mediaTypes: ['audio/wav'], vocabularySupported: false });
+      if (init?.method === 'PATCH') { patchEntered = true; return saved.promise; }
+      if (url.endsWith('/check')) { checks++; return response({ draft: draft(2), recap: {} }); }
+      return response(state());
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const client = await create();
+    const voice = new OutgoingDictationClient(client, { recorder: async () => ({ start: async () => {}, stop: async () => new Blob(), cancel: () => {} }), compatible: async () => true, fetch: fetcher });
+    const disconnect = voice.connect();
+    try {
+      client.edit({ subject: 'Avant vérification' }); const checking = client.check();
+      await vi.waitFor(() => expect(patchEntered).toBe(true));
+      await voice.start('subject'); expect(voice.getSnapshot().active?.phase).toBe('listening');
+      saved.resolve(await response({ draft: { ...draft(2), subject: 'Avant vérification' } })); await checking;
+      expect(checks).toBe(0); expect(client.getSnapshot().step).toBe('edit'); expect(client.getSnapshot().recap).toBeNull();
+      expect(voice.getSnapshot().active?.phase).toBe('listening');
+    } finally { disconnect(); }
+  });
   it('coalesces draft creation between microphone preparation and an autosave without losing local text', async () => {
     const created = deferred<Response>(); let creations = 0;
     vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {

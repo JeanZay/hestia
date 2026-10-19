@@ -213,6 +213,7 @@ export class OutgoingClient {
   async check() {
     if (this.dictationPending || outgoingLocked(this.state) || this.state.save === 'conflict') return;
     if (!await this.save()) return;
+    if (this.dictationPending) return;
     const draft = this.state.server?.draft; if (!draft || this.mutation) return;
     this.mutation = true; ++this.readGeneration; this.update({ busy: true, result: null }); const epoch = this.epoch; let reconcile = false;
     try {
