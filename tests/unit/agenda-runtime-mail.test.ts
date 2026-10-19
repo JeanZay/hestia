@@ -1,0 +1,20 @@
+import {beforeEach,describe,expect,it,vi} from 'vitest';
+const mocks=vi.hoisted(()=>({events:[] as string[],badConfig:false,badWorker:false,identity:vi.fn(async()=>({state:'idle' as const})),agenda:vi.fn(async()=>({state:'idle' as const}))}));
+vi.mock('pg',()=>({Pool:class{}}));
+vi.mock('../../src/server/application',()=>({createApplication:()=>({dispatchMail:mocks.identity,dispatchAgendaMail:mocks.agenda})}));
+vi.mock('../../src/server/config',()=>({readServerConfig:()=>({environment:'dev',origin:'https://hestia.example.invalid',secret:'synthetic-only',databaseUrl:''}),readInboxDeployment:()=>({})}));
+vi.mock('../../src/server/storage',()=>({createObjectStore:()=>({})}));
+vi.mock('../../src/server/classification/deployment',()=>({readClassificationDeployment:()=>({})}));
+vi.mock('../../src/server/transcription/deployment',()=>({readTranscriptionDeployment:()=>({})}));
+vi.mock('../../src/server/summary/deployment',()=>({readSummaryDeployment:()=>({})}));
+vi.mock('../../src/server/outgoing/deployment',()=>({readOutgoingDeployment:()=>({})}));
+vi.mock('../../src/server/inbox/acknowledgement',()=>({createInboxAcknowledgementTransport:()=>undefined}));
+vi.mock('../../src/server/identity/transport',()=>({createResendTransport:()=>async()=>{}}));
+vi.mock('../../src/server/agenda/transport',()=>({createAgendaTransport:()=>{mocks.events.push('agenda-config');if(mocks.badConfig)throw Error('private-config-detail');return async()=>{};}}));
+import {runApplicationMail} from '../../src/server/runtime';
+describe('independent agenda mail failure boundary',()=>{
+  beforeEach(()=>{vi.stubEnv('HESTIA_AGENDA_MAIL_ENABLED','true');mocks.events=[];mocks.badConfig=false;mocks.badWorker=false;mocks.identity.mockClear();mocks.agenda.mockClear();mocks.identity.mockImplementation(async()=>{mocks.events.push('identity');return{state:'idle'};});mocks.agenda.mockImplementation(async()=>{mocks.events.push('agenda');if(mocks.badWorker)throw Error('private-sql-detail');return{state:'idle'};});});
+  it('drains identity before consulting Agenda configuration',async()=>{expect(await runApplicationMail()).toMatchObject({failed:0,available:true});expect(mocks.events).toEqual(['identity','agenda-config','agenda']);});
+  it('keeps a deliberately disabled Agenda neutral for the existing worker',async()=>{vi.stubEnv('HESTIA_AGENDA_MAIL_ENABLED','false');mocks.badConfig=true;expect(await runApplicationMail()).toMatchObject({failed:0,available:true});expect(mocks.events).toEqual(['identity']);expect(mocks.agenda).not.toHaveBeenCalled();});
+  it.each(['configuration','worker'])('isolates an Agenda %s failure after identity delivery',async kind=>{mocks.badConfig=kind==='configuration';mocks.badWorker=kind==='worker';const result=await runApplicationMail();expect(result).toMatchObject({failed:1,available:false});expect(mocks.identity).toHaveBeenCalledOnce();expect(mocks.events[0]).toBe('identity');expect(JSON.stringify(result)).not.toContain('private');});
+});

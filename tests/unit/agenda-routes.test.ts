@@ -1,0 +1,11 @@
+import {describe,it,expect,vi} from 'vitest';
+const mock=vi.hoisted(()=>({handler:vi.fn(async()=>Response.json({ok:true}))}));
+vi.mock('@/server/runtime',()=>({getApplication:()=>({handleAgenda:mock.handler,handleAgendaCard:mock.handler,handleAgendaArchive:mock.handler,handleAgendaReopen:mock.handler,handleAgendaOperation:mock.handler,handleAgendaMembers:mock.handler,handleAgendaAvailableDocuments:mock.handler})}));
+import * as root from '../../src/app/api/hestia/agenda/route';
+import * as card from '../../src/app/api/hestia/agenda/[id]/route';
+import * as archive from '../../src/app/api/hestia/agenda/[id]/archive/route';
+import * as reopen from '../../src/app/api/hestia/agenda/[id]/reopen/route';
+import * as operation from '../../src/app/api/hestia/agenda/operations/[id]/route';
+import * as members from '../../src/app/api/hestia/agenda/members/route';
+import * as available from '../../src/app/api/hestia/agenda/available-documents/route';
+describe('Agenda routes',()=>{it('delegates exact request and card identity, without background sends',async()=>{const request=new Request('https://synthetic.invalid/api/hestia/agenda'),context={params:Promise.resolve({id:'exact-id'})};for(const handler of [root.GET,root.POST,members.GET,available.GET]){await handler(request);expect(mock.handler).toHaveBeenLastCalledWith(request);}for(const handler of [card.GET,card.PATCH,archive.POST,reopen.POST,operation.GET]){await handler(request,context);expect(mock.handler).toHaveBeenLastCalledWith(request,'exact-id');}expect(root.runtime).toBe('nodejs');});});

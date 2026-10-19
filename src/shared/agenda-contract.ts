@@ -1,0 +1,20 @@
+/** Private Agenda V1 contract. User identifiers are text, never assumed UUIDs. */
+export const AGENDA_LIMITS = Object.freeze({title:200,description:20000,category:80,links:20,documents:20,reminders:20,readers:100,requestBytes:131072,url:2048,label:200,page:100,cards:10000,offset:1000000,reminderValue:365});
+export type AgendaShareMode='all'|'selected';
+export type AgendaFold='first'|'second';
+export type AgendaReminderInput={id:string;unit:'days'|'hours';value:number;sendTime:string|null};
+export type AgendaCardFields={title:string;description:string;category:string;startDate:string|null;startTime:string|null;endDate:string|null;endTime:string|null;startFold:AgendaFold|null;shareMode:AgendaShareMode;readerIds:string[];links:{label:string;url:string}[];documentIds:string[];retainedDocumentLinkIds:string[];reminders:AgendaReminderInput[]};
+export type AgendaMutationInput=AgendaCardFields&{requestId:string;revision:number;completedUploadIds?:string[]};
+export type AgendaLifecycleInput={requestId:string;revision:number};
+export type AgendaAvailableDocument={documentId:string;title:string;fileName:string;mediaType:string;size:number;path:string;canDownload:boolean};
+export type AgendaDocument={linkId:string;state:'unavailable'}|({linkId:string;state:'available'}&AgendaAvailableDocument);
+export type AgendaReminderState='scheduled'|'past'|'clarify'|'stopped'|'late'|'accepted'|'accepted-late'|'expired'|'failed'|'uncertain';
+export type AgendaReminder=AgendaReminderInput&{state:AgendaReminderState;sendAt:string|null;deliveryCounts?:Partial<Record<AgendaReminderState,number>>};
+export type AgendaCard=Omit<AgendaCardFields,'readerIds'|'documentIds'|'retainedDocumentLinkIds'|'reminders'>&{id:string;revision:number;creator:{id:string;name:string;departed:boolean};canManage:boolean;archived:boolean;readerIds?:string[];audience:{mode:AgendaShareMode;summary:'household'|'restricted'};documents:AgendaDocument[];reminders:AgendaReminder[];reminderSummary:{count:number;receives:boolean};createdAt:string;updatedAt:string};
+export type AgendaListQuery={view:'day'|'list'|'archives';day?:string;date?:'all'|'upcoming'|'undated'|'past';personId?:string;personMode?:'created'|'shared';category?:string;offset?:number;limit?:number};
+export type AgendaList={cards:AgendaCard[];total:number;filteredTotal:number;categories:string[];nextOffset:number|null;day:string|null;today:string;householdTimeZone:'Europe/Paris'};
+export type AgendaMutationResult={operation:{requestId:string;status:'committed';cardId:string;revision:number};card:AgendaCard};
+export type AgendaReceipt={requestId:string;status:'not-recorded'|'committed';cardId?:string;revision?:number};
+export type AgendaMemberChoice={id:string;name:string};
+export type AgendaFieldError={field:keyof AgendaCardFields|'revision'|'requestId'|'completedUploadIds';code:'required'|'invalid'|'limit'|'nonexistent-time'|'ambiguous-time';message:string};
+export type AgendaTiming={startAt:number|null;cutoffAt:number|null;reminderSchedule:{id:string;sendAt:number|null;state:'scheduled'|'past'|'clarify'}[]};

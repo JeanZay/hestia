@@ -162,3 +162,18 @@ Sources primaires : [triggers](https://neon.com/docs/compute/functions/triggers/
 [offres](https://neon.com/docs/introduction/plans).
 
 Contrôle local ciblé : `node --test tests/harness/neon-mail-retry.test.mjs`.
+
+## Réemploi par Agenda V1
+
+Le relais reste inchangé : il réveille le worker authentifié, qui donne priorité
+à l’identité puis traite un lot borné de rappels. Les deux domaines conservent
+leurs propres intentions et règles d’envoi. Le réglage numérique à quinze minutes
+constitue une cadence de passage, avec un retard possible ; il ne garantit pas
+une livraison à la minute demandée. Un rappel dont la fenêtre métier est dépassée
+n’est plus envoyé, même si le passage automatique arrive ensuite.
+
+Qualifier séparément l’offre et les quotas courants, l’état du trigger, ses vrais
+passages sans trafic, le déploiement servi et l’envoi synthétique autorisé. Les
+observations historiques de la première installation ne qualifient pas une
+nouvelle version d’Agenda. La reprise des rappels après archivage, report ou
+changement de lecteurs suit [le contrat Agenda](agenda.md).

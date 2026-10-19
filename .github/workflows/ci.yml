@@ -13,14 +13,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Select bounded verification scope
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.scope.outputs.mode }}
+      files: ${{ steps.scope.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - id: scope
+        name: Classify the complete diff (never silently widen an Agenda run)
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          // BEGIN AGENDA_SCOPE_CLASSIFIER (exercised independently with synthetic paths)
+          function classify(files, eventName, branch) {
+            const signal = files.some(p => /^(?:src\/server\/agenda\/|src\/shared\/agenda-contract\.ts$|src\/app\/api\/hestia\/agenda\/|src\/components\/hestia\/agenda[-a-z0-9]*\.(?:tsx|ts|css)$|tests\/(?:unit|integration|e2e)\/agenda[-a-z0-9]*\.(?:test|spec)\.ts$)/.test(p));
+            const lot = branch === 'codex/ideas-agenda-v1' || (['push', 'workflow_dispatch'].includes(eventName) && signal);
+            if (!lot) return 'full';
+            const exact = new Set(['.github/workflows/ci.yml', 'src/server/application.ts', 'src/server/access.ts', 'src/server/runtime.ts', 'src/server/membership/service.ts', 'src/server/db/migrate.ts', 'src/shared/agenda-contract.ts', 'src/app/globals.css', 'src/components/hestia/documents-app.tsx', 'src/components/hestia/design-system.tsx', 'src/server/identity/worker.ts', 'src/server/identity/transport.ts', 'docs/agenda.md', 'docs/design/agenda-correspondence.md', 'docs/operations/family-mail.md', 'docs/neon-mail-retry.md', 'tests/integration/agenda.test.ts', 'tests/e2e/agenda.spec.ts', 'tests/unit/membership.test.ts', 'tests/unit/documents.test.ts', 'tests/unit/mail-worker.test.ts', 'tests/unit/mail-transport.test.ts']);
+            const allowed = p => !p.includes('..') && !p.includes('\\') && !p.startsWith('/') && (exact.has(p) || /^src\/server\/agenda\/[a-z0-9./-]+\.(?:ts|sql)$/.test(p) || /^src\/app\/api\/hestia\/agenda\/[a-z0-9/\[\]-]+\.ts$/.test(p) || /^src\/server\/db\/migrations\/022[-_]agenda[-a-z0-9_]*\.sql$/.test(p) || /^src\/components\/hestia\/agenda[-a-z0-9]*\.(?:tsx|ts|css)$/.test(p) || /^tests\/unit\/agenda[-a-z0-9]*\.test\.ts$/.test(p));
+            return signal && files.length > 0 && files.every(allowed) ? 'agenda' : 'invalid';
+          }
+          // END AGENDA_SCOPE_CLASSIFIER
+          let mode = 'invalid', files = [];
+          try {
+            const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+            const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 });
+            const eventName = process.env.GITHUB_EVENT_NAME;
+            let range;
+            if (eventName === 'pull_request') range = `${event.pull_request.base.sha}...${event.pull_request.head.sha}`;
+            else if (eventName === 'push') {
+              if (!/^[0-9a-f]{40}$/.test(event.before) || /^0+$/.test(event.before)) throw Error('No complete push base');
+              range = `${event.before}..${process.env.GITHUB_SHA}`;
+            } else if (process.env.HEAD_BRANCH === 'codex/ideas-agenda-v1') {
+              const base = git(['merge-base', 'origin/main', 'HEAD']).trim();
+              range = `${base}...HEAD`;
+            } else range = 'HEAD^..HEAD';
+            // --no-renames includes both deleted and added paths, so a rename cannot hide an out-of-scope source.
+            files = [...new Set(git(['diff', '--no-renames', '--name-only', '-z', range]).split('\0').filter(Boolean))].sort();
+            if (files.length > 10000) throw Error('Diff too large');
+            mode = classify(files, eventName, process.env.HEAD_BRANCH);
+          } catch {
+            mode = 'invalid';
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `mode=${mode}\nfiles=${JSON.stringify(files)}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `Verification scope: ${mode}; complete diff: ${files.length} paths. Invalid selection fails every protected check; it never falls back to a full run.\n`);
+          NODE
+
   verify:
-    if: github.event_name == 'workflow_dispatch'
+    needs: scope
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.scope.outputs.mode != 'full' || needs.scope.result != 'success')
     name: verify (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
+      - name: Require a valid verification selection
+        env:
+          MODE: ${{ needs.scope.outputs.mode }}
+          SELECTION_RESULT: ${{ needs.scope.result }}
+        shell: bash
+        run: test "$SELECTION_RESULT" = success && { test "$MODE" = full || test "$MODE" = agenda; }
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -32,35 +96,96 @@ jobs:
       - name: Fetch pinned disposable S3 test image
         run: docker pull rustfs/rustfs@sha256:7465b31993156ca5cc0eb4b3c59a01ff69651961be62bcfeb6ce569f22034a56
       - run: npm run verify
+        if: needs.scope.outputs.mode == 'full'
+      - name: Build the Agenda candidate for the owned application bench
+        if: needs.scope.outputs.mode == 'agenda'
+        run: npm run build
+      - name: Agenda SQL, access, membership, mail and browser checks only
+        if: needs.scope.outputs.mode == 'agenda'
+        shell: bash
+        run: |
+          test -f tests/integration/agenda.test.ts && test -f tests/e2e/agenda.spec.ts
+          node scripts/e2e.mjs --integration-file=tests/integration/agenda.test.ts --integration-file=tests/integration/access.test.ts --integration-file=tests/integration/documents.test.ts --integration-file=tests/identity/identity.integration.test.ts --integration-file=tests/identity/mail-outbox.integration.test.ts --integration-file=tests/membership/membership.integration.test.ts tests/e2e/agenda.spec.ts
       - run: npm run check:format-bundle
       - name: Verification summary
-        if: always()
+        if: always() && needs.scope.outputs.mode == 'full'
         run: node scripts/ci-summary.mjs
+      - name: Agenda verification scope summary
+        if: always() && needs.scope.outputs.mode == 'agenda'
+        shell: bash
+        run: echo 'Agenda-targeted application bench only; no full verify/harness suite and no deployment qualification.' >> "$GITHUB_STEP_SUMMARY"
 
   windows:
+    needs: scope
+    if: always()
     name: verify (windows-latest)
     # Hosted Windows runners have no Linux Docker engine. SQL + browser run
     # above on Linux; Windows runs these declared checks without claiming E2E.
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
+      - name: Require a valid verification selection
+        env:
+          MODE: ${{ needs.scope.outputs.mode }}
+          SELECTION_RESULT: ${{ needs.scope.result }}
+        shell: bash
+        run: test "$SELECTION_RESULT" = success && { test "$MODE" = full || test "$MODE" = agenda; }
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
       - run: npm ci --ignore-scripts
       - run: npm run lint
+        if: needs.scope.outputs.mode == 'full'
+      - name: Lint only changed Agenda integration sources
+        if: needs.scope.outputs.mode == 'agenda'
+        shell: bash
+        env:
+          CHANGED_FILES: ${{ needs.scope.outputs.files }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { spawnSync } = require('node:child_process');
+          const files = JSON.parse(process.env.CHANGED_FILES).filter(p => /\.(?:tsx?|m?js)$/.test(p) && fs.existsSync(p));
+          if (!files.length) throw Error('Agenda lint selection is empty');
+          const result = spawnSync(process.execPath, ['node_modules/eslint/bin/eslint.js', ...files, '--max-warnings=0'], { stdio: 'inherit' });
+          process.exitCode = result.status ?? 1;
+          NODE
       - run: npm run typecheck
       - run: npm test
+        if: needs.scope.outputs.mode == 'full'
       - run: npm run test:harness
+        if: needs.scope.outputs.mode == 'full'
+      - name: Agenda and adjacent authorization/document/mail unit checks only
+        if: needs.scope.outputs.mode == 'agenda'
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { spawnSync } = require('node:child_process');
+          const agenda = fs.readdirSync('tests/unit').filter(p => /^agenda[-a-z0-9]*\.test\.ts$/.test(p)).map(p => `tests/unit/${p}`);
+          if (!agenda.length) throw Error('Agenda unit selection is empty');
+          const files = [...agenda, 'tests/unit/membership.test.ts', 'tests/unit/documents.test.ts', 'tests/unit/identity-crypto.test.ts', 'tests/unit/mail-worker.test.ts', 'tests/unit/mail-transport.test.ts', 'tests/unit/mail-background.test.ts', 'tests/unit/mail-routes.test.ts'];
+          if (files.some(p => !fs.existsSync(p))) throw Error('Targeted unit file missing');
+          const result = spawnSync(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', ...files], { stdio: 'inherit' });
+          process.exitCode = result.status ?? 1;
+          NODE
       - run: npm run build
       - run: npm run check:format-bundle
 
   docker-build:
+    needs: scope
+    if: always()
     name: docker
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Require a valid verification selection
+        env:
+          MODE: ${{ needs.scope.outputs.mode }}
+          SELECTION_RESULT: ${{ needs.scope.result }}
+        shell: bash
+        run: test "$SELECTION_RESULT" = success && { test "$MODE" = full || test "$MODE" = agenda; }
       - uses: actions/checkout@v4
       - name: Build portable image (no deployment or runtime qualification)
         run: docker build --tag hestia-ci .
