@@ -6,6 +6,8 @@ import { main } from '../../scripts/backlog-audit.mjs';
 const repository = 'synthetic/hestia';
 const url = 'https://github.com/synthetic/hestia/issues/1';
 const fields = { fields: [{ name: 'Status', options: ['Todo', 'In Progress', 'Done'].map(name => ({ name })) }], totalCount: 1 };
+const newStatuses = ['À faire', 'In Progress', 'Partiellement livré', 'Livré — à qualifier', 'Done'];
+const newFields = () => ({ fields: [{ name: 'Status', options: newStatuses.map(name => ({ name })) }], totalCount: 1 });
 function fixture() {
   return { repository, startedAtUtc: '2026-10-19T12:00:00.000Z', finishedAtUtc: '2026-10-19T12:01:00.000Z',
     issues: [{ number: 1, state: 'open', html_url: url }],
@@ -57,6 +59,43 @@ test('actual custom Project field options require an explicit mapping', () => {
   const snapshot = fixture(); snapshot.fields = { fields: [{ name: 'Status', options: [{ name: 'Terminé' }] }], totalCount: 1 };
   assert.ok(auditBacklog(snapshot).findings.some(item => item.code === 'project-status-requires-mapping'));
   assert.ok(!auditBacklog(snapshot).findings.some(item => item.code === 'todo-with-merged-reference'));
+});
+
+test('new vocabulary checks every open/closed state against final and non-final statuses', () => {
+  for (const state of ['open', 'closed']) for (const status of newStatuses) {
+    const snapshot = fixture(); snapshot.fields = newFields();
+    snapshot.issues[0].state = state; snapshot.board.items[0].status = status;
+    const codes = auditBacklog(snapshot).findings.map(item => item.code);
+    assert.ok(!codes.includes('project-status-requires-mapping'));
+    assert.ok(!codes.includes('project-item-status-missing-or-unknown'));
+    assert.equal(codes.includes('issue-project-state-mismatch'), (state === 'open') === (status === 'Done'), `${state}/${status}`);
+  }
+});
+
+test('À faire keeps the merged-reference signal; partial and qualification states remain distinct without implying completion', () => {
+  for (const status of ['À faire', 'Partiellement livré', 'Livré — à qualifier']) {
+    const snapshot = fixture(); snapshot.fields = newFields(); snapshot.board.items[0].status = status;
+    snapshot.comments.push({ issue_url: 'https://api.github.com/repos/synthetic/hestia/issues/1', created_at: '2026-10-19T12:00:00Z', html_url: `${url}#issuecomment-3` });
+    const before = JSON.stringify(snapshot); const result = auditBacklog(snapshot);
+    assert.deepEqual(result.findings.map(item => item.code), status === 'À faire' ? ['todo-with-merged-reference'] : []);
+    assert.equal(result.linkedOpenIssues[0].projectStatus, status);
+    assert.match(result.limitations.join(' '), /Ces libellés ne prouvent pas la couverture des critères/);
+    assert.equal(JSON.stringify(snapshot), before);
+  }
+});
+
+test('unreviewed status combinations, duplicate fields and labels still require mapping', () => {
+  for (const candidateFields of [
+    { fields: [{ name: 'Status', options: ['À faire', 'In Progress', 'Done'].map(name => ({ name })) }] },
+    { fields: [{ name: 'Status', options: [...newStatuses, 'Blocked'].map(name => ({ name })) }] },
+    { fields: [{ name: 'Status', options: newStatuses.map(name => ({ name })) }, { name: 'Status', options: [] }] },
+    { fields: [{ name: 'Status', options: [...newStatuses.slice(0, -1), 'Livré — à qualifier'].map(name => ({ name })) }] },
+  ]) {
+    const snapshot = fixture(); snapshot.fields = candidateFields; snapshot.board.items[0].status = 'À faire';
+    const codes = auditBacklog(snapshot).findings.map(item => item.code);
+    assert.ok(codes.includes('project-status-requires-mapping'));
+    assert.ok(!codes.includes('todo-with-merged-reference'));
+  }
 });
 test('text references stay local; native links not inspected are explicitly outside coverage', () => {
   assert.deepEqual(referencedIssues('Refs #1; https://github.com/synthetic/hestia/issues/3 ; other/repo#9 https://github.com/other/repo/issues/8 https://example.invalid/#7', repository), [1, 3]);
