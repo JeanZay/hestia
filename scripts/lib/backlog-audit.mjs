@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process';
 
 const requireCondition = (condition, code) => { if (!condition) throw new Error(code); };
 const repoPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+// Exact supported vocabularies. Unknown fields still require an explicit mapping.
+const statusMappings = [
+  { pending: 'Todo', options: ['Todo', 'In Progress', 'Done'] },
+  { pending: 'À faire', options: ['À faire', 'In Progress', 'Partiellement livré', 'Livré — à qualifier', 'Done'] },
+];
 
 /** Only named read commands are exposed. No shell, writes, or consent inference. */
 export function collectBacklog({ repository, project, owner, command = (args) => execFileSync('gh', args, {
@@ -54,7 +59,8 @@ export function auditBacklog(snapshot) {
   const findings = []; const linkedOpenIssues = []; const mergedPullsWithoutTextReference = [];
   const statusFields = snapshot.fields?.fields?.filter(field => field.name === 'Status') ?? [];
   const statusOptions = statusFields.length === 1 ? statusFields[0].options?.map(option => option.name) : [];
-  const knownMapping = statusOptions?.length === 3 && ['Todo', 'In Progress', 'Done'].every(value => statusOptions.includes(value));
+  const statusMapping = statusMappings.find(mapping => statusOptions?.length === mapping.options.length && mapping.options.every(value => statusOptions.includes(value)));
+  const knownMapping = Boolean(statusMapping);
   if (!knownMapping) findings.push({ code: 'project-status-requires-mapping', issue: null, url: null });
   const localItems = board.items.filter(item => item.content?.type === 'Issue' && item.content.url?.startsWith(`https://github.com/${repository}/issues/`));
   const merged = pulls.filter(pr => pr.merged_at).map(pr => ({ ...pr, references: referencedIssues(pr.body, repository) }));
@@ -66,7 +72,7 @@ export function auditBacklog(snapshot) {
     if (items.length !== 1) add(items.length ? 'duplicate-project-item' : 'project-item-absent-or-archived');
     const status = items[0]?.status ?? null;
     if (items.length && !statusOptions?.includes(status)) add('project-item-status-missing-or-unknown');
-    if (knownMapping && ((issue.state === 'open' && status === 'Done') || (issue.state === 'closed' && ['Todo', 'In Progress'].includes(status)))) add('issue-project-state-mismatch');
+    if (knownMapping && ((issue.state === 'open' && status === 'Done') || (issue.state === 'closed' && statusMapping.options.includes(status) && status !== 'Done'))) add('issue-project-state-mismatch');
     const linked = merged.filter(pr => pr.references.includes(issue.number));
     if (issue.state !== 'open' || !linked.length) continue;
     const latestMerge = linked.map(pr => pr.merged_at).sort().at(-1);
@@ -75,7 +81,7 @@ export function auditBacklog(snapshot) {
       mergedPullsMentioningIssue: linked.map(pr => ({ number: pr.number, url: pr.html_url })),
       commentsAfterLatestLinkedMerge: followUp.map(comment => comment.html_url),
       interpretation: 'Lire critères, commentaires et preuves ; la fusion ou une mention ne prouve ni livraison ni acceptation.' });
-    if (knownMapping && status === 'Todo') add('todo-with-merged-reference');
+    if (knownMapping && status === statusMapping.pending) add('todo-with-merged-reference');
     if (!followUp.length) add('no-comment-after-linked-merge');
   }
   return { schemaVersion: 1, repository, observedFromUtc: snapshot.startedAtUtc, observedToUtc: snapshot.finishedAtUtc,
@@ -85,6 +91,7 @@ export function auditBacklog(snapshot) {
     limitations: ['Lectures successives, sans snapshot atomique de GitHub.',
       'Les mentions textuelles incluent parents, dépendances et exclusions ; leur rôle doit être instruit.',
       'Un commentaire récent peut être sans rapport ; son contenu et les critères restent à lire.',
+      'Partiellement livré désigne un reste à réaliser ; Livré — à qualifier désigne des contrôles ou preuves restants. Ces libellés ne prouvent pas la couverture des critères.',
       'Associations natives PR/Issue, parents/enfants et archives Project non inventoriés ; les références textuelles seules sont couvertes.',
       'Une PR sans référence textuelle peut avoir un lien natif ou relever du harnais ; aucune absence d’Issue n’est déduite.',
       'Aucun contrôle des critères métier, du code ou des environnements ; aucune clôture ni mutation autorisée par ce rapport.'] };
