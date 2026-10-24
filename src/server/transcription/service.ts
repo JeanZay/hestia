@@ -83,7 +83,14 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
     });
   }
   async function assertSame(client: PoolClient, actor: Actor, identity: TranscriptionIdentity) {
-    if (typeof identity.outgoingDraftId === 'string') {
+    if (typeof identity.agendaFormSessionId === "string") {
+      if (!deps.agenda) throw stale();
+      const current = await deps.agenda.assertAvailable(client, actor, identity.agendaFormSessionId, identity.field, identity.cardId, identity.baseRevision);
+      if (current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch || current.departureEpoch !== identity.departureEpoch
+        || current.agendaFormSessionId !== identity.agendaFormSessionId || current.field !== identity.field
+        || current.cardId !== identity.cardId || current.baseRevision !== identity.baseRevision || current.revision !== identity.revision) throw stale();
+      return current;
+    } else if (typeof identity.outgoingDraftId === 'string') {
       if (!deps.outgoing) throw stale();
       const current = await deps.outgoing.assertAvailable(client, actor, identity.outgoingDraftId, identity.field, identity.baseRevision);
       if (current.outgoingDraftId !== identity.outgoingDraftId || current.actorId !== identity.actorId || current.actorEpoch !== identity.actorEpoch
@@ -129,17 +136,29 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
     })]); } finally { clearTimeout(timer); }
   }
   async function handleTranscriptions(request: Request) {
-    return guarded(async () => {
+    let responseActor: string | undefined;
+    const withActor = <T>(action: (client: PoolClient, actor: Actor) => Promise<T>, touch = true) =>
+      access.withActor(request, (client, actor) => { responseActor = actor.id; return action(client, actor); }, touch);
+    const result = await guarded(async () => {
       const params = new URL(request.url).searchParams, captureId = params.get("captureId"), inboxAttachmentId=params.get('inboxAttachmentId'), key = params.get("idempotencyKey");
       const outgoingDraftId = params.get("outgoingDraftId"), field = params.get("field"), revision = params.get("baseRevision");
-      const allowed = ["captureId", "inboxAttachmentId", "outgoingDraftId", "field", "baseRevision", "idempotencyKey"];
-      if ([captureId, inboxAttachmentId, outgoingDraftId].filter(value => value !== null).length !== 1
-        || !isUuid(captureId ?? inboxAttachmentId ?? outgoingDraftId) || !["GET", "POST"].includes(request.method)
+      const agendaFormSessionId = params.get("agendaFormSessionId"), agendaCardId = params.get("agendaCardId");
+      const allowed = ["captureId", "inboxAttachmentId", "outgoingDraftId", "agendaFormSessionId", "agendaCardId", "field", "baseRevision", "idempotencyKey"];
+      if ([captureId, inboxAttachmentId, outgoingDraftId, agendaFormSessionId].filter(value => value !== null).length !== 1
+        || !isUuid(captureId ?? inboxAttachmentId ?? outgoingDraftId ?? agendaFormSessionId) || !["GET", "POST"].includes(request.method)
         || [...params.keys()].some(name => !allowed.includes(name)) || allowed.some(name => params.getAll(name).length > 1)) throw invalid();
-      if (outgoingDraftId !== null ? !["subject", "message"].includes(field ?? "")
-        || request.method === "POST" && revision === null : field !== null || revision !== null) throw invalid();
+      if (agendaFormSessionId !== null) {
+        if (!["title", "description"].includes(field ?? "") || (agendaCardId === null ? revision !== null : !isUuid(agendaCardId) || revision === null)) throw invalid();
+      } else {
+        if (agendaCardId !== null || (outgoingDraftId !== null ? !["subject", "message"].includes(field ?? "")
+          || request.method === "POST" && revision === null : field !== null || revision !== null)) throw invalid();
+      }
       if (revision !== null && (!/^[1-9]\d{0,9}$/.test(revision) || Number(revision) >= 2147483647)) throw invalid();
       const assertSource=async(client:PoolClient,actor:Actor):Promise<TranscriptionIdentity>=>{
+        if (agendaFormSessionId !== null) {
+          if (!deps.agenda) throw stale();
+          return deps.agenda.assertAvailable(client, actor, agendaFormSessionId, field as "title" | "description", agendaCardId, revision === null ? null : Number(revision));
+        }
         if (outgoingDraftId !== null) {
           if (!deps.outgoing) throw stale();
           return deps.outgoing.assertAvailable(client, actor, outgoingDraftId, field as "subject" | "message", revision === null ? undefined : Number(revision));
@@ -147,15 +166,18 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
         if(inboxAttachmentId!==null){if(!deps.inbox)throw stale();return deps.inbox.assertAvailable(client,actor,inboxAttachmentId);}
         return deps.capture.assertAvailable(client,actor,captureId!);
       };
-      if (request.method === "GET") return access.withActor(request, async (client, actor) => {
-        await assertSource(client,actor); return response(await availability(client, await config(client), outgoingDraftId !== null));
+      if (request.method === "GET") return withActor(async (client, actor) => {
+        await assertSource(client,actor); return response(await availability(client, await config(client), outgoingDraftId !== null || agendaFormSessionId !== null));
       }, false);
       access.origin(request);
       if (!isUuid(key) || request.headers.get("content-type")?.split(";")[0] !== "audio/wav") throw invalid();
       // Reject unauthenticated/disabled/idempotent calls before buffering audio.
-      const initial = await access.withActor(request, async (client, actor) => {
+      const initial = await withActor(async (client, actor) => {
         const identity=await assertSource(client,actor);
-        const identityHash=typeof identity.outgoingDraftId === 'string'
+        const identityHash=typeof identity.agendaFormSessionId === 'string'
+          ? hash({source:'agenda',formSessionId:identity.agendaFormSessionId,field:identity.field,cardId:identity.cardId,
+            baseRevision:identity.baseRevision,epoch:identity.actorEpoch,departureEpoch:identity.departureEpoch})
+          : typeof identity.outgoingDraftId === 'string'
           ? hash({source:'outgoing', draftId:identity.outgoingDraftId, field:identity.field, baseRevision:identity.baseRevision,
             epoch:identity.actorEpoch, departureEpoch:identity.departureEpoch, consumedRevision:identity.consumedRevision})
           : typeof identity.inboxAttachmentId==='string'
@@ -177,7 +199,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
       try {
         bytes = await bodyBytes(request, TRANSCRIPTION_MAX_AUDIO_BYTES);
         const durationMs = inspectDictationWav(bytes), identity = initial.identity!;
-        const reservation = await access.withActor(request, async (client, actor) => {
+        const reservation = await withActor(async (client, actor) => {
           await assertSame(client, actor, identity);
           const row = await config(client); if (row.version !== initial.version) throw stale();
           const { selected, maximum } = quote(row);
@@ -189,7 +211,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
           }
           const totals = await usage(client);
           if (BigInt(totals.spentMicros) + BigInt(totals.reservedMicros) + BigInt(maximum) > BigInt(limit(row))) throw budgetError();
-          const vocabularySupported = outgoingDraftId === null && !!selected.models.find(item => item.id === row.model)?.vocabularySupported;
+          const vocabularySupported = outgoingDraftId === null && agendaFormSessionId === null && !!selected.models.find(item => item.id === row.model)?.vocabularySupported;
           const vocabulary = vocabularySupported ? dictationVocabulary(await deps.readAuthorizedFolders(client, actor)) : [];
           const id = randomUUID();
           await client.query(`INSERT INTO hestia_transcription_request(id,actor_id,actor_epoch,idempotency_key,identity_hash,config_version,month_start,reserved_micros,created_at)
@@ -200,7 +222,7 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
         const { id, row, selected, vocabulary, vocabularySupported } = reservation;
         let credential: string;
         try {
-          credential = await access.withActor(request, async (client, actor) => {
+          credential = await withActor(async (client, actor) => {
             await assertSame(client, actor, identity);
             const current = await config(client);
             if (current.version !== row.version) throw stale(); quote(current);
@@ -215,13 +237,13 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
           const payload: TranscriptionPayload = { bytes, mediaType: "audio/wav", durationMs, vocabulary };
           const outcome = await bounded(signal => selected.transcribe(configured(row), payload, credential, signal));
           actual = outcome.actualMicros;
-          try { text = transcriptText(outcome.text, outgoingDraftId === null ? undefined : "outgoing"); } catch { throw transcriptionFailure("transcript", "INVALID_TEXT"); }
+          try { text = transcriptText(outcome.text, agendaFormSessionId !== null ? "agenda" : outgoingDraftId !== null ? "outgoing" : undefined); } catch { throw transcriptionFailure("transcript", "INVALID_TEXT"); }
           status = await settle(id, actual, "complete");
           if (status === "failed") reportTranscriptionFailure(id, transcriptionFailure("service", "SETTLEMENT_FAILED"), actual);
         } catch (error) { reportTranscriptionFailure(id, error, actual); status = await settle(id, actual, "failed"); }
         // Configuration changes affect subsequent calls only. Rights and lifetime
         // are authoritative again after provider I/O; no transaction spans I/O.
-        return access.withActor(request, async (client, actor) => {
+        return withActor(async (client, actor) => {
           let current: TranscriptionIdentity;
           try {
             current = await assertSame(client, actor, identity);
@@ -231,11 +253,15 @@ export function createTranscriptionService(_pool: Pool, access: Access, deps: Tr
             throw error;
           }
           return response({ transcriptionId: id, status, ...(status === "complete" ? { text,
+            ...(typeof current.agendaFormSessionId === "string" ? { agenda: { formSessionId: current.agendaFormSessionId,
+              field: current.field, cardId: current.cardId, baseRevision: current.baseRevision, revision: current.revision } } : {}),
             ...(typeof current.outgoingDraftId === "string" ? { outgoing: { draftId: current.outgoingDraftId, field: current.field,
               baseRevision: current.baseRevision, revision: current.revision } } : {}) } : {}) } satisfies TranscriptionResultDto);
         }, false);
       } finally { bytes?.fill(0); active--; }
     });
+    if (responseActor && new URL(request.url).searchParams.has("agendaFormSessionId")) result.headers.set("X-Hestia-Actor", encodeURIComponent(responseActor));
+    return result;
   }
   return { handleTranscriptionSettings, handleTranscriptions };
 }

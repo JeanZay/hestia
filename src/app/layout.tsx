@@ -1,9 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
 const titleFont = localFont({ src: "./fonts/BricolageGrotesque.ttf", variable: "--font-hestia-title", weight: "200 800", display: "swap" });
 const textFont = localFont({ src: [{ path: "./fonts/AtkinsonHyperlegible-Regular.ttf", weight: "400", style: "normal" }, { path: "./fonts/AtkinsonHyperlegible-Bold.ttf", weight: "700", style: "normal" }], variable: "--font-hestia-text", display: "swap" });
+
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", interactiveWidget: "resizes-content" };
 
 export const metadata: Metadata = {
   title: "Hestia — Documents",

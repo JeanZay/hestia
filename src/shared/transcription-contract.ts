@@ -2,6 +2,11 @@
 export const TRANSCRIPTION_MAX_DURATION_MS = 120_000;
 export const TRANSCRIPTION_MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 export type OutgoingTranscriptionField = "subject" | "message";
+export type AgendaTranscriptionField = "title" | "description";
+export type AgendaTranscriptionResult = {
+  formSessionId: string; field: AgendaTranscriptionField; cardId: string | null;
+  baseRevision: number | null; revision: number | null;
+};
 export type OutgoingTranscriptionResult = {
   draftId: string; field: OutgoingTranscriptionField; baseRevision: number; revision: number;
 };
@@ -21,4 +26,5 @@ export type TranscriptionAvailabilityDto = {
 export type TranscriptionResultDto = {
   transcriptionId: string; status: "pending" | "complete" | "failed" | "stale"; text?: string;
   outgoing?: OutgoingTranscriptionResult;
+  agenda?: AgendaTranscriptionResult;
 };
