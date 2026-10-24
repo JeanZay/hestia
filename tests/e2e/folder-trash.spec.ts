@@ -15,7 +15,16 @@ async function create(api:APIRequestContext,name:string,parentId:string|null=nul
 async function open(page:Page,folder:Folder){await page.reload();await page.getByRole("main").getByRole("button",{name:new RegExp(folder.name)}).click();await expect(page.getByRole("heading",{name:folder.name,exact:true})).toBeVisible();}
 async function start(page:Page){await page.getByRole("button",{name:"Actions",exact:true}).click();await page.getByRole("menuitem",{name:"Mettre à la corbeille…",exact:true}).click();return page.getByRole("dialog");}
 async function trashApi(api:APIRequestContext,folder:Folder){const preview=await api.post(`/api/hestia/folders/${folder.id}/trash/preview`,{headers,data:{}});expect(preview.ok()).toBe(true);const result=await preview.json();expect(result.allowed).toBe(true);expect((await api.post(`/api/hestia/folders/${folder.id}/trash`,{headers,data:{previewToken:result.previewToken,idempotencyKey:randomUUID()}})).ok()).toBe(true);return(await(await api.get("/api/hestia/trash")).json()).groups.find((g:{folderId:string})=>g.folderId===folder.id);}
-async function corbeille(page:Page){await page.reload();await page.getByRole("button",{name:"Corbeille",exact:true}).click();await expect(page.getByRole("heading",{name:"Corbeille",exact:true})).toBeVisible();}
+async function openTrash(page:Page){
+  await page.getByRole("navigation",{name:/^Navigation principale(?: mobile)?$/}).filter({visible:true}).first().waitFor({state:"visible"});
+  const mobile=page.getByRole("navigation",{name:"Navigation principale mobile",exact:true});
+  if(await mobile.isVisible()){
+    await mobile.getByRole("button",{name:"Moi",exact:true}).click();
+    await page.getByRole("main").getByRole("button",{name:"Corbeille",exact:true}).click();
+  }else await page.getByRole("navigation",{name:"Navigation principale",exact:true}).getByRole("button",{name:"Corbeille",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Corbeille",exact:true})).toBeVisible();
+}
+async function corbeille(page:Page){await page.reload();await openTrash(page);}
 async function restore(page:Page,folder:Folder){await page.getByRole("button",{name:`Restaurer « ${folder.name} »`,exact:true}).click();return page.getByRole("complementary",{name:`Restaurer « ${folder.name} »`,exact:true});}
 
 test("suppression groupée puis restauration entière au clavier sans reprendre un groupe antérieur",async({page})=>{
@@ -59,7 +68,7 @@ test("révocation connue : la ligne et le panneau privés disparaissent",async({
   await login(page);const parent=await create(page.request,`Partagé ${randomUUID().slice(0,8)}`),source=await create(page.request,`Révoqué ${randomUUID().slice(0,8)}`,parent.id);const sharing=await(await page.request.get(`/api/hestia/folders/${parent.id}/sharing`)).json();const alex=sharing.members.find((member:{name:string})=>member.name==="Alex");
   expect((await page.request.post(`/api/hestia/folders/${parent.id}/sharing`,{headers,data:{memberId:alex.id,export:false,deposit:false,modify:false,delete:true,idempotencyKey:randomUUID()}})).ok()).toBe(true);
   const access=await(await page.request.get(`/api/hestia/folders/${parent.id}/access`)).json();const grant=access.grants.find((g:{memberId:string;canRevoke:boolean})=>g.memberId===alex.id&&g.canRevoke);await trashApi(page.request,source);
-  const context=await browser.newContext({baseURL:"http://127.0.0.1:3210",viewport:page.viewportSize(),isMobile,hasTouch:isMobile});try{const receiver=await context.newPage();await login(receiver,"alex");await receiver.getByRole("button",{name:"Corbeille",exact:true}).click();const panel=await restore(receiver,source);await expect(panel.getByRole("button",{name:"Restaurer ici",exact:true})).toBeVisible();
+  const context=await browser.newContext({baseURL:"http://127.0.0.1:3210",viewport:page.viewportSize(),isMobile,hasTouch:isMobile});try{const receiver=await context.newPage();await login(receiver,"alex");await openTrash(receiver);const panel=await restore(receiver,source);await expect(panel.getByRole("button",{name:"Restaurer ici",exact:true})).toBeVisible();
     expect((await page.request.delete(`/api/hestia/folders/${parent.id}/access/${grant.id}`,{headers})).ok()).toBe(true);const refreshed=receiver.waitForResponse(r=>r.url().endsWith("/api/hestia/trash"));await receiver.evaluate(()=>window.dispatchEvent(new Event("focus")));await refreshed;await expect(receiver.getByText(source.name,{exact:false})).toHaveCount(0);await expect(receiver.getByRole("complementary",{name:/^Restaurer/})).toHaveCount(0);await expect(receiver.getByText("La corbeille a été mise à jour.",{exact:true})).toBeVisible();
   }finally{await context.close();}
 });
@@ -83,7 +92,7 @@ test("aperçu suppression indisponible après rafraîchissement : fermer ou rée
 test("quitter la corbeille pour rechercher puis ouvrir un résultat actif",async({page,isMobile})=>{
   await login(page);const suffix=randomUUID().slice(0,8),target=await create(page.request,`Trouvable ${suffix}`),trashed=await create(page.request,`Retiré ${suffix}`);await trashApi(page.request,trashed);await corbeille(page);
   if(isMobile){
-    const navigation=page.getByRole("navigation",{name:"Navigation principale mobile",exact:true});await navigation.getByRole("button",{name:"Rechercher",exact:true}).click();await expect(navigation.getByRole("button",{name:"Rechercher",exact:true})).toHaveAttribute("aria-current","page");await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
+    const navigation=page.getByRole("navigation",{name:"Navigation principale mobile",exact:true});await page.getByRole("banner").getByRole("button",{name:"Rechercher",exact:true}).click();await expect(navigation.locator('[aria-current="page"]')).toHaveCount(0);
   }else await page.getByLabel("Rechercher un document ou un dossier",{exact:true}).fill(suffix);
   await expect(page.getByRole("heading",{name:"Recherche",exact:true})).toBeVisible();await expect(page.getByRole("heading",{name:"Corbeille",exact:true})).toHaveCount(0);await page.getByRole("main").getByLabel("Rechercher",{exact:true}).fill(suffix);
   await expect(page.getByRole("main").getByRole("button",{name:new RegExp(target.name)})).toBeVisible();await expect(page.getByRole("main").getByText(trashed.name,{exact:true})).toHaveCount(0);await page.getByRole("main").getByRole("button",{name:new RegExp(target.name)}).click();await expect(page.getByRole("heading",{name:target.name,exact:true})).toBeVisible();

@@ -67,10 +67,17 @@ for (const actor of ["camille", "alex"]) test(`Photo : une seule section sélect
     if (request.method() !== "GET" && new URL(request.url()).pathname.startsWith("/api/hestia/")) writes.push(request.method());
   });
   const destinations = ["Dossiers", "Échanges", "Rechercher", "Corbeille", "Moi"];
-  if (await nav.getByRole("button", { name: "Foyer", exact: true }).count()) destinations.push("Foyer");
+  await nav.getByRole("button", { name: "Moi", exact: true }).click();
+  await main.getByRole("heading", { name: "Moi", exact: true }).waitFor({ state: "visible" });
+  if (await main.getByRole("button", { name: "Foyer", exact: true }).isVisible()) destinations.push("Foyer");
   for (const destination of destinations) {
-    await nav.getByRole("button", { name: destination, exact: true }).click();
-    await expect(nav.locator('[aria-current="page"]')).toHaveText([destination]);
+    if (destination === "Rechercher") await page.getByRole("banner").getByRole("button", { name: "Rechercher", exact: true }).click();
+    else if (destination === "Corbeille" || destination === "Foyer") {
+      await nav.getByRole("button", { name: "Moi", exact: true }).click();
+      await main.getByRole("button", { name: destination, exact: true }).click();
+    } else await nav.getByRole("button", { name: destination, exact: true }).click();
+    if (destination === "Rechercher") await expect(nav.locator('[aria-current="page"]')).toHaveCount(0);
+    else await expect(nav.locator('[aria-current="page"]')).toHaveText([destination === "Corbeille" || destination === "Foyer" ? "Moi" : destination]);
     await nav.getByRole("button", { name: "Photo", exact: true }).click();
     await expect(main.getByRole("heading", { name: "Photo", exact: true })).toBeVisible();
     await expect(nav.locator('[aria-current="page"]')).toHaveText(["Photo"]);
