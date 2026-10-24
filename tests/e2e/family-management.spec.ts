@@ -9,7 +9,17 @@ const password = process.env.HESTIA_TEST_PASSWORD;
 if (!password) throw new Error("Ephemeral test password missing.");
 const pool = new Pool({ connectionString: config.databaseUrl });
 test.afterAll(async () => { await pool.end(); });
-async function clickVisible(page: Page, name: string) { await page.getByRole("button", { name, exact: true }).filter({ visible: true }).first().click(); }
+async function clickVisible(page: Page, name: string) {
+  const target = page.getByRole("button", { name, exact: true }).filter({ visible: true }).first();
+  if (name === "Foyer") {
+    await page.getByRole("navigation", { name: /^Navigation principale(?: mobile)?$/ }).filter({ visible: true }).first().waitFor({ state: "visible" });
+    if (!await target.isVisible()) {
+      const mobile = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
+      if (await mobile.isVisible()) await mobile.getByRole("button", { name: "Moi", exact: true }).click();
+    }
+  }
+  await target.click();
+}
 async function login(page: Page, email: string, secret = password!) {
   await page.goto("/");
   for (let attempt = 0; attempt < 4; attempt++) {

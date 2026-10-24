@@ -4,7 +4,17 @@ const paths = ["members", "invitations", "readmissions", "folders/without-manage
 const initialPaths = ["members", "folders/without-manager"];
 const prefix = "/api/hestia/household/";
 const deferred = () => { let resolve = () => {}; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
-async function navigate(page: Page, name: string) { await page.getByRole("button", { name, exact: true }).filter({ visible: true }).first().click(); }
+async function navigate(page: Page, name: string) {
+  const target = page.getByRole("button", { name, exact: true }).filter({ visible: true }).first();
+  if (name === "Foyer") {
+    await page.getByRole("navigation", { name: /^Navigation principale(?: mobile)?$/ }).filter({ visible: true }).first().waitFor({ state: "visible" });
+    if (!await target.isVisible()) {
+      const mobile = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
+      if (await mobile.isVisible()) await mobile.getByRole("button", { name: "Moi", exact: true }).click();
+    }
+  }
+  await target.click();
+}
 async function login(page: Page) {
   const secret = process.env.HESTIA_TEST_PASSWORD;
   if (!secret) throw new Error("Owned synthetic runner required");

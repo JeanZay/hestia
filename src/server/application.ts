@@ -21,6 +21,7 @@ import { createClassificationCredentialCipher } from "./classification/cipher";
 import { DEFAULT_CLASSIFICATION_LIMITS, type ClassificationDependencies } from "./classification/types";
 import { createTranscriptionService } from "./transcription/service";
 import { createOutgoingTranscriptionSource } from "./transcription/outgoing-source";
+import { createAgendaTranscriptionSource } from "./transcription/agenda-source";
 import { DEFAULT_TRANSCRIPTION_LIMITS, type TranscriptionDependencies } from "./transcription/types";
 import { createInboxService, type InboxDependencies } from './inbox';
 import { createRevisionsService } from './documents/revisions';
@@ -295,6 +296,7 @@ export function createApplication(pool: Pool, config: ServerConfig, dependencies
     providers:[],allowRemote:false,...DEFAULT_TRANSCRIPTION_LIMITS,...dependencies?.transcription,
     inbox:{assertAvailable:inbox.assertInboxTranscription},
     outgoing:createOutgoingTranscriptionSource(),
+    agenda:createAgendaTranscriptionSource(),
     capture:{async assertAvailable(client,actor,captureId){
       if(!isUuid(captureId))throw unavailable();
       const now=await clock(client);

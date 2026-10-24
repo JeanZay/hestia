@@ -46,6 +46,13 @@ describe("dictation input and vocabulary boundaries", () => {
     expect(() => transcriptText("bad\u0000text")).toThrow();
     expect(() => transcriptText("x".repeat(20_001))).toThrow();
   });
+  it("keeps Agenda proposals correctable without truncation and within the common output bound", () => {
+    for (const value of ["x".repeat(201), "x".repeat(20_001), "x".repeat(32_768), "bad\u0000text", "Deux\nparagraphes"])
+      expect(transcriptText(value, "agenda")).toBe(value);
+    expect(() => transcriptText("x".repeat(32_769), "agenda")).toThrow();
+    expect(() => transcriptText("😀".repeat(16_385), "agenda")).toThrow();
+    expect(transcriptText("   ", "agenda")).toBe("");
+  });
   it("excludes whole terms over 50 UTF8 bytes after normalization and keeps eligible Unicode intact", () => {
     const names = ["a".repeat(51), "a".repeat(50), "é".repeat(26), "  " + "e\u0301".repeat(25) + "  ",
       "é".repeat(25), "😀".repeat(13), "😀".repeat(12), "Véhicule-B", "Maëlys"];

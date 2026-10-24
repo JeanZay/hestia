@@ -1,15 +1,18 @@
 import type { PoolClient } from "pg";
 import type { Actor } from "../access";
 import type { ClassificationCredentialCipher, ReadAuthorizedFolders, ServerClock } from "../classification/types";
-import type { OutgoingTranscriptionField } from "../../shared/transcription-contract";
+import type { AgendaTranscriptionField, OutgoingTranscriptionField } from "../../shared/transcription-contract";
 
-export type CaptureTranscriptionIdentity = Readonly<{ captureId: string; inboxAttachmentId?: never; outgoingDraftId?: never; actorId: string; actorEpoch: number; expiresAt: string }>;
-export type InboxTranscriptionIdentity = Readonly<{ inboxAttachmentId: string; captureId?: never; outgoingDraftId?: never; actorId: string; actorEpoch: number;
+export type CaptureTranscriptionIdentity = Readonly<{ captureId: string; inboxAttachmentId?: never; outgoingDraftId?: never; agendaFormSessionId?: never; actorId: string; actorEpoch: number; expiresAt: string }>;
+export type InboxTranscriptionIdentity = Readonly<{ inboxAttachmentId: string; captureId?: never; outgoingDraftId?: never; agendaFormSessionId?: never; actorId: string; actorEpoch: number;
   departureEpoch: number; attachmentVersion: number; commentVersion: number }>;
-export type OutgoingTranscriptionIdentity = Readonly<{ outgoingDraftId: string; captureId?: never; inboxAttachmentId?: never;
+export type OutgoingTranscriptionIdentity = Readonly<{ outgoingDraftId: string; captureId?: never; inboxAttachmentId?: never; agendaFormSessionId?: never;
   actorId: string; actorEpoch: number; departureEpoch: number; field: OutgoingTranscriptionField;
   baseRevision: number; revision: number; consumedRevision: number | null }>;
-export type TranscriptionIdentity = CaptureTranscriptionIdentity | InboxTranscriptionIdentity | OutgoingTranscriptionIdentity;
+export type AgendaTranscriptionIdentity = Readonly<{ agendaFormSessionId: string; captureId?: never; inboxAttachmentId?: never; outgoingDraftId?: never;
+  actorId: string; actorEpoch: number; departureEpoch: number; field: AgendaTranscriptionField;
+  cardId: string | null; baseRevision: number | null; revision: number | null }>;
+export type TranscriptionIdentity = CaptureTranscriptionIdentity | InboxTranscriptionIdentity | OutgoingTranscriptionIdentity | AgendaTranscriptionIdentity;
 export type TranscriptionConfiguration = Readonly<{
   version: number; provider: string; model: string; enabled: boolean; monthlyLimitMicros: number; currency: "EUR";
 }>;
@@ -25,6 +28,7 @@ export interface TranscriptionDependencies {
   capture: { assertAvailable(client: PoolClient, actor: Actor, captureId: string): Promise<CaptureTranscriptionIdentity> };
   inbox?: { assertAvailable(client: PoolClient, actor: Actor, inboxAttachmentId: string): Promise<InboxTranscriptionIdentity> };
   outgoing?: { assertAvailable(client: PoolClient, actor: Actor, draftId: string, field: OutgoingTranscriptionField, baseRevision?: number): Promise<OutgoingTranscriptionIdentity> };
+  agenda?: { assertAvailable(client: PoolClient, actor: Actor, formSessionId: string, field: AgendaTranscriptionField, cardId: string | null, baseRevision: number | null): Promise<AgendaTranscriptionIdentity> };
   readAuthorizedFolders: ReadAuthorizedFolders; credentialCipher: ClassificationCredentialCipher;
   providers: readonly TranscriptionProvider[]; allowRemote: boolean; requestTimeoutMs: number;
   deploymentLimitMicros?: number;

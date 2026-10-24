@@ -22,7 +22,17 @@ async function collect(email: string, field: "url" | "otp") {
   }
   throw new Error("Synthetic mail was not available in the local collector.");
 }
-async function clickVisible(page: Page, name: string) { await page.getByRole("button", { name, exact: true }).filter({ visible: true }).first().click(); }
+async function clickVisible(page: Page, name: string) {
+  const target = page.getByRole("button", { name, exact: true }).filter({ visible: true }).first();
+  if (name === "Foyer") {
+    await page.getByRole("navigation", { name: /^Navigation principale(?: mobile)?$/ }).filter({ visible: true }).first().waitFor({ state: "visible" });
+    if (!await target.isVisible()) {
+      const mobile = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
+      if (await mobile.isVisible()) await mobile.getByRole("button", { name: "Moi", exact: true }).click();
+    }
+  }
+  await target.click();
+}
 async function login(page: Page, email: string, secret = password!, delayInitialStatus = false) {
   let releaseStatus = () => {}, receivedStatus: number | undefined;
   const heldStatus = new Promise<void>(resolve => { releaseStatus = resolve; });
