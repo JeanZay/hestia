@@ -24,9 +24,12 @@ async function collect(email: string, field: "url" | "otp") {
 }
 async function clickVisible(page: Page, name: string) {
   const target = page.getByRole("button", { name, exact: true }).filter({ visible: true }).first();
-  if (name === "Foyer" && !await target.isVisible()) {
-    const mobile = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
-    if (await mobile.isVisible()) await mobile.getByRole("button", { name: "Moi", exact: true }).click();
+  if (name === "Foyer") {
+    await page.getByRole("navigation", { name: /^Navigation principale(?: mobile)?$/ }).filter({ visible: true }).first().waitFor({ state: "visible" });
+    if (!await target.isVisible()) {
+      const mobile = page.getByRole("navigation", { name: "Navigation principale mobile", exact: true });
+      if (await mobile.isVisible()) await mobile.getByRole("button", { name: "Moi", exact: true }).click();
+    }
   }
   await target.click();
 }
